@@ -10,8 +10,10 @@ outside that held path, `components/resources/ResourceOutlineRow.tsx:LocalRow`
 can query `{kind:"excerpt"}` when it has a reading ref. its `AuthoredRow` then
 renders `FullResourceBody`, whose `ExcerptDisclosure.tsx:useFullExcerpt` queries
 the same excerpt. it can also read the source label. `HighlightAnnotation`'s
-former resource query is deleted. store-side subscription deduplication has not
-been measured. remote passage bodies still read the full server item.
+former resource query is deleted. `OutlineEditorRows` separately resolves
+the distinct source refs in its admitted highlight rows for citation titles.
+that lookup supplies labels. the excerpt still has its own read owner. store-side
+subscription deduplication has not been measured. remote passage bodies still read the full server item.
 
 impact: avoidable per-row work on unplaced highlights and other workspace surfaces,
 especially contained readings whose excerpt query pages intervals and quote windows.

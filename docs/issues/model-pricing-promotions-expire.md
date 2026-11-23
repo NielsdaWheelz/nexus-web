@@ -1,12 +1,9 @@
-# model pricing promotions expire
+# gemini carbon introductory pricing expires
 
-the provider runtime's 2026-10-28 snapshot uses gemini introductory rates.
-argon changes after 2026-11-30 from input/output/cache usd per million
-2/10/0.10 to 4/20/0.20. flash 3.8 changes after 2026-12-31 from
-0.75/3.75/0.075 to 1.5/7.5/0.15. estimates are explicitly dated and indicative;
-the library does not fetch prices at runtime.
+the november 20 provider snapshot uses carbon's introductory input, output and
+cached-input prices of $2, $10 and $0.10 per million tokens. on december 1,
+2026 these rise to $4, $20 and $0.20. the snapshot feeds indicative estimates.
 
-source: [google pricing](https://ai.google.dev/gemini-api/docs/pricing).
-owner: llm-calling `src/provider_runtime/prices_snapshot.json`. refresh the
-snapshot and nexus pin when the rates change; resolved when current estimates
-use the then-effective published rates. no price scheduler is required.
+refresh `llm-calling/src/provider_runtime/prices_snapshot.json` and adopt the
+new dependency pin when the rates change. verify an estimate with uncached
+input, cached input and output against the effective prices. [google pricing](https://aistudio.google.com/docs/pricing#gemini-4-carbon)

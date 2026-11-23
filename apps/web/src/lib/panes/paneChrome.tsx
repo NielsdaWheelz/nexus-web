@@ -23,6 +23,7 @@ import type { OutlineCommand, OutlineCommandState } from "@/lib/notes/editorType
 import type { FindSession } from "@/lib/find/useFind";
 import { FIND_QUERY_LIMIT } from "@/lib/find/find";
 import type { PaneHeaderPublication } from "@/lib/panes/paneHeaderModel";
+import { paneVisibleBand } from "@/lib/panes/paneScroll";
 import type {
   WorkspaceSecondaryGroupId,
   WorkspaceSecondarySurfaceIdOf,
@@ -92,18 +93,6 @@ export type PanePrimaryAction = Extract<
   { readonly kind: "link" | "command" }
 > & { readonly icon: ReactElement };
 
-/** Root writing stays mounted in chrome; feedback remains visible when folded. */
-export type PaneHeaderEditor = { readonly feedback: ReactNode } & (
-  | { readonly kind: "Inline"; readonly content: ReactNode }
-  | {
-      readonly kind: "Expandable";
-      readonly control: ReactNode;
-      readonly content: ReactNode;
-      readonly regionId: string;
-      readonly expanded: boolean;
-    }
-);
-
 export interface PaneViews {
   readonly label: string;
   readonly value: string;
@@ -124,7 +113,6 @@ export interface PaneChrome {
   readonly displayTitle?: string;
   /** The pending source body uses a retained visit hint as a machine pointer. */
   readonly titleRole?: "Pointer";
-  readonly editor?: PaneHeaderEditor;
   readonly header?: PaneHeaderPublication;
   readonly navigation?: { readonly label: string; readonly content: ReactNode };
   readonly views?: PaneViews;
@@ -264,19 +252,14 @@ export function usePaneTitleYield(name: RefObject<HTMLElement | null>): void {
     const scrollport = element?.closest<HTMLElement>('[data-pane-content][data-body-mode="standard"]');
     if (!element || !scrollport) return;
     const measure = () => {
-      const bounds = scrollport.getBoundingClientRect();
-      const top = bounds.top + parseFloat(getComputedStyle(scrollport).paddingTop);
+      const band = paneVisibleBand(scrollport);
       const nameTop = element.getBoundingClientRect().top;
-      const yielded = nameTop >= top && nameTop < bounds.bottom;
+      const yielded = nameTop >= band.top && nameTop < band.bottom;
       if (store.get().titleYielded !== yielded) store.set({ titleYielded: yielded });
     };
     let frame: number | null = null;
     const schedule = () => {
-      if (frame !== null) return;
-      frame = requestAnimationFrame(() => {
-        frame = null;
-        measure();
-      });
+      if (frame === null) frame = requestAnimationFrame(() => { frame = null; measure(); });
     };
     // Parent layout effects can restore the visit after this child's effect. Commit that
     // placement before paint; an unmounted title page no longer owns the header.

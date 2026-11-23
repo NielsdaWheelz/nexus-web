@@ -15,6 +15,8 @@ import { useResourceInspector } from "@/components/resource-inspector/useResourc
 import { useAuthoredAccountId } from "@/lib/authored/provider";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
+import { readerType } from "@/lib/reader/typography";
 import { requirePaneRuntime, usePaneEntryDelivery, usePaneParam, usePaneRuntime, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneReturnReady, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
@@ -50,10 +52,11 @@ function PageContent({createdId, pageId}: {createdId: string; pageId: string | n
     if (kind === "EditPageTitle" || kind === "AppendNote" || kind === "FocusNote" || kind === "ComposePage") claim(delivery);
   }, [claim, delivery, gone]);
   usePaneReturnReady(ready || read.error !== null);
-  return !ready
+  // The paper's type stands under every read state, so the ruling, a refusal and the page share one pitch.
+  return <div {...readerType(useReaderProfile())}>{!ready
     ? read.error === null ? <Ruling /> : <AuthoredReadFailure error={read.error} pending={read.pending} retry={read.retry} noun="this page" />
     : gone ? <Fact line={{fact: "this page is no longer available."}} speak />
-    : <PageEditing rootRef={ref} id={ref.slice("page:".length)} page={page} date={page?.local_date ?? null} newPage={newPage} prelude={prelude} />;
+    : <PageEditing rootRef={ref} id={ref.slice("page:".length)} page={page} date={page?.local_date ?? null} newPage={newPage} prelude={prelude} />}</div>;
 }
 
 function PageEditing({rootRef, id, page, date, newPage, prelude}: {
@@ -78,7 +81,7 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
   usePaneReturnReady(root.ready || root.error !== null);
   const displayTitle = root.rootTitle ?? pageTitle(page?.title ?? initialTitle, date);
   usePaneChrome({workHistory: root.controller?.history,
-    displayTitle, editor: root.rootEditor ?? undefined,
+    displayTitle,
     header: {kind: "Resource", resource: {status: "Ready", creditGroups: []}},
     resourceRef: page !== null && id !== null ? canonicalResourceRef({ scheme: "page", id }) : undefined,
     query: { kind: "Collation", collation: {
@@ -94,7 +97,9 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
     if (!delivery || !root.rootReady) return;
     const entry = delivery.entry;
     if (entry.kind === "ComposePage") {
-      if (claim(delivery) && newPage) setInitialTitle(entry.title);
+      if (!claim(delivery)) return;
+      if (newPage) setInitialTitle(entry.title);
+      void outline.current?.focusRoot().catch(entryFailed("couldn’t open this page’s title."));
       return;
     }
     if (entry.kind === "EditPageTitle") {
@@ -119,12 +124,12 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
     }
   }, [claim, delivery, id, newPage, root.rootReady, entryFailed, say]);
   if (entryDefect !== null) throw entryDefect.error;
-  return <div>
+  return <>
     {page !== null && id !== null ? <Inspector pageId={id} /> : null}
+    {root.rootEditor}
     {filter.trim() ? <p>filter applies to loaded items.</p> : null}
     {root.view}
-
-  </div>;
+  </>;
 }
 
 function Inspector({ pageId }: { pageId: string }) {

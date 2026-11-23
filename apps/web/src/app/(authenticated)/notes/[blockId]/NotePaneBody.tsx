@@ -13,6 +13,8 @@ import {Fact} from "@/components/feedback/Fact";
 import type { NoteInspection } from "@/components/notes/NoteEditor";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
+import { readerType } from "@/lib/reader/typography";
 import { usePaneEntryDelivery, usePaneParam, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
@@ -28,6 +30,7 @@ export default function NotePaneBody() {
   const read = useLocalOutlineRoot({rootRef: ref, apiRef: outline, rootField, entering});
   const resource = read.rootRead.resource;
   const {say} = useOutcome();
+  const type = readerType(useReaderProfile());
   const [defect, setDefect] = useState<{error: unknown} | null>(null);
   usePaneReturnReady(read.ready || read.error !== null || read.rootRead.known && !resource);
   const { delivery, claim } = usePaneEntryDelivery();
@@ -48,11 +51,7 @@ export default function NotePaneBody() {
       const restored = context.purpose === "RestoreVisit" || context.restored;
       if (arrival.kind === "resource") {
         if (arrival.resource_ref !== resource.ref) return "Unavailable";
-        if (!restored) {
-          const handle = outline.current;
-          handle?.revealRoot();
-          if (context.mayFocus()) await handle?.focusRoot(() => ({anchor: 1, head: 1}), () => !context.signal.aborted && context.mayFocus());
-        }
+        if (!restored && context.mayFocus()) await outline.current?.focusRoot(() => ({anchor: 1, head: 1}), () => !context.signal.aborted && context.mayFocus());
         return "Applied";
       }
       const text = resource.body_text ?? "";
@@ -71,11 +70,7 @@ export default function NotePaneBody() {
         if (arrival.kind !== "source") return "Unavailable";
         const location = arrival.source.location;
         if (location.kind === "resource") {
-          if (!restored) {
-            const handle = outline.current;
-            handle?.revealRoot();
-            if (context.mayFocus()) await handle?.focusRoot(() => ({anchor: 1, head: 1}), () => !context.signal.aborted && context.mayFocus());
-          }
+          if (!restored && context.mayFocus()) await outline.current?.focusRoot(() => ({anchor: 1, head: 1}), () => !context.signal.aborted && context.mayFocus());
           return "Applied";
         }
         if (location.kind === "live") {
@@ -90,7 +85,6 @@ export default function NotePaneBody() {
         }
       }
       if (context.signal.aborted) return "Unavailable";
-      if (!restored) outline.current?.revealRoot();
       setInspection({ text, view: { text, ...range, activationId: context.activationId, signal: context.signal, mayFocus: context.mayFocus, restored } });
       context.signal.addEventListener("abort", () => setInspection(current => current?.view.activationId === context.activationId ? null : current), { once: true });
       return "Applied";
@@ -99,18 +93,16 @@ export default function NotePaneBody() {
   const connections = useMemo(() => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} />, [blockId]);
   useResourceInspector({ scheme: "note_block", handle: resource ? blockId : null, bodies: { linkedItems: connections } });
   const resourceRef = resource ? canonicalResourceRef({ scheme: "note_block", id: blockId }) : undefined;
-  usePaneChrome({workHistory: read.controller?.history,resourceRef, editor: resource ? read.rootEditor ?? undefined : undefined, displayTitle: resource ? read.rootTitle ?? undefined : undefined,
+  usePaneChrome({workHistory: read.controller?.history,resourceRef, displayTitle: resource ? read.rootTitle ?? undefined : undefined,
     header: resource ? {kind: "Resource", resource: {status: "Ready", creditGroups: []}} : undefined});
   // An arrival's failure is its command's outcome: one slip, retracted when it clears.
   const arrivalFailure = arrival.failure?.title ?? null;
   useEffect(() => arrivalFailure === null ? undefined : say({fact: arrivalFailure}), [arrivalFailure, say]);
   if (defect) throw defect.error;
-  if (!resource) {
-    // Until the root is known, the outline's view owns the empty region: its ruling or its failure.
-    if (!read.rootRead.known) return <>{read.view}</>;
-    return <Fact line={{fact: "this note is no longer available."}}/>;
-  }
-  return <div>
-    {read.view}
+  // The paper's type stands under every read state. Until the root is known, the outline's view owns the
+  // empty region: its ruling or its failure.
+  return <div {...type}>
+    {resource ? <>{read.rootEditor}{read.view}</>
+      : read.rootRead.known ? <Fact line={{fact: "this note is no longer available."}}/> : read.view}
   </div>;
 }

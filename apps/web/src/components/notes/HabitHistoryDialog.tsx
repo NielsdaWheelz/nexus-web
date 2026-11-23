@@ -12,12 +12,9 @@ import { useAccountToday } from "@/lib/notes/accountDay";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
 import { workCommand } from "@/lib/notes/work";
 import type { OutlineHistory } from "@/lib/notes/structure";
-import { isLocalDate, shiftLocalDate } from "@/lib/localDate";
+import { habitDateLabel, isLocalDate, shiftLocalDate } from "@/lib/localDate";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import styles from "@/components/work/dailyWork.module.css";
-
-const fullDate = new Intl.DateTimeFormat("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric",timeZone:"UTC"});
-export function habitDateLabel(date:string):string {return fullDate.format(new Date(`${date}T12:00:00Z`));}
 
 export default function HabitHistoryDialog({noteRef,local_date,history,onClose,returnFocusTo,returnFocusFallback,open}:{
   noteRef:string;local_date:string;history:OutlineHistory;onClose():void;

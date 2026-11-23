@@ -24,6 +24,7 @@ import { LocalMutationObservationError, localCall, localContentAvailable, localM
 import { useMobileChrome } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { paneScrollRef, publishPaneScroll } from "@/lib/panes/paneScroll";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { retryNativeListening } from "@/lib/player/nativeEngine";
 import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
@@ -124,9 +125,10 @@ export default function DownloadedEpisode({ saved, onIntent }: {
       arrivalRef.current?.supersede({ preserveSignal: intent.kind === "Navigate" ? intent.signal : null, retireFailure: intent.kind === "Navigate" });
     },
     scrollport: (element: HTMLElement, changed: (reason: "Occlusion" | "Layout") => void) => {
+      const releaseScroll = publishPaneScroll(element);
       const releaseChrome = chrome.registerReaderScrollport(element);
       const releaseViewport = viewport.registerReaderScrollport(element, changed);
-      return () => { releaseChrome(); releaseViewport(); };
+      return () => { releaseScroll(); releaseChrome(); releaseViewport(); };
     },
     navigation: {
       href: (destination: Parameters<typeof readerDestinationHref>[1]) => {
@@ -278,7 +280,7 @@ export default function DownloadedEpisode({ saved, onIntent }: {
     {capture.transcript.kind === "Available" && capture.transcript.coverage === "partial" && transcriptReady ? <p>this transcript is partial.</p> : null}
     {contents ? <Contents reader={reader} /> : null}
   </div>;
-  if (!transcriptReady) return <div className={styles.stateScrollport} data-mobile={isMobile}>{header}{annotations.list}{annotations.panel}</div>;
+  if (!transcriptReady) return <div className={styles.stateScrollport} data-mobile={isMobile} ref={paneScrollRef}>{header}{annotations.list}{annotations.panel}</div>;
   return <div className={styles.layout}>
     <DocumentReaderView reader={reader} profile={profile} isMobile={isMobile} playback={null} showCaptureTitle={false}
       before={<>{header}{annotations.list}</>} onSeekTime={ms => { onIntent(); play(ms); }}

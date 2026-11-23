@@ -9,7 +9,11 @@ matched by the local worker. the row sheet's highlight facts (`source title ·
 location label`) cannot be met from the local projection; the server's row for
 the same highlight carries them.
 
-impact: a local highlight row reads as its quoted literal alone; two highlights
+authored outlines resolve the admitted highlights' distinct source refs locally
+and print a citation below the excerpt, with a page number for pdf. this issue
+concerns the palette's existing projection and its single-read contract.
+
+impact: a local palette highlight row reads as its quoted literal alone; two highlights
 from different books with similar text are indistinguishable until opened.
 
 fix: thread the source title through `LocalMatch` (the authored store's

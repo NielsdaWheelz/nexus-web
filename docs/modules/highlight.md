@@ -87,7 +87,8 @@ paragraphs, explicit breaks, preformatted whitespace, inline emphasis, lists,
 tables and direction remain source facts. current reader typography owns reflow,
 except that a `Column` or `Sheet` companion sets the leading and caps the size at
 `min(reader, max(14px, reader * --excerpt-scale), --excerpt-max-size)` through its
-content tokens, and a quote's headings take the quote's size and leading.
+margin role. nested authored outlines use that same size and leading.
+a quote's headings take the quote's size and leading.
 the host supplies a required read-only profile: the workspace projects its live
 reader settings; the downloaded shelf supplies the same profile as its source.
 quotation rendering neither edits settings nor fetches a substitute profile.
@@ -149,8 +150,14 @@ capture and never loads a live authored resource to replace it.
 ## presentation and access
 
 reader, compact/downloaded reader, outline and detail surfaces share the native
-annotation engine. outline annotations offer one full-width ordinary line below
-the quote, including when blank, named `annotation`, without placeholder or
+annotation engine. an authored outline sets the excerpt in italic at the row's
+size and leading. its coloured sideline hangs before the quote. forced colours
+use system ink and show the highlight sign. the citation gives the locally
+resolved source title and, for a pdf, its page number. the session resolves
+distinct sources for its admitted rows in batches of up to 100. scrolling a
+citation out of view alone keeps the subscription. a missing title omits the citation.
+the roman annotation occupies one ordinary full-width line below it, including
+when blank, named `annotation`, without placeholder or
 save/cancel. activation installs the owning outline history before typing; a
 resource-list occurrence retains that scope across branch collapse, while untouched
 rows open no writing document. successful splitting opens the branch and focuses

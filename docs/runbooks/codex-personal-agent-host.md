@@ -1,6 +1,6 @@
 # codex personal agent host
 
-`nexus-codex-agent-host` runs one stock codex `0.165.0` app-server signed into
+`nexus-codex-agent-host` runs one stock codex `0.171.0` app-server signed into
 the owner's chatgpt subscription. production/local overlays use unix sockets;
 network labs use authenticated host control and websockets. the api reads
 its model catalog; workers run turns on it and execute every tool themselves.
@@ -19,6 +19,11 @@ to the shared websocket host below.
 the api image contains no codex package. the host owns the launcher's process
 group, forwarding graceful termination and killing the whole group at its
 existing drain deadline.
+
+the host startup catalog removes native tools and the `ultra` preset, which
+requires automatic delegation. all four offered models expose `low`, `medium`,
+`high`, `xhigh` and `max` to nexus. the provider pin and native binary must
+ship together for the health check to pass.
 
 - `python -m apps.codex_agent.main` requires `auth.json` mode `0600`, prepares
   `home/` and `tmp/` in the account directory and the explicit cwd root,
@@ -76,7 +81,7 @@ declaration behaves.
 ## health, stop and restart
 
 - health is `python -m apps.codex_agent.health`: the product's own catalog read
-  through the socket. it prints `codex 0.165.0 ready: <n> models, contract <r>`
+  through the socket. it prints `codex 0.171.0 ready: <n> models, contract <r>`
   into docker's health log. a starting codex reads the account from chatgpt.com
   before its first answer, so a host started during an openai outage stays
   unhealthy and a release that starts it fails; once up, its probes are

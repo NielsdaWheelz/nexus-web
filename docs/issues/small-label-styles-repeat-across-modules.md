@@ -37,3 +37,7 @@ sigla adds the ledger's lowercase margin side-head recipe in
 `components/ui/Ledger.module.css`: tracked muted sans, italic serif in solar.
 it matches headword's intent; the bookplate's `dt` retains its different recipe.
 the shared list-head font absorbs section/list/browse headings only.
+
+fair copy introduces `--apparatus-font` in `globals.css` for the mono labels,
+tails, receipts, citations and year step on authored paper. the label variants
+listed elsewhere remain outside that contract.

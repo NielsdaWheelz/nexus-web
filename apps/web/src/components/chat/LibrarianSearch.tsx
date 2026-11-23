@@ -2,7 +2,7 @@
 
 // History retrieval owns its query and adopted prefix. Message text is immutable;
 // explicit refresh adopts new ranking, while returning keeps the inspected order.
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
@@ -13,6 +13,7 @@ import { useServerList, type ListSnapshot, type ServerList } from "@/lib/api/use
 import type { ApiJson } from "@/lib/api/wire";
 import { librarianSearchQuery } from "@/lib/panes/indexPaneQuery";
 import { truncatePaneSearchQuery, type PaneQuery } from "@/lib/panes/paneChrome";
+import { publishPaneScroll } from "@/lib/panes/paneScroll";
 import { requirePaneRuntime, usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
@@ -168,6 +169,10 @@ function LibrarianSearchResults({ query, eligible, list, current, navigation, an
   const content = useRef<HTMLDivElement>(null);
   usePaneReturnScrollport({ enabled: true, scrollportRef: navigation.listRef, contentRef: content,
     continuityKey: `${runtime.visitId}:${runtime.routeKey}` });
+  useLayoutEffect(() => {
+    const port = navigation.listRef.current;
+    if (port) return publishPaneScroll(port);
+  }, [navigation.listRef]);
   const timeZone = useHydratedBrowserTimeZone();
   const rows = list.current ? list.items : [];
   return <div ref={navigation.listRef} className={styles.scrollport}>

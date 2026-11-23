@@ -349,14 +349,21 @@ async def _dispatch(
     if result.status == "succeeded" or not reasons:
         return result
     if reasons[0] == "cancelled":
-        return RouteResult("cancelled", None, result.usage, None, "", result.evidence)
+        return RouteResult(
+            "cancelled", None, result.usage, None, "", result.evidence, sent=result.sent
+        )
+    if reasons[0] == "deadline" and result.code == "context_too_large" and not result.sent:
+        # A correlated rejection closes the attempt and retrying its input cannot help.
+        return result
     code: FailureCode = "timeout" if reasons[0] == "deadline" else "interrupted"
     detail = (
         f"the generation exceeded its {rules.timeout_seconds} s limit"
         if reasons[0] == "deadline"
         else "the job attempt lost its claim"
     )
-    return RouteResult("failed", None, result.usage, code, detail, result.evidence)
+    return RouteResult(
+        "failed", None, result.usage, code, detail, result.evidence, sent=result.sent
+    )
 
 
 async def _watch(

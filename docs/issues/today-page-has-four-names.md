@@ -14,6 +14,12 @@ one page, four spellings on the phone alone:
 alongside it, the settings place opens a pane titled `Account`, beside the
 palette's own `account` row.
 
+## current surfaces
+
+the register now excludes daily pages. the journal band, day headings and
+running head share `formatDay` (e.g. `Sunday, 15 November`). the place name,
+pane route label and capture verb still have separate producers.
+
 ## impact
 
 a reader who typed `today` and landed on a pane called `journal · …` has to

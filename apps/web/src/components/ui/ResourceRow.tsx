@@ -31,11 +31,12 @@ export type ResourceRowPrimary =
 type RowContent =
   | { kind: "Index"; metadata: ReactNode; facts?: ReactNode; supportingContent?: ReactNode }
   | { kind: "Search"; metadata: ReactNode; facts?: ReactNode; excerpt: ReactNode }
-  | { kind: "Details"; body: ReactNode };
+  | { kind: "Details"; body: ReactNode }
+  | { kind: "Title" };
 
 /**
- * One index geometry: two reserved text lines, or three for search. Details alone
- * wrap operational content. Width adaptation belongs to this named container;
+ * One index geometry: two reserved text lines, or three for search; a Title row is
+ * its title line alone, in its host's content type. Details alone wrap operational content. Width adaptation belongs to this named container;
  * native title navigation, passive artwork and independent controls keep owners.
  * Passive facts lead the trailing cell, so every fold keeps them centred with controls.
  */
@@ -78,6 +79,7 @@ export default function ResourceRow({
   let secondary: ReactNode;
   switch (content.kind) {
     case "Details": secondary = <div className={styles.body} data-row-expanded="">{content.body}</div>; break;
+    case "Title": secondary = null; break;
     case "Index":
     case "Search": secondary = <>
       {content.kind === "Index" && content.supportingContent != null ? <div className={styles.supporting}>{content.supportingContent}</div> : null}
@@ -86,8 +88,8 @@ export default function ResourceRow({
     </>; break;
     default: assertNever(content);
   }
-  const facts = content.kind === "Details" ? null : content.facts;
-  return <Root {...rootProps} className={cx(styles.row, density === "compact" && styles.compact, selected && styles.selected, rootProps?.className)}>
+  const facts = content.kind === "Details" || content.kind === "Title" ? null : content.facts;
+  return <Root {...rootProps} className={cx(styles.row, density === "compact" && styles.compact, content.kind === "Title" && styles.titleRow, selected && styles.selected, rootProps?.className)}>
     <div className={cx(styles.grid, Boolean(leadingVisual) && styles.withVisual, content.kind === "Details" && styles.details, content.kind === "Index" && content.supportingContent != null && styles.hasSupport)}>
       {leadingVisual ? <div className={styles.leadingVisual}>{leadingVisual}</div> : null}
       <div className={styles.content}>

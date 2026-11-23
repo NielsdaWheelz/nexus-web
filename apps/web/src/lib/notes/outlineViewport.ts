@@ -3,12 +3,12 @@
 import type {LinkState, OutlineRange} from "@nexus/authored/types";
 import type {OutlineEdge, OutlineWindow} from "./useOutlineWindow";
 
-interface Item {link: string; position: string; height: number}
+/** `height` is a measurement of the mounted row, or null: an unmeasured item takes the estimate when read. */
+interface Item {link: string; position: string; height: number | null}
 interface Branch {items: Item[]; first: boolean; last: boolean; joined: Set<string>}
 export type BranchPart = {kind: "row"; link: string} | {kind: "gap"; key: string; height: number; range: OutlineRange; direction: "before" | "after"; waiting?: true};
 export interface RowMetric {id: string; anchor: string | null; parent: string | null; link: string | null; top: number; height: number; gap: boolean}
 
-const ESTIMATE = 32;
 function position(link: LinkState, ref: string): string {return (link.endpoint_a === ref ? link.position_a : link.position_b)?.value ?? "";}
 function ordered(a: {position: string; link: string}, b: {position: string; link: string}): number {
   return a.position < b.position ? -1 : a.position > b.position ? 1 : a.link < b.link ? -1 : a.link > b.link ? 1 : 0;
@@ -54,16 +54,24 @@ export class OutlineViewport {
   private readonly heights = new Map<string, number>();
   private committed: readonly RowMetric[] = [];
   private version = 0;
+  /** The smallest height measured on a mounted writing row since typography last changed. Gaps, hidden
+   * rows and estimates are never measurements. */
+  private smallest: number | null = null;
+  /** The root's computed line height: one line of the outline's type. The controller owns it; it is 0
+   * until a view is laid out. */
+  pitch = 0;
+  /** One unmeasured row. */
+  get estimate(): number {return this.smallest ?? this.pitch;}
   get revision(): number {return this.version;}
   get metrics(): readonly RowMetric[] {return this.committed;}
   get height(): number {const last = this.committed.at(-1); return last ? last.top + last.height : 0;}
   invalidateMeasurements(): void {
-    this.heights.clear();
-    for (const branch of this.branches.values()) for (const item of branch.items) item.height = ESTIMATE;
+    this.heights.clear(); this.smallest = null;
+    for (const branch of this.branches.values()) for (const item of branch.items) item.height = null;
   }
   estimatedHeight(parent: string): number {
     const branch = this.branches.get(parent);
-    return branch ? (branch.items.length + (branch.first ? 0 : 24) + (branch.last ? 0 : 24)) * ESTIMATE : 0;
+    return branch ? (branch.items.length + (branch.first ? 0 : 24) + (branch.last ? 0 : 24)) * this.estimate : 0;
   }
   admit(parent: string, windows: readonly OutlineWindow[]): void {
     const sample = windows[0]!;
@@ -80,7 +88,7 @@ export class OutlineViewport {
         if (afterStart && beforeEnd && !live.has(item.link)) items.delete(item.link);
       }
       for (const link of [...window.rows.map(row => row.link!), ...[window.beforeEdge, window.afterEdge, window.tailEdge].flatMap(edge => edge ? [edge.link] : [])])
-        items.set(link.link_id, {link: link.link_id, position: position(link, sample.ref), height: items.get(link.link_id)?.height ?? ESTIMATE});
+        items.set(link.link_id, {link: link.link_id, position: position(link, sample.ref), height: items.get(link.link_id)?.height ?? null});
       if (window.beforeEdge === null && window.rows.length) prior.first = true;
       if (window.afterEdge === null && window.rows.length) prior.last = true;
     }
@@ -104,7 +112,7 @@ export class OutlineViewport {
       const anchor = items[from + Math.floor(Math.max(0, to - from - 1) / 2)]?.link ?? next?.link ?? prior?.link ?? null;
       const range = {cursor: null, anchor_link_id: anchor, limit: 48};
       result.push({kind: "gap", key: `${parent}:${prior?.link ?? "start"}:${next?.link ?? "end"}`, direction, range,
-        height: items.slice(from, to).reduce((height, item) => height + item.height, unknown ? 24 * ESTIMATE : 0)});
+        height: items.slice(from, to).reduce((height, item) => height + (item.height ?? this.estimate), unknown ? 24 * this.estimate : 0)});
     };
     let from = 0;
     for (let index = 0; index < items.length; index++) {
@@ -144,14 +152,15 @@ export class OutlineViewport {
   }
   measured(parent: string, link: string, height: number): void {
     const item = this.branches.get(parent)?.items.find(item => item.link === link);
-    if (item) item.height = height;
+    if (item && height > 0) item.height = height;
   }
   publish(rows: readonly {id: string; anchor: string | null; parent: string | null; link: string | null; gapHeight: number | null}[], elements: ReadonlyMap<string, HTMLElement>): void {
     let top = 0;
     const next = rows.map(row => {
       const element = elements.get(row.id);
-      const height = row.gapHeight ?? (element?.isConnected ? element.getBoundingClientRect().height : this.heights.get(row.id)) ?? ESTIMATE;
-      this.heights.set(row.id, height);
+      const measured = row.gapHeight === null && element?.isConnected ? element.getBoundingClientRect().height : null;
+      if (measured !== null && measured > 0) {this.heights.set(row.id, measured); this.smallest = Math.min(this.smallest ?? measured, measured);}
+      const height = row.gapHeight ?? measured ?? this.heights.get(row.id) ?? this.estimate;
       const metric = {id: row.id, anchor: row.anchor, parent: row.parent, link: row.link, top, height, gap: row.gapHeight !== null};
       top += height;
       return metric;

@@ -9,9 +9,10 @@ import {canonicalSerialization} from "@nexus/authored/canonical";
 import {readBody} from "@nexus/authored/documents";
 import {isVisible} from "@nexus/authored/merge";
 import type {Intent} from "@nexus/authored/commands";
-import type {LinkState, OutlineRange, ResourceProjection} from "@nexus/authored/types";
+import type {LinkState, OutlineChildrenOccurrence, OutlineRange, ResourceProjection} from "@nexus/authored/types";
 import {classifyOutlineOccurrence, enterOutlineOccurrence, type OutlineBranch, type OutlineTarget} from "@/lib/resources/outlineProjection";
 import {localResourceHref, localResourceLabel} from "@/lib/resources/localResource";
+import {pageTitle} from "@nexus/authored/queries";
 import type {NoteEditorHandle, TextEditorHandle, NoteEditorProjection, StructuralKeys} from "@/components/notes/NoteEditor";
 import type {OutlineRowChrome, OutlineRowMount} from "@/components/notes/OutlineEditorRow";
 import type {PlatformKind} from "@/lib/renderEnvironment/types";
@@ -21,6 +22,7 @@ import rowStyles from "@/components/notes/OutlineEditorRow.module.css";
 import {isTextEntryTarget} from "@/lib/ui/eventTarget";
 import {ownsOverlayFocus} from "@/lib/ui/overlay";
 import {LinkInputRefusal, type LinkTarget} from "@/lib/resourceGraph/links";
+import type {ResourceItem} from "@/lib/resources/items";
 import type {WorkGuard} from "@/lib/unsavedWork";
 import {OutlineBinding, type OutlineBindingField} from "./outlineBinding";
 import {canonicalBody, fieldAt, fieldById, outlineEditorSchema, outlineTransactionSource, plainTitle} from "./outlineEditorModel";
@@ -129,6 +131,8 @@ export class OutlineController {
   private placing: {rows: readonly string[]; destination: Destination; epoch: number} | null = null;
   private readonly workOwners = new Map<string, readonly string[]>();
   private blockRange: BlockRange | null = null;
+  /** The shallowest selected depth: where the selection's one wash starts. Read only on selected rows. */
+  private selectionDepth = 0;
   private cutting: InputBookmark = null;
   get selected(): ReadonlySet<string> {return new Set(this.blockRange?.row_ids ?? []);}
   announcement = "";
@@ -392,7 +396,8 @@ export class OutlineController {
       this.resize?.disconnect();
       this.resize = new ResizeObserver(() => {
         const style = getComputedStyle(view.dom);
-        const signature = [view.dom.getBoundingClientRect().width, style.font, style.lineHeight, style.letterSpacing].join("|");
+        const signature = [view.dom.getBoundingClientRect().width, style.font, style.lineHeight, style.letterSpacing,
+          style.getPropertyValue("--outline-disclose"), style.getPropertyValue("--outline-sign"), style.getPropertyValue("--outline-indent")].join("|");
         if (this.layoutSignature !== null && this.layoutSignature !== signature) this.invalidateMeasurements();
         this.layoutSignature = signature;
         const finish = this.layoutTransaction();
@@ -402,6 +407,8 @@ export class OutlineController {
       this.resize.observe(view.dom);
       document.fonts.addEventListener("loadingdone", this.invalidateMeasurements);
       document.addEventListener("selectionchange", this.readNativeSelection);
+      // One line of the root's type is the estimate before any row is measured; gaps built without it are rebuilt.
+      if (this.rootPitch(view) !== this.viewport.pitch) this.invalidateMeasurements();
       this.project("initial");
       this.publishLayout();
       if (this.selectionRow === null && !this.selected.size) {
@@ -496,9 +503,16 @@ export class OutlineController {
       path.unshift(parent.link?.link_id ?? parent.row_id);
     return path.join("/");
   }
+  /** The root's computed line height in px. The reader role gives every outline a numeric leading. */
+  private rootPitch(view: EditorView): number {
+    const pitch = parseFloat(getComputedStyle(view.dom).lineHeight);
+    if (!(pitch > 0)) throw new Error("an outline's root must stand in the reader role, with a computed line height");
+    return pitch;
+  }
   private invalidateMeasurements = (): void => {
     const finish = this.layoutTransaction();
     try {
+      if (this.view) this.viewport.pitch = this.rootPitch(this.view);
       this.viewport.invalidateMeasurements();
       for (const parent of this.branchHeights.keys()) this.branchHeights.set(parent, this.viewport.estimatedHeight(parent));
       this.rebuild(); this.publishLayout();
@@ -508,14 +522,16 @@ export class OutlineController {
   private publishLayout(): void {
     const view = this.view;
     if (!view) return;
-    const rows = [...this.rows.values()].filter(row => !row.root);
-    this.viewport.publish(rows.map(row => ({id: row.row_id, anchor: this.anchorFor(row), parent: row.parent_id, link: row.link?.link_id ?? null, gapHeight: row.gap ? row.gapHeight ?? 32 : null})),
+    const rows = [...this.rows.values()].filter(row => !row.root), estimate = this.viewport.estimate;
+    this.viewport.publish(rows.map(row => ({id: row.row_id, anchor: this.anchorFor(row), parent: row.parent_id, link: row.link?.link_id ?? null, gapHeight: row.gap ? row.gapHeight ?? this.viewport.estimate : null})),
       new Map([...this.mounts].map(([id, mount]) => [id, mount.dom])));
     for (const row of rows) {
       const mount = this.mounts.get(row.row_id);
       if (mount && row.parent_id && row.link) this.viewport.measured(row.parent_id, row.link.link_id, mount.dom.getBoundingClientRect().height);
       if (mount) this.resize?.observe(mount.dom);
     }
+    // A measurement that moves the estimate re-cuts the gaps built from the old one, in this same layout.
+    if (this.viewport.estimate !== estimate) {this.rebuild(); this.publishLayout(); return;}
     const branchHeights = new Map<string, number>();
     for (const metric of this.viewport.metrics) for (let parent = metric.parent; parent && parent !== this.pending.root_id; parent = this.parent(parent))
       branchHeights.set(parent, (branchHeights.get(parent) ?? 0) + metric.height);
@@ -586,7 +602,7 @@ export class OutlineController {
       for (const metric of near) {
         const gap = this.gaps.get(metric.id);
         if (metric.parent === parent && gap && !metric.id.startsWith("reading:") && !ranges.some(range => range.anchor_link_id === gap.range.anchor_link_id && range.cursor === gap.range.cursor))
-          ranges.push({...gap.range, limit: Math.max(1, Math.min(32, Math.ceil((bottom - top) / 32)))});
+          ranges.push({...gap.range, limit: Math.max(1, Math.min(32, Math.ceil((bottom - top) / Math.max(1, this.viewport.estimate))))});
       }
       // A focused title keeps its root proof, not unrelated offscreen bodies.
       if (!ranges.length && parent === this.pending.root_id && this.rowOverscan === 0)
@@ -744,6 +760,8 @@ export class OutlineController {
       // a cut's remove carries the cut's own bookmark object through planning and history to this receipt.
       else if (action === null && plan.command === "remove") this.announce(this.cutting !== null && plan.selection_before === this.cutting
         ? plan.changes.length === 1 ? "cut" : `cut ${plan.changes.length} items` : `removed from this outline${this.blockRange ? `. ${this.announcement}` : ""}`);
+      // a drop says nothing: its ghost named the parent. the count its restored selection just spoke is withdrawn with it.
+      else if (action === null && plan.command === "place") this.announcement = "";
       else if (action === null && plan.command !== "indent" && plan.command !== "outdent") this.announce(this.placed(plan));
     }
     this.notify();
@@ -1176,12 +1194,25 @@ export class OutlineController {
     } catch (error) {this.error = error; this.notify();}
     finally {if (this.preparing === preparation) this.preparing = null;}
   }
+  /** An empty item with its field admitted and no child this outline knows of, shown or still unsaved. It may take a
+   * reference in its place; whether it is childless is the store's to say (`childQuery`). */
+  private consumable(row: OutlineRow): boolean {
+    return !row.root && !row.seed && !row.gap && row.kind === "body" && row.ref !== null && !this.filter.trim() && this.editableReady(row) &&
+      !bodyHasContent(this.body(row.row_id)) && !this.hasChildren(row);
+  }
+  /** The store's question for an occurrence's children: the links on its resource, but for the edges that led to it. */
+  private childQuery(row: OutlineRow, ref: string, link: LinkState): OutlineChildrenOccurrence {
+    return {refs: [ref], excluded_link_ids: [...enterOutlineOccurrence({branch: row.branch, ref, target: {kind: "occurrence", key: row.row_id}, edgeIds: [link.link_id]}).traversedEdgeIds]};
+  }
   private async replaceReference(row: OutlineRow, target: LinkTarget, label: string): Promise<boolean> {
-    if (!this.canEditReference(row) || !row.link || !row.ref) return false;
+    if (!(this.canEditReference(row) || this.consumable(row)) || !row.link || !row.ref) return false;
     const original = this.retained(row.row_id);
     if (!original || original.ref !== row.ref || original.link?.link_id !== row.link.link_id) {this.refuse(rangeReasonMessage("changed")); return false;}
     const source = this.pending.placementBookmark({...original, link: row.link});
     if (!source) return false;
+    // a writing item taken in a reference's place: history holds its document for the inverse and rechecks it in the command.
+    const held = row.kind === "body" ? this.writing(row.ref) : null;
+    if (row.kind === "body" && !held) {this.refuse(rangeReasonMessage("changed")); return false;}
     const lease = this.lease(), replacement_id = crypto.randomUUID();
     let release: (() => void) | null = null;
     try {
@@ -1189,13 +1220,15 @@ export class OutlineController {
       release = writing?.retain() ?? null;
       if (!lease()) return false;
       return await this.history.replaceReference({source: {...source, link: row.link}, parent: this.writing(row.parent_ref), target, label, row_id: replacement_id, before: this.capture(), document: writing,
+        consumed: held ? {document: held, children: this.childQuery(row, row.ref, row.link)} : null,
         canRetain: () => {
           if (writing === null) return true;
           const retained = this.refs().has(writing.ref);
           return this.admitNew(retained ? 0 : 1, (retained ? 2 : 3) * Y.encodeStateAsUpdate(writing.doc).byteLength);
         },
         mayRetire: () => !this.removalBlocked(new Set([row.row_id])),
-        active: () => lease() && this.rows.get(row.row_id)?.link?.link_id === row.link!.link_id && this.rows.get(row.row_id)?.ref === row.ref,
+        // the retained occurrence, not the shown row: a newborn's shown row trails its link while its writing is pending.
+        active: () => lease() && this.retained(row.row_id)?.link?.link_id === row.link!.link_id && this.rows.get(row.row_id)?.ref === row.ref,
         refused: this.refused,
         accepted: (ref, resource, admission, link) => {
           const kind = row.branch.ancestors.has(ref) ? "reference" : ref.startsWith("note_block:") ? "body" : ref.startsWith("page:") ? "title" : "reference";
@@ -1203,11 +1236,15 @@ export class OutlineController {
           const replacement: PendingOutlineField = {row_id: replacement_id, ref, resource, parent_id: row.parent_id, parent_ref: row.parent_ref, after_id: null, before_id: row.row_id,
             link: null, kind, body, hidden: false, pending: true, origin: this.history.typingOrigin()};
           this.pending.replaceReference({original: {...original, link: row.link}, replacement, admission, link, document: writing});
-          this.referenceRow = replacement.kind === "reference" ? replacement_id : null;
-          const end = kind === "reference" ? 2 : docFromBody(body).firstChild!.content.size + 1;
-          this.selectionRow = replacement_id; this.annotationRow = null; this.selection = {anchor: end, head: end};
+          // the caret follows the replacement only from the row it replaces. one that moved on while this settled stays.
+          const here = this.selectionRow === row.row_id;
+          if (here) {
+            const end = kind === "reference" ? 2 : docFromBody(body).firstChild!.content.size + 1;
+            this.referenceRow = replacement.kind === "reference" ? replacement_id : null;
+            this.selectionRow = replacement_id; this.annotationRow = null; this.selection = {anchor: end, head: end};
+          } else if (this.referenceRow === row.row_id) this.referenceRow = null;
           this.changed("semantic");
-          if (writing) void this.focus(replacement_id, "end", lease);
+          if (here && writing) void this.focus(replacement_id, "end", lease);
         }});
     } catch (error) {this.error = error instanceof LinkInputRefusal ? new OutlineActionRefusal(error.line) : error; this.notify(); return false;}
     finally {release?.();}
@@ -1348,11 +1385,11 @@ export class OutlineController {
         if (boundary && direction === "after") {insert++; while (insert < ordered.length && ordered[insert]!.depth > boundary.depth) insert++;}
         const parent = ordered.find(row => row.row_id === this.reading!.parent);
         const row_id = `reading:${this.reading.parent}:${direction}`;
-        this.gaps.set(row_id, {kind: "gap", key: row_id, height: 32, range: {cursor: null, anchor_link_id: edge.link.link_id, limit: 32}, direction});
+        this.gaps.set(row_id, {kind: "gap", key: row_id, height: this.viewport.estimate, range: {cursor: null, anchor_link_id: edge.link.link_id, limit: 32}, direction});
         ordered.splice(Math.max(0, insert), 0, {row_id, ref: null, link: null, parent_id: this.reading.parent,
           parent_ref: boundary?.parent_ref ?? parent?.ref ?? this.rootRef, depth: boundary?.depth ?? (parent && !parent.root ? parent.depth + 1 : 0),
           branch: boundary?.branch ?? parent?.branch ?? this.rootBranch, resource: null, kind: "reference", children: null,
-          open: false, terminal: false, root: false, seed: false, gap: direction, gapHeight: 32, origin: null});
+          open: false, terminal: false, root: false, seed: false, gap: direction, gapHeight: this.viewport.estimate, origin: null});
       }
       this.rows.clear(); for (const row of ordered) this.rows.set(row.row_id, row);
     }
@@ -1642,7 +1679,7 @@ export class OutlineController {
     const count = plan.changes.length, merged = plan.changes.filter(change => change.merged);
     if (plan.changes.some(change => change.mirror)) return count === 1 ? "linked here too" : `linked ${count} items here too`;
     if (!merged.length) return count === 1 ? "moved" : `moved ${count} items`;
-    const into = this.rows.get(merged[0]!.after!.parent_id), parent = into && !into.root ? this.label(into) : "this outline";
+    const parent = this.labelOf(merged[0]!.after!.parent_id);
     return count === 1 ? `moved; it was already under ${parent}` : `moved ${count} items; ${merged.length} already under ${parent}`;
   }
   private refuse(message: string): void {
@@ -2035,7 +2072,7 @@ export class OutlineController {
   chrome(): ReadonlyMap<string, OutlineRowChrome> {
     return new Map([...this.rows.values()].filter(row => !row.root && !row.seed && !row.gap).map(row => [row.row_id, {row_id: row.row_id, ref: row.ref, resource: row.resource, kind: row.kind === "body" ? "note" : row.kind,
       depth: row.depth, parent_id: row.parent_id, label: this.label(row), href: this.href(row), mirrors: this.mirrors(row),
-      parentLabel: row.parent_id ? this.rows.has(row.parent_id) ? this.label(this.rows.get(row.parent_id)!) : this.windows.get(row.parent_id)?.rootResource ? localResourceLabel(this.windows.get(row.parent_id)!.rootResource!) : "this outline" : "this outline",
+      parentLabel: this.labelOf(row.parent_id), day: this.day(row),
       childrenAvailable: row.children?.available === true || this.requests.has(row.row_id), read: this.branchRead(row.row_id), open: row.open, terminal: row.terminal, selected: this.selected.has(row.row_id),
       workOwners: owners => this.workOwners.set(row.row_id, owners),
       annotation: row.resource?.kind === "highlight" && !row.terminal && !this.filter.trim() ? this.annotation(row.row_id) : null,
@@ -2044,6 +2081,20 @@ export class OutlineController {
         if (row.ref) {const ancestor = row.branch.ancestors.get(row.ref); if (ancestor?.kind === "root" && this.rootField) void this.focusRoot();
           else if (ancestor?.kind === "occurrence" && this.rows.has(ancestor.key)) void this.focus(ancestor.key); else if (ancestor) this.revealExternal?.(ancestor);}
       }}]));
+  }
+  /** A shown row's label; the outline's root for null. An unloaded parent reads its window's resource. */
+  labelOf(row_id: string | null): string {
+    const id = row_id ?? this.pending.root_id, row = this.rows.get(id), resource = this.windows.get(id)?.rootResource;
+    return row ? this.label(row) : resource ? localResourceLabel(resource) : "this outline";
+  }
+  /** The day a row stands under: its nearest dated ancestor page, the root included; null under none. An ancestor
+   * with no row of its own (the root of a host that shows no title, or before its title loads) is read from its window. */
+  private day(row: OutlineRow): string | null {
+    for (let id = row.parent_id; id; id = this.parent(id)) {
+      const resource = this.rows.get(id)?.resource ?? this.windows.get(id)?.rootResource;
+      if (resource?.kind === "page" && resource.local_date !== null) return resource.local_date;
+    }
+    return null;
   }
   /** The bullet's route carries the entering link so the opened outline excludes it. */
   private href(row: OutlineRow): string | null {
@@ -2058,7 +2109,7 @@ export class OutlineController {
     if (row.kind !== "reference" && (this.documents.has(row.ref ?? "") || this.pending.fields.get(row.row_id)?.pending)) {
       const text = clipboardPlainText(noteBodySchema.nodeFromJSON(this.body(row.row_id).body_pm_json).content).split("\n")[0]?.trim();
       if (text) return text;
-      return row.kind === "title" ? row.resource?.local_date ?? "untitled page" : "empty note";
+      return row.kind === "title" ? pageTitle("", row.resource?.local_date ?? null) : "empty note";
     }
     return row.resource ? localResourceLabel(row.resource) : row.root ? this.rootField?.label ?? "outline" : "empty note";
   }
@@ -2072,15 +2123,19 @@ export class OutlineController {
     let press: {x: number; y: number} | null = null;
     dom.addEventListener("pointerdown", event => {
       const target = event.target, row = this.rows.get(id);
-      if (event.button !== 0 || !(target instanceof Element) || target.closest(".ProseMirror") !== this.view?.dom || target.closest("[data-outline-occurrence]") !== dom ||
-        target.closest("a[href], button, input, textarea, select, [role='button'], .note-object-embed, [data-outline-annotation]") || !row || row.gap) return;
+      if (event.button !== 0 || !(target instanceof Element) || target.closest(".ProseMirror") !== this.view?.dom || target.closest("[data-outline-occurrence]") !== dom || !row || row.gap) return;
+      const control = target.closest("a[href], button, input, textarea, select, [role='button'], .note-object-embed, [data-outline-annotation]");
+      // a task's sign is a button, and a press on a control is the control's. shift on it ranges to its row, as on the
+      // row's words: by its click the text anchor would be gone. the drag refuses shift, so it loses no mouse-down.
+      const sign = event.shiftKey && control !== null && leading.contains(control) && control.matches('[data-outline-bullet][role="checkbox"]');
+      if (control && !sign) return;
       if (this.reading?.rows.has(id) && !event.shiftKey && content.contains(target)) {
         event.preventDefault(); event.stopPropagation(); void this.focus(id, "end"); return;
       }
       if (!event.shiftKey && this.canEditReference(row) && this.referenceRow !== id) press = {x: event.clientX, y: event.clientY};
       if (event.shiftKey) {
         if (row.seed) return;
-        if (!this.blockRange && this.view?.hasFocus() && this.view.state.selection instanceof TextSelection && fieldAt(this.view.state.doc, this.view.state.selection.anchor)?.row_id === id) return;
+        if (!sign && !this.blockRange && this.view?.hasFocus() && this.view.state.selection instanceof TextSelection && fieldAt(this.view.state.doc, this.view.state.selection.anchor)?.row_id === id) return;
         event.preventDefault(); event.stopPropagation(); this.select(id, true);
       } else if (this.view?.editable === false && (this.editableItem(row) || row.seed && !this.blockedRows.has(id) && this.editableReady(row))) {
         if (!this.handle?.settleNativeInput()) {event.preventDefault(); return;}
@@ -2106,7 +2161,7 @@ export class OutlineController {
       if (event.key === "F2" && !event.shiftKey && this.editableItem(row)) {
         event.preventDefault(); event.stopPropagation();
         if (!event.repeat) {this.blockRange = null; this.handle?.setInputMode("text"); void this.focus(id, "end"); this.syncMetadata(); this.notify();}
-      } else if (event.key === " " && !event.shiftKey && (target === leading || target.matches("[data-outline-bullet]"))) {
+      } else if (event.key === " " && !event.shiftKey && (target === leading || target.matches('[data-outline-bullet]:not([role="checkbox"])'))) {
         event.preventDefault(); event.stopPropagation(); if (!event.repeat) this.select(id);
       } else if (event.key === "Escape" && !event.shiftKey && this.selected.size) {
         event.preventDefault(); event.stopPropagation(); this.clearSelection(id);
@@ -2125,7 +2180,10 @@ export class OutlineController {
       // the chevron leaves with its children; its focus returns to the bullet before React unmounts it.
       if (!(row.children?.available === true || this.requests.has(row.row_id)) && document.activeElement && disclose.contains(document.activeElement))
         leading.querySelector<HTMLElement>("[data-outline-bullet]")?.focus({preventScroll: true});
-      trailing.hidden = this.branchRead(id).error === null && this.mirrors(row) <= 1 && !row.resource?.work?.designation.enabled;
+      const work = row.resource?.work?.designation.enabled ? row.resource.work : null;
+      trailing.hidden = this.branchRead(id).error === null && this.mirrors(row) <= 1 && work?.designation.kind !== "habit" && !row.terminal;
+      if (work?.designation.kind === "task" && work.task_completed_on !== null) dom.dataset.done = "true"; else delete dom.dataset.done;
+      if (row.resource?.kind === "highlight" && row.resource.color !== null) dom.dataset.highlightColor = row.resource.color; else delete dom.dataset.highlightColor;
       if (row.ref) dom.dataset.resourceRef = row.ref; else delete dom.dataset.resourceRef;
       if (row.parent_id) dom.dataset.parentRow = row.parent_id;
       const ancestors: OutlineRow[] = [];
@@ -2145,11 +2203,12 @@ export class OutlineController {
       }
       if (row.seed) {
         dom.dataset.outlineInput = "true"; dom.dataset.outlineSeed = "true";
-        if (!leading.querySelector("[data-seed-bullet]")) {const bullet = document.createElement("span"); bullet.className = rowStyles.bullet; bullet.textContent = "•"; bullet.dataset.seedBullet = "true"; bullet.setAttribute("aria-hidden", "true"); leading.append(bullet);}
+        if (!leading.querySelector("[data-seed-bullet]")) {const bullet = document.createElement("span"); bullet.className = rowStyles.bullet; bullet.dataset.seedBullet = "true"; bullet.dataset.marker = "note"; bullet.setAttribute("aria-hidden", "true"); leading.append(bullet);}
         content.dataset.empty = String(node.firstChild?.content.size === 0); content.dataset.placeholder = "write or @ to link";
       } else {delete dom.dataset.outlineInput; delete dom.dataset.outlineSeed; delete content.dataset.empty; delete content.dataset.placeholder; leading.querySelector("[data-seed-bullet]")?.remove();}
       if (this.pending.fields.get(id)?.pending) dom.dataset.outlinePending = "true"; else delete dom.dataset.outlinePending;
-      if (this.selected.has(id)) dom.dataset.selected = "true"; else delete dom.dataset.selected;
+      if (this.selected.has(id)) {dom.dataset.selected = "true"; dom.style.setProperty("--outline-selection-depth", String(this.selectionDepth));}
+      else {delete dom.dataset.selected; dom.style.removeProperty("--outline-selection-depth");}
       if (this.focused && !this.blockRange && this.selectionRow === id) dom.dataset.outlineActive = "true"; else delete dom.dataset.outlineActive;
       if (row.gap && content.dataset.gap !== row.gap) {
         content.dataset.gap = row.gap;
@@ -2160,7 +2219,7 @@ export class OutlineController {
         if (this.gaps.get(id)?.waiting) {presentation.replaceChildren(); dom.setAttribute("aria-busy", "true");}
         else {presentation.replaceChildren(button); dom.removeAttribute("aria-busy");}
       }
-      if (row.gap) dom.style.minHeight = `${row.gapHeight ?? 32}px`; else dom.style.removeProperty("min-height");
+      if (row.gap) dom.style.minHeight = `${row.gapHeight ?? this.viewport.estimate}px`; else dom.style.removeProperty("min-height");
       if (row.kind === "reference") {
         const editing = this.referenceRow === id && this.canEditReference(row);
         content.hidden = !editing; content.contentEditable = editing ? "true" : "false";
@@ -2317,7 +2376,10 @@ export class OutlineController {
       if (next?.gap) this.refuse(rangeReasonMessage("gap")); else if (next) this.selectPrepared(next.row_id, event.shiftKey);
     }
   };
-  private syncMetadata(): void {for (const mount of this.mounts.values()) mount.sync(); this.syncReadOnly();}
+  private syncMetadata(): void {
+    this.selectionDepth = (this.blockRange?.row_ids ?? []).reduce((depth, id) => Math.min(depth, this.rows.get(id)?.depth ?? depth), Infinity);
+    for (const mount of this.mounts.values()) mount.sync(); this.syncReadOnly();
+  }
   private consumeSeed(committed: Promise<LocalCommit>): void {
     this.seedId = crypto.randomUUID();
     const membership: {revision: string | null} = {revision: null}; this.seedMembership = membership;
@@ -2359,7 +2421,7 @@ export class OutlineController {
         const frozen = {...row, link: structuredClone(row.link)};
         return {source_ref: parent_ref, label: this.label(row), replacement: {occurrence_key: row.row_id, link_id: row.link.link_id}, onSelected: (target, item) => this.replaceReference(frozen, target, item.label)};
       }
-      return {source_ref: parent_ref, label: parent_ref, replacement: null, onSelected: (target, item) => {
+      const insert = (target: LinkTarget, item: ResourceItem) => {
         const bookmark = this.capture(), child_id = crypto.randomUUID(), parent_id = row.root ? this.pending.root_id : row.parent_id!;
         const admitted = this.history.insertReference({placement: {parent_ref, parent: this.writing(parent_ref),
           after_ref: row.root || row.seed ? null : row.ref, before_ref: null}, target, label: item.label,
@@ -2368,6 +2430,28 @@ export class OutlineController {
         void admitted.link.then(link => {if (this.active && link) {this.transfer(child_id, parent_id, link.link_id, this.origin(child_id)); this.changed();}}, () => {});
         void admitted.result.catch(error => {this.error = error; this.notify();});
         if (row.seed) this.consumeSeed(admitted.committed);
+      };
+      // the host stays an insertion's: its context is frozen when the query begins, before a newborn has its link.
+      // an empty item takes the reference in its own place and settles as a replacement does: true closes the query,
+      // false leaves it standing after a refusal. every true has placed the reference or said why it could not.
+      return {source_ref: parent_ref, label: parent_ref, replacement: null, onSelected: insert, consume: (target, item) => {
+        const observed = this.consumable(row) ? this.pending.observedLink(row_id) ?? row.link : null;
+        if (observed === null) return null;
+        const lease = this.lease(), birth = this.pending.birthAttempt(row_id);
+        // the item stays, and the reference lands after it as an insertion would; one that is gone says so.
+        const beside = () => {
+          if (!lease()) return false;
+          if (this.rows.get(row_id)?.ref === row.ref) insert(target, item); else this.refuse(rangeReasonMessage("changed"));
+          return true;
+        };
+        // an item still being born waits for its link, and is read again after the wait. a birth whose first attempt
+        // failed keeps the item, even once a retry has written it: the reference then lands beside it, on a real link.
+        return Promise.resolve(observed).then(async link => {
+          const current = this.rows.get(row_id);
+          if (!lease() || !current?.ref || current.ref !== row.ref || !this.consumable(current) || birth?.failed) return beside();
+          const children = (await (await this.runtime.store).query({kind: "outline_children", occurrences: [this.childQuery(current, current.ref, link)]})).children[0];
+          return children === false && lease() ? this.replaceReference({...current, link}, target, item.label) : beside();
+        }, beside).catch(error => {this.error = error; this.notify(); return false;});
       }};
     },
   };

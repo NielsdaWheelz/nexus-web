@@ -13,6 +13,7 @@ import {
   useState,
   useSyncExternalStore,
   type FocusEvent,
+  type ReactNode,
 } from "react";
 import { useOutcome } from "@/components/feedback/Feedback";
 import { useActiveRegion, useTransportVerbs } from "@/components/feedback/stage";
@@ -38,6 +39,7 @@ import { localContentAvailable } from "@/lib/offline/localContent";
 import DownloadedEpisode, { useSavedEpisode } from "./DownloadedEpisode";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { paneScrollRef, publishPaneScroll } from "@/lib/panes/paneScroll";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { MediaFacts, MediaTitle } from "@/components/media/MediaIdentity";
 import ResourceMetadata from "@/components/resources/ResourceMetadata";
@@ -213,6 +215,7 @@ function MediaRoute({ id }: { readonly id: string }) {
   const operation = metadata?.operation;
   const titleJob = operation?.purpose === "title" ? operation.job_id : null;
   const speak = useActiveRegion();
+  const isMobile = useIsMobileViewport();
   const { profile } = useReaderContext();
   const record = usePaneFreeServerValue({
     key: `/media/${id}`,
@@ -245,53 +248,50 @@ function MediaRoute({ id }: { readonly id: string }) {
     runtime.router.push(`/media/${id}?${query}`);
   };
   if (showSaved && saved.kind === "Ready") return <div className={styles.layout}>
-    <div className={styles.savedSwitch}>
-      <span>downloaded copy</span>
-      <Button aria-busy={view === "live" && record.status === "loading" && admitted || undefined} onClick={() => switchView("live")}>view current version</Button>
+    <div className={styles.strip} data-mobile={isMobile}>
+      <div className={styles.savedSwitch}>
+        <span>downloaded copy</span>
+        <Button aria-busy={view === "live" && record.status === "loading" && admitted || undefined} onClick={() => switchView("live")}>view current version</Button>
+      </div>
+      {gone ? <Fact line={{ fact: "the original isn’t available.", reason: "this downloaded copy is kept." }} speak={speak} />
+        : view === "live" && record.status === "failed" && admitted ? <Failed error={record.error} noun="the current version’s details"
+          retry={{ run: record.refetch, busy: record.retrying }} /> : null}
     </div>
-    {gone ? <Fact line={{ fact: "the original isn’t available.", reason: "this downloaded copy is kept." }} speak={speak} />
-      : view === "live" && record.status === "failed" && admitted ? <Failed error={record.error} noun="the current version’s details"
-        retry={{ run: record.refetch, busy: record.retrying }} /> : null}
     <DownloadedEpisode key={saved.manifest.package_id} saved={saved} onIntent={pinSaved} />
   </div>;
   const viewCurrent = { label: "view current version", commandKey: "ViewCurrentVersion", run: () => switchView("live") };
+  // a state page scrolls itself and, on the phone, takes the one chrome clearance.
+  const statePage = (content: ReactNode) => <div className={styles.stateScrollport} data-mobile={isMobile} ref={paneScrollRef}>{content}</div>;
+  // a source this device can't open: its fact, then its retained quotes and notes.
+  const unopened = (fact: ReactNode) => statePage(<>{fact}<LocalAnnotations mediaId={id} /></>);
   if (view === "downloaded" && !savedReady) return saved.kind === "Loading" ? <Ruling />
-    : saved.kind === "Failed" ? <Fact line={{ fact: "couldn’t open the downloaded copy." }} speak={speak}
-      verbs={[{ label: "retry", commandKey: "RetryDownloadedCopy", run: saved.retry }, viewCurrent]} />
-    : <Fact line={{ fact: "this episode isn’t downloaded." }} speak={speak} verbs={[viewCurrent]} />;
-  if (observation.status === "ready" && observation.observation === null) return <>
-    <Fact line={{ fact: "this item isn’t available to you." }} speak={speak} />
-    <LocalAnnotations mediaId={id} />
-  </>;
+    : saved.kind === "Failed" ? statePage(<Fact line={{ fact: "couldn’t open the downloaded copy." }} speak={speak}
+      verbs={[{ label: "retry", commandKey: "RetryDownloadedCopy", run: saved.retry }, viewCurrent]} />)
+    : statePage(<Fact line={{ fact: "this episode isn’t downloaded." }} speak={speak} verbs={[viewCurrent]} />);
+  if (observation.status === "ready" && observation.observation === null) return unopened(
+    <Fact line={{ fact: "this item isn’t available to you." }} speak={speak} />);
   if (record.status === "ready") return <div className={styles.layout}>
-    {savedReady ? <div className={styles.savedSwitch}><Button onClick={() => switchView("downloaded")}>view downloaded copy</Button></div> : null}
-    {record.error !== null ? <div className={styles.state}><Failed error={record.error} noun="the updated details"
-      retry={{ run: record.refetch, busy: record.refreshing }} /></div> : null}
+    {savedReady || record.error !== null ? <div className={styles.strip} data-mobile={isMobile}>
+      {savedReady ? <div className={styles.savedSwitch}><Button onClick={() => switchView("downloaded")}>view downloaded copy</Button></div> : null}
+      {record.error !== null ? <div className={styles.state}><Failed error={record.error} noun="the updated details"
+        retry={{ run: record.refetch, busy: record.refreshing }} /></div> : null}
+    </div> : null}
     <MediaPane id={id} record={record} />
   </div>;
   if (localContentAvailable && saved.kind === "Loading") return <Ruling />;
-  if (localContentAvailable && saved.kind === "Failed") return <Fact speak={speak}
+  if (localContentAvailable && saved.kind === "Failed") return statePage(<Fact speak={speak}
     line={{ fact: "couldn’t open the downloaded copy.", reason: "saved files and listening history are kept." }}
     verbs={[{ label: "retry", commandKey: "RetryDownloadedCopy", run: saved.retry }, { label: "manage downloads", href: "/downloads",
-      onActivate: (event) => activateTargetLink({ event, runtime, target: { href: "/downloads" } }) }]} />;
-  if (failure !== null && failure.status === 426) return <>
-    <Failed error={failure} noun="this item’s details" />
-    <LocalAnnotations mediaId={id} />
-  </>;
-  if (gone) return <>
-    <Fact line={{ fact: "this item isn’t available to you." }} speak={speak} />
-    <LocalAnnotations mediaId={id} />
-  </>;
+      onActivate: (event) => activateTargetLink({ event, runtime, target: { href: "/downloads" } }) }]} />);
+  if (failure !== null && failure.status === 426) return unopened(<Failed error={failure} noun="this item’s details" />);
+  if (gone) return unopened(<Fact line={{ fact: "this item isn’t available to you." }} speak={speak} />);
   const summary = catalog.data === null ? null : catalogMedia(catalog.data, id);
-  if (summary !== null) return <><SavedMedia summary={summary} record={record} /><LocalAnnotations mediaId={id} /></>;
-  if (catalogOnly) return <>
-    <UnavailableSavedMedia error={catalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : catalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }} />
-    <LocalAnnotations mediaId={id} />
-  </>;
-  return record.status === "failed" ? <>
-    <Failed error={record.error} noun="this item’s details" retry={{ run: record.refetch, busy: record.retrying }} />
-    <LocalAnnotations mediaId={id} />
-  </> : <ReaderRuling profile={profile} />;
+  if (summary !== null) return unopened(<SavedMedia summary={summary} record={record} />);
+  if (catalogOnly) return unopened(
+    <UnavailableSavedMedia error={catalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : catalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }} />);
+  return record.status === "failed"
+    ? unopened(<Failed error={record.error} noun="this item’s details" retry={{ run: record.refetch, busy: record.retrying }} />)
+    : <ReaderRuling profile={profile} />;
 }
 
 /** Writing about a source this device can't open: its quotes and notes stay local and editable. */
@@ -325,7 +325,7 @@ function SavedMedia({ summary, record }: { readonly summary: MediaSummary; reado
   });
   usePaneReturnReady(true);
   const subject = { kind: "Stored" as const, summary };
-  return <div className={styles.stateScrollport}><div className={styles.state}>
+  return <div className={styles.state}>
     <h1><MediaTitle subject={subject} /></h1>
     <p><ResourceMetadata parts={bibliographyMetadata(selectMediaAuthors(summary.contributors), summary.original_published_date)} linkSource={false} /></p>
     {summary.part_source ? <p>from {summary.part_source.title}</p> : null}
@@ -334,7 +334,7 @@ function SavedMedia({ summary, record }: { readonly summary: MediaSummary; reado
     {!remoteReady() ? <Fact line={{ fact: "this text isn’t on this device." }} speak={speak} />
       : record.status === "failed" ? <Failed error={record.error} noun="this item’s details" retry={{ run: record.refetch, busy: record.retrying }} />
       : <Ruling />}
-  </div></div>;
+  </div>;
 }
 
 /** The pane over a read record: its route renders it only once the record is ready. */
@@ -408,11 +408,13 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         progress: hostedProgress(id),
         entry,
         host: { scrollport: (element: HTMLElement, geometryChanged: (reason: "Occlusion" | "Layout") => void) => {
+          const releaseScroll = publishPaneScroll(element);
           readerScrollport.current = element;
           const releaseChrome = chrome.registerReaderScrollport(element);
           const releaseViewport = viewport.registerReaderScrollport(element, geometryChanged);
           return () => {
             if (readerScrollport.current === element) readerScrollport.current = null;
+            releaseScroll();
             releaseChrome();
             releaseViewport();
           };
@@ -507,6 +509,12 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
       if (document.activeElement === root.current) reader.focusSource();
     }
   }, [paneActive, readable, reader, restored]);
+  // unreadable media scrolls its own state page; the reader publishes its port itself.
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (readable || !element) return;
+    return publishPaneScroll(element);
+  }, [readable]);
   // Unread, reset and undo of this media: unsaved progress settles first, the server's cursor after.
   useEffect(
     () =>

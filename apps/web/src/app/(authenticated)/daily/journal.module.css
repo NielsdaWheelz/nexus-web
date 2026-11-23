@@ -1,12 +1,62 @@
+/* The journal is set in the reader's type (the role on its body). Block spacing is written in lh on elements in
+   the paper's own type, never on a display line. Furniture (the band's date, a day's head and title, its completed
+   line, the agenda's words) starts where the rows' words do: the disclose and sign columns from the outline's origin,
+   which the role sizes for every pitch and pointer. */
+.band {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: .5lh var(--space-6) 0 calc(var(--outline-disclose) + var(--outline-sign));
+  margin-block-end: .5lh;
+}
+
+/* The band's date is today's name at display size. It is not a heading: today's own h2 stays in its leaf. */
+.bandDate {
+  min-inline-size: 0;
+  margin: 0;
+}
+
 .feed {
   position: relative;
   overflow-anchor: none;
+  margin-block-start: .5lh;
 }
 
+/* Every day has the same padding, so journalWindow reads one trailing value. The break lives in its last line. */
 .day {
   position: absolute;
   inset-inline: 0;
-  padding-block: var(--space-4) var(--space-8);
+  padding-block: .5lh 2.5lh;
+}
+
+.day:not([data-last])::after {
+  content: "";
+  position: absolute;
+  inset-block-end: calc(.5lh - 1.5px);
+  inset-inline-start: calc(50% - 1.5px);
+  inline-size: 3px;
+  block-size: 3px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  box-shadow: -20px 0 var(--ink-faint), 20px 0 var(--ink-faint);
+  pointer-events: none;
+}
+
+:global([data-theme="elvish"]) .day:not([data-last])::after {
+  opacity: calc(1 - var(--ornament));
+}
+
+:global([data-theme="elvish"]) .day:not([data-last])::before {
+  content: "";
+  position: absolute;
+  inset-inline: var(--space-6);
+  inset-block-end: calc(.5lh - 6px);
+  block-size: 12px;
+  background: var(--gilt-b);
+  mask: var(--elvish-vine) repeat-x center / 240px 12px;
+  opacity: calc(.5 * var(--ornament));
+  pointer-events: none;
 }
 
 .heading {
@@ -14,19 +64,51 @@
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-3);
-  margin-block-end: var(--space-3);
+  margin-block-end: .5lh;
 }
 
 .heading,
 .title {
-  padding-inline: var(--space-6);
+  padding-inline: calc(var(--outline-disclose) + var(--outline-sign)) var(--space-6);
 }
 
+/* Invariant: every day's h2 has identical metrics; journalWindow reads the first one. Only the inner name is sized. */
 .heading h2 {
+  min-inline-size: 0;
   margin: 0;
-  font-size: var(--text-lg);
-  font-weight: var(--weight-semibold);
-  line-height: var(--leading-tight);
+  font: inherit;
+}
+
+.dayName {
+  display: block;
+  font-size: 1.3125em;
+  line-height: 1lh;
+}
+
+:global([data-theme="elvish"]) .dayName {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: 1.5625em;
+}
+
+.title {
+  font-style: italic;
+}
+
+.menu {
+  flex: none;
+}
+
+@media not (any-pointer: coarse) {
+  .menu {
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-glide);
+  }
+
+  :is(.heading, .band):is(:hover, :focus-within) .menu,
+  .menu:has([aria-expanded="true"]) {
+    opacity: 1;
+  }
 }
 
 .navigation,
@@ -35,6 +117,30 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+}
+
+/* The running head: the name of the day under the scroller's top edge. It yields while that day's head is in view. */
+.runningHead {
+  transition:
+    opacity var(--duration-fast) var(--ease-glide),
+    background-color var(--duration-fast) var(--ease-glide),
+    color var(--duration-fast) var(--ease-glide);
+}
+
+.runningHead[data-yielded] {
+  opacity: 0;
+}
+
+.runningHead:is(:hover, :focus-visible, [aria-expanded="true"]) {
+  opacity: 1;
+}
+
+.runningName {
+  font-family: var(--reader-font-family, var(--font-serif));
+  font-size: var(--text-sm);
+  font-style: italic;
+  font-weight: var(--weight-regular);
+  color: var(--ink);
 }
 
 .day:focus-within > .continuation {

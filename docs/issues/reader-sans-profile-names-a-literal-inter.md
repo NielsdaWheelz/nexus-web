@@ -9,7 +9,8 @@ app's Inter is a `next/font/local` face loaded under a generated family name and
 exposed only through the `--font-inter` css variable, so a literal `Inter` matches
 only a locally installed font. a sans profile then renders in the next stack
 entry (the system font) on most machines, and so do the librarian's answers set
-in the reader face.
+in the reader face. the same stack now reaches the journal, pages, notes,
+register, habits and all authored outlines via `readerType`.
 
 ## impact
 

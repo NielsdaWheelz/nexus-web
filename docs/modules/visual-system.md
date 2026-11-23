@@ -87,7 +87,7 @@ materials do not replace the room's ordinary surface and text roles. spine
 heights have a natural two-pixel minimum; years above 900 pixels shrink as a
 whole, including that minimum.
 
-the pane header's pointer role uses mono and machine ink in every room. the pending
+the pane header's pointer role uses mono and inherits the pane's title ink. the pending
 source body publishes the role; the shell applies it only to a retained visit hint.
 it changes neither the one heading nor the stored resource's canonical title.
 
@@ -148,9 +148,10 @@ its subtree with `calc(.5 * var(--ornament-root))`, never from `--ornament`
 itself (a cycle). forced colours, `prefers-contrast: more` and print set the
 dimmer and the grain to 0; tables, code and fields are Bare by construction.
 ornaments stay in pane headers, resource rows, empty surfaces, the account
-bookplate's rule, and the librarian's day rules and answer onset. the account's
+bookplate's rule, the journal's day breaks and the librarian's day rules and answer onset. the account's
 solar-only eärendil star ends its rule. the day vine replaces its hairline with
 the dimmer; the gutter leaf marks only a prose onset, never code or a table.
+between journal days the vine replaces the three points as the dimmer rises.
 the two librarian sites do not use the moon. feedback uses the same restrained
 anatomy in every room.
 
@@ -178,8 +179,10 @@ feedback reserves no idle slot. a fact has one home, determined by its kind:
 | uncommitted words at risk | risk `Hold`, with the affected editor's danger caret |
 | account condition | account mark and row; attention conditions speak once per onset |
 
-selection, autosave, synchronization, successful refresh and refresh failure over
-shown data are silent. failed reads heal through their read owner; a deliberate
+outline command results and block-selection counts use plain pane slips.
+ordinary caret movement, autosave, synchronization, successful refresh and
+refresh failure over shown data are silent. failed reads heal through their
+read owner. a deliberate
 press alone retries a write. copy keeps `useCopyFeedback`'s 1.2-second check and
 one `copied` announcement. copy from a menu announces without a visible check.
 long jobs keep their domain surfaces.
@@ -305,7 +308,10 @@ no module styles another module's internal dom. a caller adjusts a primitive
 only through its props, its `className` (a field primitive's rules weigh one
 class, so the caller's class meets them at equal weight) or a context token the
 primitive declares. `PaneHeaderIdentity` reads `--pane-title-ink` (default `--ink`);
-`SurfaceHeader` reads `--pane-header-rule-ink` (default `--edge-subtle`).
+the pane chrome's foot reads `--pane-header-rule-ink`. the desktop frame,
+the lowest shown phone surface, and the brushed pane share this ink. it
+defaults to transparent at rest and `--edge-subtle` after scrolling. forced
+colours retain a visible rule at rest.
 pane query/navigation controls share declared density
 tokens owned by `CompactChrome.module.css`, applied to pane control rows,
 companion headers, workspace strips, connections controls and the page's running
@@ -317,17 +323,25 @@ content, with 32px fine-pointer and 44px any-coarse-pointer minima. chrome stays
 independent. non-pane field defaults remain unchanged. `SelectField` owns the
 label and native select in forms; pane chrome uses collation words and pickers.
 
-content in a companion beside a text is a third type role. a `Column` or `Sheet`
-companion and inline librarian figure host apply `[data-type-role="margin"]`
-from `globals.css`, setting `--content-font-size` 13px, `--content-meta-font-size` 12px and
-`--content-line-height` `--leading-snug` on its contents, and `--excerpt-scale`
-`.875` and `--excerpt-max-size` `--text-md` for quotes ([highlight](highlight.md)). a `FullScreen`
-companion replaces the text, so it is a page and sets none. resource outline rows,
-ordinary note bodies and page titles read the tokens with their own sizes as fallback. passive figures set no room or density. librarian figures inherit the surrounding
-room; dark rooms use the reader's dark highlight inks, light rooms retain their inks. notes
-outside a companion use one 14px/1.5 type; chrome and targets never read these tokens.
+a companion column, sheet or inline librarian figure sets the margin role.
+its content uses 13px, its metadata 12px, and its leading is 1.35. quotes and
+authored outlines share the reader's face and the margin's size limit,
+`min(R, max(14px, .875 × R), 16px)`, where R is the profile size.
+a full-screen companion uses the ordinary page type. librarian figures inherit
+their room and its highlight colours.
 
-the collation is a line of chrome type on the header hairline. views precede
+`readerType(profile)` sets the reader role on the journal, register, habits,
+page, note, each outline session and the journal's running head. on paper it
+supplies the reader's face, size and unitless leading. embedded outlines take
+the margin's limits above. controls use the ui face through
+`--control-font-family`. labels, citations, tails and receipts use the shared
+`--apparatus-font` shorthand. feedback on the paper takes its surrounding type.
+
+each highlight sideline uses the wash's opaque rgb channels, mixed 55% with
+45% room ink. the excerpt's marked words keep the translucent wash.
+
+the collation is a line of chrome type on the canvas. only its tab list has a
+rail at rest. the scroll-lit foot belongs to the whole chrome stack. views precede
 end-aligned dimension/order words and conditional `reset`; words wrap as a group,
 then among themselves. default words use muted ink, changed words use ink, and
 12px `Choose` stays quieter. forced colours underline changed words; accent marks
@@ -553,10 +567,10 @@ accent ink and an accent-muted hover ground. `tone="danger"` marks destruction
 independently. disabled paint wins over both tones. `size="comfortable"` has a 44px
 minimum; compact controls use their host minimum or 32px. any coarse pointer
 enforces at least 44px in both axes, except for controls inside authored outline
-rows, which follow the row geometry below. the existing dense outline exception
-is 24px with fine input; mobile headers remain 48px. geometry hooks are
-`--control-min-size`, `--control-icon-size`, `--control-font-size` and
-`--control-radius`. callers own layout and adornments, never internal selectors
+rows, which follow the row geometry below. a fine outline sign has a centred
+press area at least 24px tall. mobile headers remain 48px. geometry hooks are
+`--control-min-size`, `--control-icon-size` and `--control-radius`. type reads
+`--control-font-size` and `--control-font-family`. callers own layout and adornments, never internal selectors
 or competing interaction paint. fields retain their separate density tokens.
 
 icon-only controls require an icon and accessible name; decorative glyphs are
@@ -605,7 +619,9 @@ at the top of the row's right column; the trigger never shifts content.
 
 ### index rows
 
-index rows use the shared `ResourceRow` shell. its `indexRow` container owns
+index rows use the shared `ResourceRow` shell. its `Title` content puts the
+single ellipsized title and its menu on one line, 32px fine and 44px coarse.
+the page register uses this form and sets the title in the paper's type. its `indexRow` container owns
 author and shortcut demotion, metadata spacing and tight-row adaptation; see the
 [resource presentation contract](resource-references.md#presentation-contract).
 `ResourceCell` is the wall shell: one navigation link holds square art and a
@@ -642,13 +658,16 @@ pointer. each resource-outline control basis is the maximum of that minimum and
 one `--text-md` glyph plus two `--space-1` gaps; enlarged type can widen existing
 columns. `ResourceOutlineRow`'s control column and text measure belong to its
 [anatomy](resource-references.md#controls-and-composition).
-authored outline rows instead size their controls to the line, in 25px rows with
-a fine pointer and 32px rows with any coarse pointer, where the 28px bullet spans
-its row and no disclose slot is drawn. their type remains 14px fine / 16px coarse
-at 1.5 line height, including inside a companion. an embedded resource row keeps
-its controls inline at the far end of the authored row. its existing control
-minima may make that row taller than a plain authored row; usable controls take
-precedence over equal row heights.
+authored outline geometry follows the effective type. a fine row has zero block
+padding. each text line occupies one pitch (font size × leading). its disclose slot is
+16px.
+its sign and each depth take `max(20px, 1.25em)`. any coarse pointer uses a 14px
+disclose slot, a `max(28px, 1.5em)` sign spanning the row and a
+`max(16px, 1em)` indent. block padding on each side is
+`max(4px, (32px − pitch) / 2)`. the 14px sign steps to 16px at a 20px profile,
+remaining 14px in a margin. embedded resource controls keep their own minima.
+the smallest measured writing row supplies the unmeasured-row estimate. before
+the first measurement the estimate is the root's computed line height.
 note-pane margins follow containing width,
 bounded from 8px to 24px. reference carets reserve one control width at the text's
 end for focus placement. nested search passages begin in the branch tail, without
@@ -659,8 +678,10 @@ reach through its internal button markup.
 `ResourceType` renders the sign `lib/resources/type.ts` chooses for its type (a
 held media kind's medium, else its scheme's; see the
 [presentation contract](resource-references.md#presentation-contract)),
-decorative, unfocusable and current-color, at `--text-md` square. outline markers use muted ink at rest and retain
-control hover/focus treatment; disabled opening markers remain readable in muted
+decorative, unfocusable and current-color. its square reads
+`--resource-type-size` (default `--text-md`). outline signs rest in faint ink,
+open work signs in muted ink. a completed sign fills its disc and draws the
+tick in canvas. completed tasks recede to muted text. habits retain ordinary
 ink. index prefixes use muted ink with a
 `--space-1` gap; the glyph does not shrink, while the existing title fragment
 ellipsizes. notes have no index prefix or gap. type adds no control or text line.
@@ -698,8 +719,8 @@ maximized mode gives only the active chip a full bracket. minimized titles stay
 `--ink-muted` and wear a dashed underline with their sign lowered 2px, so they
 remain distinct from off-screen visible panes without disabled ink. reciprocal
 chip/header brushing projects through dom attributes and declared header tokens,
-without react pointer state. canvas selection dims only inactive pane titles;
-controls retain their ink and pointer-role titles keep their own. only forced
+without react pointer state. canvas selection dims inactive pane titles,
+including pointer titles. controls retain their ink. only forced
 colours retain the active pane's top hairline.
 
 `activePaneControls` owns active minimize/layout content. minimize uses `Remove`,

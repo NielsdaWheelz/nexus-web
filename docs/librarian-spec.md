@@ -277,7 +277,7 @@ ref. validate surface caps and current eligibility. malformed/out-of-pool output
 fails the attempt atomically. legitimate zero picks is successful empty.
 
 add one developer-owned generation policy on the existing codex personal route:
-`gpt-6.1-sol`, medium reasoning, strict json, 180-second deadline, 256 kib input,
+`gpt-6.2-sol`, medium reasoning, strict json, 180-second deadline, 256 kib input,
 existing enforced native/tool bounds. `selection_curation`, owner kind
 `suggestion_feed` and plan `SelectionRead` are new variants in existing owners.
 the plan contains exactly `nexus.resource.inspect`, `nexus.resource.read` and

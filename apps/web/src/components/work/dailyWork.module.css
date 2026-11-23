@@ -1,7 +1,8 @@
-.work {
-  padding: var(--space-4) var(--space-6);
-  border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
-}
+/* The agenda stands on the paper in the reader's type (the journal's role); no size is declared here.
+   Its labels, tails and receipts are apparatus. Rows are one pitch: the sign and the menu each take one line.
+   Its columns are the outline's: the disclose column is the agenda's inline padding, the sign column each row's
+   sign, so every word starts at the rows' text start. */
+.work { padding-inline: var(--outline-disclose) var(--space-6); }
 .header,
 .capture,
 .controls {
@@ -10,19 +11,105 @@
   align-items: center;
   gap: var(--space-2);
 }
-.header { margin-block-end: var(--space-2); }
-.capture { margin-block: var(--space-3); }
+.header,
+.add,
+.capture,
+.receipt { padding-inline-start: var(--outline-sign); }
+/* A control's word starts after its own padding; the agenda's words start at the text start, so the control
+   hangs into the sign column. `work` also hangs its 12px chevron and the control's gap there. */
+.add > button { margin-inline-start: calc(-1 * var(--space-2)); }
+.disclosure {
+  --control-icon-size: 12px;
+  margin-inline-start: calc(-1 * (2 * var(--space-2) + var(--control-icon-size)));
+}
+.header,
+.add,
+.tail,
+.receiptLine,
+.completedLabel {
+  font: var(--apparatus-font);
+  letter-spacing: var(--tracking-wider);
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.header,
+.add,
+.receipt,
+.completed {
+  --control-font-family: var(--font-mono);
+  --control-font-size: var(--text-2xs);
+}
+.habits { margin-inline-start: auto; }
+.chevron {
+  color: var(--ink-faint);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-glide);
+}
+.disclosure:is(:hover, :focus-visible, [aria-expanded="false"]) .chevron { opacity: 1; }
+.disclosure:hover .chevron { color: var(--ink); }
 .capture input { flex: 1; min-width: 0; }
 .row {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  padding-block: var(--space-2);
+  align-items: baseline;
 }
+/* The sign and the menu are one line tall. Their buttons are larger press areas: a flex box centres an item that
+   overflows it on both axes, so each glyph sits on its column's centre and its line's. */
+.sign,
+.menu {
+  flex: none;
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  block-size: 1lh;
+}
+.sign { inline-size: var(--outline-sign); }
 .writing { flex: 1; min-width: 0; }
+.tail { flex: none; }
+.tail,
+.row > .menu { margin-inline-start: var(--space-2); }
+/* The receipt keeps the row's one line in the paper's type, and its height: only its words are apparatus, and
+   `undo` sheds the control's minimum and block padding. */
+.receipt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  block-size: 1lh;
+  --control-min-size: 0;
+}
+.receiptLine {
+  min-inline-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.receipt .undo {
+  padding-block: 0;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+}
 .muted { color: var(--ink-muted); font-size: var(--text-sm); }
-.completed { padding-inline: var(--space-6); margin-block-start: var(--space-4); }
-.completed h3 { margin: 0; font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--ink-muted); }
+.completed {
+  margin-block-start: .5lh;
+  padding-inline: calc(var(--outline-disclose) + var(--outline-sign)) var(--space-6);
+  --control-min-size: 0;
+}
+.completedLabel { margin-inline-end: var(--space-2); }
+.completedList { display: inline; margin: 0; padding: 0; list-style: none; }
+.completedItem { display: inline; }
+.completedItem a { color: inherit; }
+.dot { color: var(--ink-faint); }
+@media not (any-pointer: coarse) {
+  .menu,
+  .clear {
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-glide);
+  }
+  .row:is(:hover, :focus-within) .menu,
+  .menu:has([aria-expanded="true"]),
+  .completedItem:is(:hover, :focus-within) .clear { opacity: 1; }
+}
 .calendar { display: grid; gap: var(--space-3); }
 .week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--space-1); }
 .weekday { text-align: center; font-size: var(--text-sm); color: var(--ink-muted); }
@@ -36,26 +123,6 @@
   cursor: pointer;
   min-height: var(--size-lg);
 }
-.day[aria-pressed="true"],
-.yearDay[data-checked="true"] { background: var(--accent); color: var(--ink-on-accent); }
+.day[aria-pressed="true"] { background: var(--accent); color: var(--ink-on-accent); }
 .day:disabled { color: var(--ink-muted); cursor: default; }
-.day:focus-visible,
-.yearDay:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset); }
-.yearScroll { overflow-x: auto; padding: var(--space-1); }
-.year {
-  display: grid;
-  grid-auto-flow: column;
-  grid-template-rows: repeat(7, var(--space-3));
-  grid-auto-columns: var(--space-3);
-  gap: var(--space-1);
-  width: max-content;
-}
-.yearDay {
-  width: var(--space-3);
-  height: var(--space-3);
-  padding: 0;
-  border: var(--stroke-hairline) solid var(--edge-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  cursor: pointer;
-}
+.day:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset); }

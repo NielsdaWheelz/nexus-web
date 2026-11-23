@@ -1,44 +1,38 @@
 "use client";
 
-import {ACCOUNT_DAY_UNAVAILABLE} from "@/lib/notes/accountDay";
-import {useState} from "react";
 import type {ResourceProjection} from "@nexus/authored/types";
-import {WorkConversionError, WorkUnavailableError} from "@nexus/authored/types";
 import type {OutlineHistory} from "@/lib/notes/structure";
-import {workCommand} from "@/lib/notes/work";
+import {useWorkCheck, type WorkIntent} from "@/lib/notes/work";
 import {localResourceLabel} from "@/lib/resources/localResource";
-import {useOutcome} from "@/components/feedback/Feedback";
-import {workHistoryKey} from "@/lib/notes/useWorkHistoryKeys";
-import {useRenderEnvironment} from "@/lib/renderEnvironment/provider";
+import * as Icon from "@/lib/ui/icons";
 import styles from "./WorkCheckbox.module.css";
 
-export default function WorkCheckbox({resource,today,history,onCompleted}: {
-  resource:ResourceProjection; today:string|null; history:OutlineHistory; onCompleted?:()=>void;
+/** A press on a work sign that completes, handed to a host that outlives the sign. `at` is the input's own
+ * timestamp, on `performance.now()`'s clock. `keyboard`: the keys pressed it with focus on this sign. */
+export interface WorkCompletion { intent: WorkIntent; keyboard: boolean; at: number }
+
+/** A work sign outside an outline row. What a press sends is `useWorkCheck`'s.
+ * `onComplete`: a completing press is the host's. The sign sends nothing itself; the host sends `intent` and owns
+ * its outcome, so a refusal or defect is not lost when the sign unmounts. A reopening press stays the sign's.
+ * `presentDone`: the host's presentation of a completion its projection has not shown yet. The sign is drawn
+ * done, is named for what it shows (`completed: {line}`), and takes no press. */
+export default function WorkCheckbox({resource,today,history,presentDone = false,onComplete}: {
+  resource:ResourceProjection; today:string|null; history:OutlineHistory; presentDone?:boolean;
+  onComplete?:(completion:WorkCompletion)=>void;
 }) {
-  const [busy,setBusy] = useState(false), [defect,setDefect] = useState<{error:unknown}|null>(null);
-  const {say} = useOutcome();
-  const {platform} = useRenderEnvironment();
-  if (defect) throw defect.error;
-  const work = resource.work;
-  if (resource.kind !== "note" || !work?.designation.enabled) return null;
-  const habit = work.designation.kind === "habit";
-  const checked = habit ? today !== null && work.habit_dates.includes(today) : work.task_completed_on !== null;
-  const action = habit ? checked ? "clear today's check" : "mark done today" : checked ? "reopen" : "complete";
-  return <input type="checkbox" className={styles.checkbox} checked={checked} disabled={today === null} aria-disabled={busy || today === null}
-    ref={input => {if (input) input.indeterminate = habit && today === null;}}
-    aria-label={today === null ? `${ACCOUNT_DAY_UNAVAILABLE} ${localResourceLabel(resource)}` : `${action}: ${localResourceLabel(resource)}`} data-row-focusable="true"
+  const check = useWorkCheck(resource,today,history);
+  if (check === null) return null;
+  const checked = presentDone || check.checked;
+  return <button type="button" role="checkbox" className={styles.checkbox} aria-checked={checked} aria-disabled={presentDone || check.busy || check.disabled}
+    aria-label={presentDone ? `completed: ${localResourceLabel(resource)}` : check.label} data-row-focusable="true"
     onPointerDown={event => {if (event.button === 0) event.preventDefault(); event.stopPropagation();}}
-    onKeyDown={event => {workHistoryKey(history,event.nativeEvent,platform); event.stopPropagation();}} onClick={event => {
+    onKeyDown={event => {check.onKeyDown(event); event.stopPropagation();}} onClick={event => {
       event.stopPropagation();
-      if (busy || today === null) {event.preventDefault(); return;}
-      const target = event.currentTarget, keyboard = event.detail === 0;
-      const owned = document.activeElement === target;
-      setBusy(true);
-      void workCommand(history, habit ? {kind:"set_habit_completion",ref:resource.ref,local_date:today,completed:!checked,today}
-        : {kind:"set_task_completion",ref:resource.ref,local_date:checked ? null : today,today}).then(() => {
-          if (!checked && keyboard && owned && (document.activeElement === target || !target.isConnected && document.activeElement === document.body)) onCompleted?.();
-        }, error => {
-          if (error instanceof WorkConversionError || error instanceof WorkUnavailableError) say({fact:error.message}); else setDefect({error});
-        }).finally(() => setBusy(false));
-    }} onChange={() => {}}/>;
+      if (presentDone || check.intent === null) return;
+      if (onComplete && check.checked === false) {
+        onComplete({intent: check.intent, keyboard: event.detail === 0 && document.activeElement === event.currentTarget, at: event.timeStamp});
+        return;
+      }
+      void check.toggle();
+    }}><Icon.Task checked={checked}/></button>;
 }

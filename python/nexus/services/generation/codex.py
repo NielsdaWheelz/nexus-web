@@ -52,6 +52,7 @@ from provider_runtime.agent_runtime import (
     AgentRuntime,
     AgentRuntimeConfig,
     AgentRuntimeError,
+    AgentSubmissionRejected,
     AgentTurnRef,
     CodexNativeOptions,
     CredentialRef,
@@ -61,6 +62,7 @@ from provider_runtime.agent_runtime import (
     JsonSchemaAgentOutput,
     NativeTerminalEvidence,
     TextAgentOutput,
+    submission_to_json,
     terminal_to_json,
     thaw_json_value,
 )
@@ -212,6 +214,10 @@ async def run_codex(
                     await native_execution.record_closure(
                         generation_id, binding, native_execution.NotSubmittedClosure()
                     )
+                elif isinstance(result, AgentSubmissionRejected):
+                    await native_execution.record_closure(
+                        generation_id, binding, native_execution.SubmissionRejectedClosure()
+                    )
                 elif isinstance(result.evidence, NativeTerminalEvidence):
                     native = result.evidence.native_ref
                     assert isinstance(native, AgentTurnRef)
@@ -233,6 +239,20 @@ async def run_codex(
     if isinstance(result, AgentNotSubmitted):
         detail = f"codex did not submit: {result.reason}"
         return RouteResult("failed", None, None, "runtime_unavailable", detail, {}, sent=False)
+    if isinstance(result, AgentSubmissionRejected):
+        detail = (
+            f"codex rejected {result.actual_chars} input characters "
+            f"against a {result.max_chars}-character limit"
+        )
+        return RouteResult(
+            "failed",
+            None,
+            None,
+            "context_too_large",
+            detail,
+            cast(dict[str, JsonValue], submission_to_json(result)),
+            sent=False,
+        )
     evidence = terminal_to_json(result)
     del evidence["final_text"], evidence["raw_structured_output"]
     usage = usage_of(result.usage.value) if isinstance(result.usage, RuntimePresent) else None

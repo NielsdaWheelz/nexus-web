@@ -18,13 +18,14 @@ function navItem(id: DestinationId): NavItem {
 
 /** The rail, in its exact order; the first is home. */
 export const NAV_RAIL: readonly NavItem[] = (
-  ["lectern", "stats", "libraries", "browse", "podcasts", "librarian", "notes", "atlas", "oracle"] as const
+  ["lectern", "libraries", "browse", "podcasts", "librarian", "notes", "atlas", "oracle"] as const
 ).map(navItem);
 export const NAV_IMPORTS = navItem("imports");
 export const NAV_SETTINGS = navItem("settings");
+export const NAV_STATS = navItem("stats");
 
 export function isAccountDestinationId(
   id: DestinationId | null,
-): id is "imports" | "settings" {
-  return id === "imports" || id === "settings";
+): id is "stats" | "imports" | "settings" {
+  return id === "stats" || id === "imports" || id === "settings";
 }

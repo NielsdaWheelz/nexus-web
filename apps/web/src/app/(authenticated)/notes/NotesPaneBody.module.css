@@ -1,0 +1,13 @@
+/* The register's heads stand in the list's head slot, whose `h3` wears the list-head font;
+   the role's class outranks it. */
+.register .recent {
+  font: var(--apparatus-font);
+  letter-spacing: var(--tracking-wider);
+  color: var(--ink-muted);
+}
+
+.register .letter {
+  font: inherit;
+  font-size: 1.3125em;
+  color: var(--ink-muted);
+}

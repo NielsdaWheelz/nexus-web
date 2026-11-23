@@ -30,7 +30,6 @@
   min-block-size: 41px;
   padding-inline: var(--space-3);
   box-shadow: inset 0 calc(-1 * var(--stroke-hairline)) var(--edge-subtle);
-  background: var(--surface-2);
 }
 
 .soloTitle {
@@ -80,7 +79,6 @@
   flex: 0 0 auto;
   min-width: 0;
   box-shadow: inset 0 calc(-1 * var(--stroke-hairline)) var(--edge-subtle);
-  background: var(--surface-2);
 }
 
 .identity {

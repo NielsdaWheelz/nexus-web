@@ -9,7 +9,7 @@ import styles from "./page.module.css";
 
 export const metadata: Metadata = {
   title: "Nexus for Android",
-  description: "Private Android distribution for Nexus.",
+  description: "Download and verify Nexus for Android.",
   alternates: { canonical: "/android" },
   robots: { index: false, follow: true, noarchive: true },
 };
@@ -35,15 +35,11 @@ export default function AndroidPage() {
           aria-labelledby="android-release-heading"
         >
           <div className={styles.introduction}>
-            <p className={styles.eyebrow}>Private distribution</p>
             <h1 id="android-release-heading" className={styles.title}>
               Nexus for Android
             </h1>
             <p className={styles.support}>
               The first-party Android companion for your Nexus library.
-            </p>
-            <p id="android-release-access" className={styles.accessNote}>
-              GitHub access is required to download this release.
             </p>
           </div>
 
@@ -52,7 +48,6 @@ export default function AndroidPage() {
             size="comfortable"
             className={styles.download}
             href={ANDROID_RELEASE_LINKS.apk}
-            aria-describedby="android-release-access"
           >
             Download APK
           </ButtonLink>

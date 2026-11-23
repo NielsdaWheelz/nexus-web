@@ -49,3 +49,15 @@ export function shiftLocalDate(value: string, days: number): string {
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
 }
+
+const dayParts = new Intl.DateTimeFormat("en-US", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+
+/** A day's name: `Tuesday, 17 November`. Another year than `today`'s, or `today` unknown, adds the year. */
+export function formatDay(date: string, today: string | null): string {
+  const parts = Object.fromEntries(dayParts.formatToParts(new Date(`${date}T12:00:00Z`)).map(part => [part.type, part.value]));
+  const day = `${parts.weekday}, ${parts.day} ${parts.month}`;
+  return today !== null && today.slice(0, 4) === date.slice(0, 4) ? day : `${day} ${parts.year}`;
+}
+
+/** A recorded habit date, in full. */
+export function habitDateLabel(date: string): string { return dayParts.format(new Date(`${date}T12:00:00Z`)); }

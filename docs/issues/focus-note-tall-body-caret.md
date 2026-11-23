@@ -6,8 +6,9 @@ establish that the end caret is visible. this is a source-inferred limitation,
 not an observed new regression.
 
 evidence: `apps/web/src/lib/notes/outlineController.ts` `focusNote` reveals the
-stable row anchor; `tryFocus` selects the field's end. the current live capture
-check uses a short note. `AnchorGeometry.position` describes occurrence starts.
+stable row anchor; `tryFocus` selects the field's end. standalone note roots now mount their entire body on paper;
+passage inspection reveals a particular range. that entry does not exercise
+`FocusNote` on a tall descendant in a page. `AnchorGeometry.position` describes occurrence starts.
 
 resolve with a real tall rich-body entry check, then coordinate caret visibility
 through the existing memento/editor owners. preserve selection, cancellation

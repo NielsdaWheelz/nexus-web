@@ -15,8 +15,8 @@ import styles from "./BoundPageTitleEditor.module.css";
 import type { TextEditorHandle, NoteEditorProps, StructuralKeys } from "./NoteEditor";
 import { outlineHistoryCommand, outlineStructuralCommand } from "@/lib/shortcuts";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-export default function BoundPageTitleEditor({ pageRef, document: suppliedDocument, label = "page title", editable = true, placeholder = "untitled page", onEnter, inputRef, history: suppliedHistory, structuralKeys, onEditorReady, onSelectionChange, header, readingFrame = null }: {
-  document?: WritingDocument; header?: true;
+export default function BoundPageTitleEditor({ pageRef, document: suppliedDocument, label = "page title", editable = true, placeholder = "untitled page", onEnter, inputRef, history: suppliedHistory, structuralKeys, onEditorReady, onSelectionChange, readingFrame = null }: {
+  document?: WritingDocument;
   readingFrame?: object | null;
   history?: EditorHistory; structuralKeys?: StructuralKeys; onEditorReady?: (editor: TextEditorHandle | null) => void; onSelectionChange?: NoteEditorProps["onSelectionChange"];
   pageRef: string; label?: string; editable?: boolean; placeholder?: string;
@@ -35,7 +35,6 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
   const nativeFlight = useRef(false);
   const nativeRelease = useRef<() => void>(() => undefined);
   const applying = useRef(false);
-  const [focused, setFocused] = useState(false);
   const [value, setValue] = useState(() => suppliedDocument?.doc.getText("title").toString() ?? "");
   const origin = useRef(Symbol("title occurrence"));
   const manager = useRef<Y.UndoManager | null>(null);
@@ -183,13 +182,13 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
   };
   if (error !== null && !isAuthoredStorageFailure(error)) throw error;
   return <>
-    <Textarea bare className={styles.title} autoGrow={{minRows: 1, maxRows: header ? focused ? 3 : 1 : 6}} ref={ref} value={value} readOnly={readingFrame !== null} aria-label={label} aria-describedby={error === null ? undefined : failureId} placeholder={placeholder} disabled={!editable || !document}
+    <Textarea bare className={styles.title} autoGrow={{minRows: 1, maxRows: 6}} ref={ref} value={value} readOnly={readingFrame !== null} aria-label={label} aria-describedby={error === null ? undefined : failureId} placeholder={placeholder} disabled={!editable || !document}
     style={atRisk ? {caretColor: "var(--danger)"} : undefined}
     onPointerDown={() => {inputIntent.current++;}}
     onInput={() => {const release = nativeRelease.current; queueMicrotask(release);}}
     onSelect={() => {inputIntent.current++; const at = selection(); beforeSelection.current = at; onSelectionChange?.(at);}}
-    onFocus={() => {setFocused(true); onSelectionChange?.(selection());}}
-    onBlur={() => {setFocused(false); history.current?.boundary(); manager.current?.stopCapturing();}}
+    onFocus={() => onSelectionChange?.(selection())}
+    onBlur={() => {history.current?.boundary(); manager.current?.stopCapturing();}}
     onCompositionStart={() => {composing.current = true; beforeSelection.current = selection(); history.current?.boundary(); manager.current?.stopCapturing(); onSelectionChange?.(selection());}}
     onChange={event => change(event.target.value)} onKeyDown={event => {
       inputIntent.current++;

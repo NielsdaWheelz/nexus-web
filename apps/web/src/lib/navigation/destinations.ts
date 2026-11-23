@@ -60,9 +60,9 @@ const REGISTRY = {
   },
   habits: {label:"habits",href:"/habits",keywords:["daily","tasks","routine"],icon:Icon.Check},
   stats: {
-    label: "Stats",
+    label: "reading record",
     href: "/stats",
-    keywords: ["reading", "listening", "activity", "sittings", "stack"],
+    keywords: ["reading", "listening", "activity", "sittings", "stack", "stats"],
   },
   atlas: {
     label: "Atlas",

@@ -17,7 +17,7 @@ still needs its own observed result.
 remaining deployed acceptance:
 
 - automatic new-import discovery and explicit old-source discovery with
-  `gpt-6.1-sol` / `xhigh` through the existing authenticated codex host;
+  `gpt-6.2-sol` / `xhigh` through the existing authenticated codex host;
 - independent piece progress, annotation survival and scoped search;
 - source-pin races, retained-family collection and corrected public links that
   refuse stale image/note identities.

@@ -7,7 +7,7 @@ import {bodyText, emptyBody, type NoteBody} from "@nexus/authored/body";
 import {isVisible} from "@nexus/authored/merge";
 import type {LinkState, ResourceProjection} from "@nexus/authored/types";
 import type {DisplayedSplit, NoteEdit, FocusSelection} from "./editorTypes";
-import type {AdmittedLink, AdmittedStructure, DisplayedWriting, OccurrenceBookmark, OutlineBirthChange, OutlineHistory, OutlinePlacement, RangePublication} from "./structure";
+import type {AdmittedLink, AdmittedNote, AdmittedStructure, DisplayedWriting, OccurrenceBookmark, OutlineBirthChange, OutlineHistory, OutlinePlacement, RangePublication} from "./structure";
 import {advanceRelationship} from "./structure";
 import type {LocalCommit, WritingDocument} from "./runtime";
 import {clipboardPlainText} from "./clipboard";
@@ -26,6 +26,8 @@ interface BirthLocation {placement: Omit<Placement, "row_id" | "ref">; source: R
 interface BoundField {
   document: WritingDocument | null; link: LinkState | Promise<LinkState> | null;
   release(): void; settled: boolean; captureBytes: number; reservations?: number; next?: {state: Promise<RangeState>; link: Promise<LinkState>};
+  /** A newborn whose birth has written no link yet: whether that birth's first attempt failed. */
+  birth?: {failed: boolean};
 }
 interface InputOwner {
   history: OutlineHistory; notify(): void; capture(): InputBookmark;
@@ -88,6 +90,19 @@ export class OutlinePendingInput {
     const ref = parent?.ref ?? parent_ref;
     return {parent_ref: ref, parent: owner.document(ref), after_ref: after_id === null ? null : this.row(after_id).ref,
       before_ref: before_id ? this.row(before_id).ref : null};
+  }
+  /** A newborn's first-attempt outcome while its birth has written no link, else null. An accept captures
+   * the record itself, so it reads the outcome after its wait whatever became of the row meanwhile. */
+  birthAttempt(row_id: string): {readonly failed: boolean} | null {return this.bound.get(row_id)?.birth ?? null;}
+  /** Binds a newborn's canonical document and its birth's relationship. */
+  private bindBirth(row_id: string, admitted: AdmittedNote): void {
+    const birth = {failed: false};
+    const bound: BoundField = {document: admitted.document, link: admitted.link, release: admitted.document.retain(), settled: false, captureBytes: 0, birth};
+    this.bound.set(row_id, bound);
+    void admitted.result.catch(() => {birth.failed = true;});
+    // Once the link is written the item is ordinary: a later accept replaces it.
+    const written = () => {bound.birth = undefined;};
+    void admitted.link.then(written, written);
   }
   observedLink(row_id: string): LinkState | Promise<LinkState> | null {
     const bound = this.bound.get(row_id);
@@ -220,7 +235,7 @@ export class OutlinePendingInput {
     const field = {...row, ref: admitted.document.ref, pending: true};
     this.fields.set(row.row_id, field);
     this.place(row.row_id, row.after_id, row.before_id ?? null);
-    this.bound.set(row.row_id, {document: admitted.document, link: admitted.link, release: admitted.document.retain(), settled: false, captureBytes: 0});
+    this.bindBirth(row.row_id, admitted);
     this.followBirth(field, admitted, location);
     owner.prepared(field, admitted.document); owner.publish([], admitted.committed);
     this.watch([row.row_id], admitted, new Map([[row.row_id, admitted.link]]));
@@ -239,7 +254,7 @@ export class OutlinePendingInput {
         placements_after: document => [this.placementBookmark({...target, ref: document.ref}, true)!], resolvePlacement: location ? this.resolveBirth(target, {...row}, location, true) : undefined}});
     this.fields.set(row_id, {...row, body: left});
     const field = {...target, ref: admitted.document.ref}; this.fields.set(successor, field);
-    this.bound.set(successor, {document: admitted.document, link: admitted.link, release: admitted.document.retain(), settled: false, captureBytes: 0});
+    this.bindBirth(successor, admitted);
     this.followBirth(field, admitted, location);
     const at = this.order.indexOf(row_id); this.order = [...this.order.slice(0, at + 1), successor, ...this.order.slice(at + 1)];
     owner.prepared(field, admitted.document); owner.publish([bound.document], admitted.committed);
@@ -269,11 +284,11 @@ export class OutlinePendingInput {
     this.installNewborn({row, admitted, sources: [], retired: [row_id]});
     return {row_id: row.row_id, committed: admitted.committed};
   }
-  private installNewborn(args: {row: PendingOutlineField; admitted: import("./structure").AdmittedNote; sources: readonly WritingDocument[]; retired: readonly string[]}): void {
+  private installNewborn(args: {row: PendingOutlineField; admitted: AdmittedNote; sources: readonly WritingDocument[]; retired: readonly string[]}): void {
     const {row, admitted, sources, retired} = args;
     const owner = this.current(), field = {...row, ref: admitted.document.ref, body: readBody(admitted.document.doc)};
     this.fields.set(row.row_id, field); this.place(row.row_id, row.after_id, row.before_id ?? null);
-    this.bound.set(row.row_id, {document: admitted.document, link: admitted.link, release: admitted.document.retain(), settled: false, captureBytes: 0});
+    this.bindBirth(row.row_id, admitted);
     owner.prepared(field, admitted.document); owner.publish(sources, admitted.committed);
     this.watch([...retired, row.row_id], admitted, new Map([[row.row_id, admitted.link]]));
   }

@@ -35,9 +35,16 @@ a cold journal day first admits one row and its existing boundary proof, then
 fills through ordinary viewport demand. standalone roots keep their 32-row
 bootstrap. boundary resources remain complete; the row limit is not a byte cap.
 
-date headings stay separate from authored titles. inline journal titles use the
-existing content editor's six-line extent; empty titles hide only after settled
-blur. day reading controls reveal on focus, without adding pointer-scroll chrome.
+the band above the agenda names the account's current date, when known. if
+today is the first day, its accessible heading stays in the leaf and its menu
+moves to the band. a later-dated first page leaves today's leaf heading in view.
+all day headings share metrics while their inner date names can change size. the
+navigation row names the day under the scroll edge and yields while its date is
+in the scrollport. pressing the name opens the calendar. `today` returns to the band. dates use weekday, day and month, adding the year outside this year.
+
+inline journal titles are italic and keep the content editor's six-line extent.
+empty titles hide after settled blur. trailing space holds a break between days.
+day reading controls reveal on focus.
 
 scrolling attaches views on demand while retaining a day's pending owner and
 finite undo history. commands, selection and history remain day-local. native
@@ -67,8 +74,8 @@ link/status changes do not invalidate it.
 a task or daily habit is the same note with optional structured work metadata.
 `[ ] ` at the beginning of typed prose or `make task` designates it; `repeat daily`
 selects daily repetition. paste and code retain literal text. source return creates
-ordinary writing. source bullets, graph operations and independent child tasks
-retain their existing contracts.
+ordinary writing. graph operations and independent child tasks retain their
+existing contracts.
 
 work designation, one task completion date and each habit date are separate stamped
 registers. false habit checks remain causal clearing facts. capture keeps the first
@@ -80,9 +87,20 @@ returns it. text always uses the note's current wording.
 
 `work_pending`, `work_completed` and `habits` query visible notes before cursor
 pagination. unfinished tasks and today's unchecked habits share one capture order.
-work sits above the measured journal feed. each day's completed section includes
-one live reference per note, even when its source writing is also present. no query
-manufactures a page, relationship or daily occurrence note.
+the journal agenda ends with `add a task`, which opens its capture form in
+place. a completion fills the sign immediately. after 600ms from the press,
+its receipt replaces the row. an active menu or an editor still in use keeps
+the row until released. keyboard completion advances focus. pointer completion
+preserves focus through the dwell. a focused sign hands its place to its own
+`undo`, and expiry hands focus to a surviving sign or the capture control.
+
+pressing `undo` during the five-second receipt clears the same note and civil
+day after its completion commits locally. a refused completion restores its
+row. an accepted undo keeps its receipt until the inverse settles, and a
+refused inverse offers another five seconds. a pending-work read at or beyond
+the command's local revision reconciles the restored or expired row. a day's
+settled, nonempty completion read draws one line of linked names with individual
+`clear` actions. no query manufactures a page, relationship or daily occurrence.
 
 today uses one account timezone clock. a server-valid zone absent from the
 browser's tzdata has no computable day: `useAccountToday()` returns null, its
@@ -92,7 +110,10 @@ ordinary note editing and ledger undo stay readable and usable; no other zone
 or day substitutes for the account's. new completions permit today or any past
 civil date, including dates before creation. existing dates never rebucket. task
 reopening clears its date; retrospective clearing addresses its displayed date;
-habit checks remain independent. blank means no record. no deadline, eligibility,
+habit checks remain independent. on an outline row, the nearest dated ancestor
+(including its root) decides whether a habit offers today's checkbox. on another
+day the habit shows a note dot and its `daily` tail. an unknown account day
+leaves the checkbox focusable and unavailable. blank means no record. no deadline, eligibility,
 missed-day, streak, score, automatic parent completion or midnight write exists.
 
 derived panes own one visit-scoped outline history; source actions borrow their
@@ -107,7 +128,11 @@ dialogs retain only their mounted occurrence through completion; departure relea
 it. existing row pins own pending writing and menu preparation. stale reads never
 authorize new work commands.
 
-`/habits?year=YYYY` summarizes binary checks. year activation opens the exact date
+`/habits?year=YYYY` summarizes binary checks. its paper heading carries the
+year controls. the grid shows weeks in columns, weekdays in rows and one dot per
+day. a fill records completion and a ring marks today. the legend follows the
+last habit. the header title yields while the paper heading is visible.
+activating a date opens that date
 in the existing correction dialog; month navigation never writes. year and month
 each use one roving keyboard stop. a normal history button remains available on
 small screens. stopped habits retain editable history. full positive date arrays
@@ -181,7 +206,7 @@ store status cannot create a second stopped-store incident for that command.
 branch collectors publish read and admission state into their existing controller
 request. row chrome consumes that projection without starting another read. the
 existing disclosure slot carries foreground waiting; root waiting uses pane
-chrome. selection and routine autosave produce no narration or success notice.
+chrome. ordinary caret movement and routine autosave are silent.
 failed admission retains its request, proposal and recovery through selection
 and blur. automatic reconciliation resumes deferred healthy proposals only;
 explicit retry renews the failed request's navigation lease before admission.
@@ -235,9 +260,15 @@ explicit unlinks remain removed when an endpoint revives.
 scalar selection/color/position registers choose greatest lamport and replica id.
 a selection captures publication, geometry, quote and context together. endpoint
 order is fractional position then link id; equal-key insertion rekeys only the
-observed tie run. receiving and indexing never manufacture a touch. local pages sort by display
-title and ref, including date-derived display titles for empty daily titles;
-authored devices store no edit timestamps.
+observed tie run. receiving and indexing never manufacture a touch.
+
+the register lists visible undated pages by display title under sqlite `NOCASE`,
+then ref. keyset pagination uses that same pair and the `resources_register`
+partial index. the uppercased first code point heads each run. only ascii letters fold.
+an empty title files as `untitled page`. `opened here` resolves device recents
+and shows the first eight visible undated pages in recent order. a filter hides
+that group and applies to the loaded register prefix. `New page` opens an empty
+focused title on the paper. authored devices store no edit timestamps.
 
 one local sql transaction commits touched merge bytes, projections, indexes,
 source sequence, store revision and immutable pending change. only durable commit
@@ -305,8 +336,9 @@ restore an old body snapshot or overwrite an intervening scalar owner.
 ## outline interaction
 
 one outline session owns its retained root and one persistent descendant
-prosemirror view. authored panes render the root only in their header: pages use
-their native title textarea; notes use one retained rich-body editor. the flat,
+prosemirror view. standalone panes place the root above its children on the
+paper. pages use their native display-sized title textarea. notes use one
+always-visible rich-body editor with a leading checkbox when work is enabled. the flat,
 ephemeral descendant rows project disclosed occurrences and pending fields; they
 never become authored storage. an occurrence uuid survives receipt
 adoption and reparenting. resource refs, relationships and placement remain
@@ -315,31 +347,21 @@ displayed baselines. titles use plain shared text and admit no marks or atoms.
 the projection reuses the canonical inline grammar without importing row ids or
 placement from clipboard content.
 
-`useLocalOutlineRoot` publishes provider-wrapped header nodes and descendant
-content. `OutlineController` owns the root document, creation prelude, admission,
-shared history and focus requests. the root's independent displayed baseline
-remains charged to that admission budget. native selection is separate across
-root and descendants; their text and structure share undo. root bookmarks carry
-relative selections, and history can reveal a hidden root before restoring it.
-only the attachment committed inside chrome acknowledges root visibility.
+`useLocalOutlineRoot` supplies the root editor, its feedback and the descendant
+view. the root's mounted attachment publishes its handle and visibility to the
+controller. `OutlineController` owns the root document, creation prelude,
+admission, shared history and focus requests. root and descendants keep
+separate native selections and share undo. the root's displayed baseline counts
+against the admission budget. bookmarks carry relative selections.
 
-note headers preview the literal first logical line with an ellipsis for hidden
-lines, omitted atoms or overflow. disclosure reveals the entire canonical body;
-prose return inserts a hard break, code return a literal newline. root text never
-participates in child split, join, range selection or arrangement. embedded
-descendants retain the same outline session and appear in its flat projection.
-filtering descendants does not disable the root.
-
-focus departure from the editor and its owned controls collapses the note after
-outside pointer activation and native input settlement. hidden content retains
-its document, guarded drafts, selection and history. fresh disclosure starts at
-the beginning; reopening within the mounted visit retains position. return visits
-start collapsed, including restored source inspections; fresh source arrivals may
-reveal without taking focus. local save failure and complete-current-text copy
-remain visible outside the folded editor. opening a latent page writes nothing;
-its first title or child edit commits creation with that edit.
-source-driven expansion requires a fresh open intent. arrival purpose stays
-separate from whether an inspection was already applied.
+the pane heading names a page by its title and a note by its first line. it
+yields while the paper's opening is in view. enter in the page title focuses
+the first row. a note opens directly on its body, or at an inspected passage.
+return inserts a hard break in prose and a literal newline in code. root text is
+outside child split, join, range selection and arrangement. descendant filtering
+preserves the root. an inline day can reveal its empty title for editing, then
+fold it after focus leaves and native input settles. opening a latent page
+writes nothing. its first title or child edit commits creation with that edit.
 `settleNativeInput` reconciles native packets without requiring a query to close;
 `canArrange` still fences guarded drafts. structural commands require both.
 active native input still refuses settlement. a completed composition transfers
@@ -359,13 +381,13 @@ root text, insertion fields and annotation bodies retain native tab behavior.
 idle editable item text reserves tab/shift-tab, the move chord and the fold chord
 for outline structure. every arrangement, by key or drop, is one plan over the
 topmost selected occurrences, lowered as one batch, one history group and one
-undo; a refusal is one sentence in the outline's status. native links and
+undo. a refusal appears at the pane's foot as a plain slip. native links and
 buttons keep their own keys.
 shift-click across item text or row background selects the inclusive visible
 range from a fixed occurrence anchor. only the descendant view's active text
-selection supplies a text anchor; header and control focus cannot reuse its
+selection supplies a text anchor. root or control focus cannot reuse its
 dormant caret. same-row text selection stays native;
-bullet links keep their navigation. selection excludes root/insertion fields,
+modified work-sign clicks also select without toggling. selection excludes root/insertion fields,
 keeps embedded scopes separate, refuses paging gaps, and retains exact membership
 across incoming updates. it never identifies occurrences by resource ref.
 block mode disables native text editing while retaining focus and structural
@@ -384,8 +406,10 @@ drop's place and removes the source link. alt at release links the item under th
 destination as well.
 row controls keep the host read-only until pointer, f2 or certified native-tab
 entry admits text editing. selection observation never enables editing.
-selection and history announcements use the outline's existing polite status;
-each gesture publishes one event even when its selection count is unchanged.
+keyboard moves, block-selection counts and history results use the pane's
+plain slip. the feedback stage owns its five-second dwell and announcement.
+each gesture publishes a fresh occurrence even when its count repeats. a drag
+shows the row's words and prospective parent in its ghost.
 the existing focus request owns a plain-tab entry certificate while the host is
 unfocused. actual native focus installs its authorized insertion caret
 synchronously before selection observation; pointer and later keyboard intent
@@ -419,7 +443,18 @@ typing, committed composition and textual paste use the existing reference
 chooser; its query stays ephemeral. enter with an open chooser only accepts;
 without a query it births one sibling even when the target is expanded. escape
 cancels the query to the atom, then exits editing. leaving cancels an unaccepted
-query; the chooser overlay remains part of the interaction.
+query. the chooser overlay remains part of the interaction. it anchors to the
+active row, flips above when needed and stays within the scrollport and editor.
+
+accepting in an empty, childless body item replaces its incoming link in one
+undo group. undo restores that item in place. a pending birth waits for its
+link and rechecks the local child proof. a birth whose first attempt failed is
+held and retried as words at risk; the accept waits for the retry's link, then
+ordinary insertion leaves the item in place beside the reference. the pending
+layer holds the first attempt’s outcome until the birth writes its link. an
+accept made during that interval observes the outcome even if the row moves
+or reconciles. a closed lease writes nothing. a refused replacement keeps its
+query open. seeds, roots, nonempty items and parents use ordinary insertion.
 
 replacement retains the original edge until admission, revalidates the frozen
 occurrence and edge under the account lease, and allocates before that live edge
@@ -466,7 +501,7 @@ the relationship menu still names one exact edge. range removal enters the next
 survivor's text start, otherwise the previous survivor's end or empty insertion
 field. read-only survivors receive block selection. the removal press remains
 fenced through keyup across internal focus transfer, including the same session's
-separate root header.
+separate root editor.
 uncommitted annotation input uses the same loss decision for relationship-menu
 unlink and range removal, covering affected edge aliases and their descendants.
 the decision is synchronous at the gesture; admitted work still settles, and
@@ -522,8 +557,7 @@ session undo is not persisted.
 full roam or obsidian parity is outside this editor's target. excluded behaviors
 are cross-pane drag, selection or expand-all beyond one loaded window, synced
 fold state, non-contiguous selection, branch paste by value, a separate zoom mode
-or zoom chords, an in-document title, and `⌘K` inside the editor. the bullet opens
-an ordinary pane; those omissions do not require further implementation.
+or zoom chords, and `⌘K` inside the editor. opening an item uses an ordinary pane.
 
 receipt adoption acknowledges only its admission. it never overwrites later
 writing, placement or the editing host. canonical settlement also clears the
@@ -550,9 +584,10 @@ consuming a reconciled semantic key grants no permission to refresh or adopt
 remote state. a field without an admitted document stays
 read-only until synchronous admission binds its real initializer.
 the narrow observer adapter depends on the locked prosemirror-view version and must be requalified
-when it changes. a query consumes its transient text synchronously on acceptance;
-ordinary typing in other fields continues, while structural commands wait for
-the open query to finish.
+when it changes. ordinary insertion consumes the query at acceptance. replacing
+an occurrence keeps its query until the owner admits the change. ordinary
+typing in other fields continues while structural commands wait for the open
+query to finish.
 
 one resource undo manager tracks distinct occurrence origins within the same
 session history. origin changes break typing groups. an inverse extends coverage
@@ -619,22 +654,23 @@ blocks always retain their touch commands. native keyboard hiding also restores
 the mobile player without changing focus; browsers retain their focus-based
 player suppression.
 
-writing rows lead with a disclose slot, then the bullet. the chevron fills the
-slot only for projected parents and shows on hover, focus or selection; with any
-coarse pointer the slot is gone and collapse lives in the bullet's menu. fold
-state lives with the session, keyed by occurrence, and is never written;
-a return reopens what was open; a fresh visit starts closed.
-a bullet click opens the item through `?via=` its entering link, which the opened
-outline excludes; a press lifts it for a drag (with touch a 250ms hold, released
-in place opening the item menu). each row publishes its occurrence's link path as
-`data-note-block-id`, the pane's return anchor; top-level rows keep the bare link
-id. return restoration waits for the initially open windows to paint or fail.
-a count pill trails an item linked
-under more than one loaded parent. notes and uncommitted drafts use dots, other
-resources the canonical scheme glyph, terminal occurrences the earlier-occurrence
-arrow; a halo behind the marker says the row hides children. currently unmarked
-roots and continuation rows stay unmarked. the root seed has one decorative dot.
-markers remain noneditable chrome
+writing rows lead with a disclose slot and a sign. a parent shows its chevron
+while shut. fine input also reveals it on row hover, focus or selection. the
+coarse chevron is passive. the menu folds its branch. folds belong to the visit
+and occurrence. returning restores them. a fresh visit starts closed.
+
+a note has a dot, a page its page sign, a dated page its calendar, and an
+earlier occurrence its locate sign and `see above`. highlights hang a coloured
+sideline beside the excerpt. a task or live habit uses the bullet itself as a
+checkbox. ordinary click or space toggles it. enter opens and shift-enter forks.
+other bullet links open through `?via=` their entering relationship. a press
+can lift either sign for a drag. a stationary touch hold opens the row menu.
+selection paints one continuous wash from the shallowest selected depth.
+`daily` marks a habit. the repeat sign and `2+` (or a larger floor) report
+distinct parents in the loaded links and pending fields. the seed has a
+decorative dot. each row publishes its link path as `data-note-block-id`.
+top-level rows use the bare link id. return waits for initially open windows
+to paint or fail. markers remain noneditable chrome
 outside `contentDOM`; glyphs never enter authored bodies, history or clipboard
 serialization. opening and relationship
 menus retain the same native control and focus target. retaining an open empty
@@ -799,7 +835,7 @@ or passive stream exists. hide stops successors, never durable commits or an
 admitted acknowledgement; return and local commits wake the document scheduler.
 two visible documents may share one running unit without owning each other's lifetime.
 hello checks account, wire and format before storage, with an exact revision echo.
-wire admission and durable format admission remain separate. current authored format is 5.
+wire admission and durable format admission remain separate. current authored format is 6.
 
 `GET /authored/snapshot` streams a repeatable-read corpus with head and lamport in
 its header and completion footer, plus exact record counts. interrupted staging
