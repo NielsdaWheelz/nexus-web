@@ -678,7 +678,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "sqlalchemy", extras = ["asyncio", "postgresql-psycopg"], specifier = ">=2.0.36" },
     { name = "structlog", specifier = ">=24.1.0" },
-    { name = "universal-memory", git = "https://github.com/NielsdaWheelz/universal-memory.git?rev=25ed86556f9580154806d901375ec06e8902ecaa" },
+    { name = "universal-memory", git = "https://github.com/NielsdaWheelz/universal-memory.git?rev=b5432c7a60700bc6b4171a09baf96f45ebe8be0e" },
     { name = "uuid6", specifier = ">=2025.0.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
     { name = "youtube-transcript-api", specifier = ">=1.2.4" },
@@ -1290,7 +1290,7 @@ wheels = [
 [[package]]
 name = "universal-memory"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/universal-memory.git?rev=25ed86556f9580154806d901375ec06e8902ecaa#25ed86556f9580154806d901375ec06e8902ecaa" }
+source = { git = "https://github.com/NielsdaWheelz/universal-memory.git?rev=b5432c7a60700bc6b4171a09baf96f45ebe8be0e#b5432c7a60700bc6b4171a09baf96f45ebe8be0e" }
 dependencies = [
     { name = "llm-tools" },
     { name = "pgvector" },

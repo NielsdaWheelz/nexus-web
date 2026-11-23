@@ -56,7 +56,7 @@ packages = ["nexus"]
 override-dependencies = ["llm-tools==0.1.0"]
 
 [tool.uv.sources]
-universal-memory = { git = "https://github.com/NielsdaWheelz/universal-memory.git", rev = "25ed86556f9580154806d901375ec06e8902ecaa" }
+universal-memory = { git = "https://github.com/NielsdaWheelz/universal-memory.git", rev = "b5432c7a60700bc6b4171a09baf96f45ebe8be0e" }
 provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "10dd85ace6648ccfd2f3cdcbe8122836351f44a4" }
 llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "3edb4266fcbbb6ffea6615ced6c66c6ac0d0ad92" }
 llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "8989f3afdcc640f775bd0cc9e7a0b4c246f10e57" }

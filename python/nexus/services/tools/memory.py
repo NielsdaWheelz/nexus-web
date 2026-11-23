@@ -404,7 +404,7 @@ def family(config: MemoryClientConfig | None) -> ToolFamily:
                 spec=spec,
                 execute=execute,
                 replay_policy=ReplayPolicy.ReDispatchable,
-                implementation_revision="nexus-shared-memory-view-v4"
+                implementation_revision="nexus-shared-memory-view-v5"
                 if spec is MEMORY_VIEW_SPEC
                 else "nexus-shared-memory-v3",
                 policy_epoch=PolicyEpoch("nexus-shared-memory-v1"),
