@@ -372,6 +372,22 @@ export function changesDailyIndex(change: Change): boolean {
   return change.resources.some(resource => resource.kind === "note" || resource.kind === "page" && resource.local_date !== null);
 }
 
+/** A resource read depends only on its own row in the three readable families. */
+export function changedResourceRefs(changes: readonly Change[]): string[] {
+  const refs = new Set<string>();
+  for (const change of changes) {
+    for (const resource of change.resources) refs.add(resource.ref);
+    for (const source of change.source_stubs) refs.add(source.source_ref);
+    for (const passage of change.passages) refs.add(`passage_anchor:${passage.anchor_id}`);
+  }
+  return [...refs];
+}
+
+export function invalidatesQuery(query: AuthoredQuery, corpusChanged: boolean, dailyIndexChanged: boolean, resourceRefs: readonly string[] | null): boolean {
+  if (query.kind === "daily_index") return dailyIndexChanged;
+  return corpusChanged && (query.kind !== "resource" || resourceRefs === null || resourceRefs.includes(query.ref));
+}
+
 /** Every compiled slice is executed in one host store turn, under one revision. */
 export function compileOutlineWindows(query: Extract<AuthoredQuery, {kind: "outline_windows"}>): CompiledQuery[] {
   if (query.ranges.length === 0 || query.excluded_link_ids.length > 1000 ||

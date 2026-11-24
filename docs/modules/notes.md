@@ -71,6 +71,11 @@ note invalidation is conservative: body edits can revive a deleted work note.
 this accepts extra local index reads without a second dependency cache.
 link/status changes do not invalidate it.
 
+direct resource subscriptions wake for the refs a commit or feed application
+can change. provisioning and bulk scope publication can invalidate the whole
+store. an outline admission reads causal state for newly held documents from
+the slice's store revision. existing document owners keep their own subscriptions.
+
 ## work
 
 a task or daily habit is the same note with optional structured work metadata.

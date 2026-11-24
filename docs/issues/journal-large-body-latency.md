@@ -22,10 +22,14 @@ passive slice and 2,072,821 bytes for the explicitly selected large row.
 the proof had no boundary resources. evidence is
 `takeover-d-723d09a-021709/authored.json` in the private journal rehearsal.
 
-the timed baseline replay observed the remote clear but did not focus the
-editor. at `723d09a81` the candidate timed out waiting for the initial title,
-before the hold or the clear. neither attempt typed. the two-second save target
-remains open.
+the focused replay at `9aff45f4b` held the target title, observed the remote
+clear, clicked into the now-empty editor and entered all 39 characters.
+17 target updates committed before the 75-second observation ended. the trace
+recorded zero boundary body bytes, roughly 31 mb of selected text for the
+adjacent day, and 414 mb of causal state reads for its nine unchanged notes.
+most came from direct resource subscriptions requerying on every corpus change.
+evidence is `takeover-d-focused-9aff45f-023234/authored.json`.
+the two-second save target remains open.
 
 proposed acceptance: the same real nine-body fixture saves the entire title
 within two seconds of final input, without repeated boundary-body transfer,

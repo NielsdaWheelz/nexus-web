@@ -13,6 +13,7 @@ import { uploadStall } from "./status";
 import { scheduleReplication } from "./schedule";
 import type { SyncStep } from "./sync";
 import { FORMAT_REVISION, type AuthoredStore, type QueryResult, type SyncFailure, type SyncStatus } from "@nexus/authored/types";
+import { invalidatesQuery } from "@nexus/authored/queries";
 
 /** Existing host admission refusals are recoverable setup conditions. */
 export class AuthoredSetupError extends Error {
@@ -82,7 +83,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
   let failure: SyncFailure = null;
   let replication: ReturnType<typeof scheduleReplication> | null = null;
   const waiting = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
-  const queries = new Set<(corpusChanged: boolean, dailyIndexChanged: boolean) => void>();
+  const queries = new Set<(corpusChanged: boolean, dailyIndexChanged: boolean, resourceRefs: readonly string[] | null) => void>();
   const evidence = new Set<() => void>();
   const closedWaiters = new Set<() => void>();
   const statuses = new Set<(status: SyncStatus, detail: string | null, failure: SyncFailure) => void>();
@@ -113,7 +114,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
       if (terminalFailure !== null) return;
       status = data.status; detail = data.detail ?? null; failure = data.failure;
       for (const listener of statuses) listener(status, detail, failure);
-      for (const query of queries) query(data.corpus_changed, data.daily_index_changed);
+      for (const query of queries) query(data.corpus_changed, data.daily_index_changed, data.resource_refs);
     } else if (data.kind === "evidence_changed") {
       if (terminalFailure === null) for (const listener of evidence) listener();
     } else if (data.kind === "retired") {
@@ -174,8 +175,12 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
     subscribe: (query, listener, failed) => {
       let active = true;
       let generation = 0;
-      const read = (corpusChanged: boolean, dailyIndexChanged: boolean) => { if (!(query.kind === "daily_index" ? dailyIndexChanged : corpusChanged)) return; const current = ++generation; void call<QueryResult>("query", { query }).then(value => { if (active && generation === current) listener(value); }, error => { if (active && generation === current) failed(error); }); };
-      queries.add(read); read(true, true);
+      const read = (corpusChanged: boolean, dailyIndexChanged: boolean, resourceRefs: readonly string[] | null) => {
+        if (!invalidatesQuery(query, corpusChanged, dailyIndexChanged, resourceRefs)) return;
+        const current = ++generation;
+        void call<QueryResult>("query", { query }).then(value => { if (active && generation === current) listener(value); }, error => { if (active && generation === current) failed(error); });
+      };
+      queries.add(read); read(true, true, null);
       return () => { active = false; queries.delete(read); };
     },
     evidence_changed: listener => { evidence.add(listener); return () => { evidence.delete(listener); }; },

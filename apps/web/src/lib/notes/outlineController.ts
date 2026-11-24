@@ -1016,9 +1016,9 @@ export class OutlineController {
         });
       };
       if (!valid()) return;
-      const refs = this.refs(next);
+      const missingRefs = [...this.refs(next)].filter(ref => !this.documents.has(ref));
       const store = await this.runtime.store;
-      const snapshot = await store.readSnapshot({refs: [...refs], link_ids: [], anchor_ids: [], source_refs: []});
+      const snapshot = await store.readSnapshot({refs: missingRefs, link_ids: [], anchor_ids: [], source_refs: []});
       if (!valid() || snapshot.replica.store_revision !== window.data.store_revision) return;
       const keep = this.refs(next), retired = [...this.documents].filter(([ref]) => !keep.has(ref));
       const activeRow = this.selectionRow ? this.rows.get(this.selectionRow) : null;
