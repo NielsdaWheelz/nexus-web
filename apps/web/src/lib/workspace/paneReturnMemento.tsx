@@ -26,6 +26,8 @@ const ANCHORS = "[data-collection-row-id], [data-note-block-id]";
 
 export type AnchorPosition =
   | { readonly kind: "ready"; readonly offset: number }
+  /** The committed layout knows this offset before the occurrence is mounted. */
+  | { readonly kind: "reserved"; readonly offset: number }
   | { readonly kind: "pending"; readonly estimate: number | null }
   | { readonly kind: "missing" }
   | { readonly kind: "failed" };
@@ -84,13 +86,18 @@ interface MeasuredAnchor extends Anchor {
   top: number;
   managed: boolean;
 }
+interface JournalHeading {
+  top: number;
+  inset: number;
+  height: number;
+}
 interface RefreshSnapshot {
   paneId: string;
   port: Scrollport;
   oldTop: number;
   anchors: MeasuredAnchor[];
   order: readonly string[];
-  clampedArrival: { anchor: Anchor; top: number; valid(): boolean } | null;
+  clampedArrival: { anchor: Anchor; heading: JournalHeading; valid(): boolean } | null;
   scheduled: boolean;
 }
 interface Readiness {
@@ -210,25 +217,28 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     const frame = published ? entry.frame : entry.geometry.read();
     if (frame === null) return {kind: "pending", estimate: null};
     const position = frame.position(anchor.id);
-    if (position.kind !== "ready") return position;
-    const row = published ? null : entry.geometry.element(anchor.id);
+    if (position.kind !== "ready" && position.kind !== "reserved") return position;
+    const row = published || position.kind === "reserved" ? null : entry.geometry.element(anchor.id);
     const offset = row?.getClientRects().length
       ? row.getBoundingClientRect().top - port.element.getBoundingClientRect().top + port.element.scrollTop
       : (published ? frame.origin + port.element.clientTop : origin(frame)) + position.offset;
-    return {kind: "ready", offset};
+    return {kind: position.kind, offset};
   }
 
-  function journalHeading(port: Scrollport, anchor: Anchor, published = false): { top: number; height: number } | null {
+  function journalHeading(port: Scrollport, anchor: Anchor, published = false, previous: JournalHeading | null = null): JournalHeading | null {
+    const position = locate(port, anchor, published);
+    if (position.kind === "reserved" && previous !== null)
+      return {...previous, top: position.offset + previous.inset};
+    if (position.kind !== "ready") return null;
     const article = geometryFor(port, anchor)?.geometry.element(anchor.id);
     const heading = article?.querySelector("[data-journal-heading] h2");
     if (!article || !heading?.getClientRects().length) return null;
-    const position = locate(port, anchor, published);
-    if (position.kind !== "ready") return null;
     const box = heading.getBoundingClientRect();
-    return {top: position.offset + box.top - article.getBoundingClientRect().top, height: box.height};
+    const inset = box.top - article.getBoundingClientRect().top;
+    return {top: position.offset + inset, inset, height: box.height};
   }
 
-  function headingVisible(port: Scrollport, heading: { top: number; height: number }, scrollTop: number): boolean {
+  function headingVisible(port: Scrollport, heading: JournalHeading, scrollTop: number): boolean {
     const band = paneVisibleBand(port.element);
     const y = heading.top + port.element.getBoundingClientRect().top - scrollTop;
     return y + heading.height > band.top && y < band.bottom;
@@ -298,7 +308,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       for (const id of frame.anchors) {
         const position = frame.position(id);
         if (position.kind === "missing") continue;
-        const offset = position.kind === "ready" ? position.offset : position.kind === "pending" ? position.estimate : null;
+        const offset = position.kind === "pending" ? position.estimate : position.kind === "failed" ? null : position.offset;
         result.push({ anchor: { scope: entry.scope, id }, top: frame.origin + (offset ?? Number.POSITIVE_INFINITY) });
       }
     }
@@ -584,7 +594,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     }
     const arrival = port.clampedArrival;
     const heading = arrival?.valid() ? journalHeading(port, arrival.anchor, published) : null;
-    const clampedArrival = arrival && heading && headingVisible(port, heading, oldTop) ? {...arrival, top: heading.top} : null;
+    const clampedArrival = arrival && heading && headingVisible(port, heading, oldTop) ? {...arrival, heading} : null;
     const snapshot = {paneId, port, oldTop, anchors, order, clampedArrival, scheduled: false};
     refreshes.set(paneId, snapshot);
     return snapshot;
@@ -613,9 +623,9 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         target += next.offset - anchor.top;
         break;
       }
-      const heading = clampedArrival?.valid() ? journalHeading(port, clampedArrival.anchor) : null;
+      const heading = clampedArrival?.valid() ? journalHeading(port, clampedArrival.anchor, false, clampedArrival.heading) : null;
       if (clampedArrival && heading && !headingVisible(port, heading, clamp(port, target)))
-        target = oldTop + heading.top - clampedArrival.top;
+        target = oldTop + heading.top - clampedArrival.heading.top;
       const moved = rebaseFrames(port);
       const delta = clamp(port, target) - port.element.scrollTop;
       if (delta !== 0) {

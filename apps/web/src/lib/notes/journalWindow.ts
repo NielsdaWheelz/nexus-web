@@ -118,7 +118,7 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
         }
         const offset = prefix.tops[rank];
         const node = nodes.current.get(date);
-        return node && !node.hidden ? { kind: "ready", offset } : { kind: "pending", estimate: offset };
+        return { kind: node && !node.hidden ? "ready" : "reserved", offset };
       },
     };
     readViewport();
