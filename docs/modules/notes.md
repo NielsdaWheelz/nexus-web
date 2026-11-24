@@ -273,6 +273,11 @@ hides that group and matches every title by unicode-15 nfc/lower/substring. the
 large register reads ordered ranks at one store revision. long titles retain
 identity and grouping and resolve only when mounted. `New page` opens an empty
 focused title on the paper. authored devices store no edit timestamps.
+a small description returns the full lean order. a large description returns
+the total, consecutive heading lengths and a measurement sample. the viewport
+reads bounded ranks and locates saved references at that revision. the body
+queries long labels only for mounted rows. no complete rank inventory crosses
+the bridge on a large open.
 
 one local sql transaction commits touched merge bytes, projections, indexes,
 source sequence, store revision and immutable pending change. only durable commit

@@ -1,14 +1,17 @@
-# seek oversized authored indexes by occurrence
+# seek large work and mention indexes by occurrence
 
-the authored sqlite owner returns revision-checked rank ranges, but
-`apps/web/src/lib/notes/indexes.ts` drains every range before publishing a
-register. notes, incoming mentions, work and habits still pay full-key
-materialization on cold open and restoration. ordinary outline navigation
-can seek its link id, but its structural discovery also inventories all open
-siblings.
+incoming mentions, pending/completed work and habits publish only after
+`apps/web/src/lib/notes/indexes.ts` has drained the range keys. their rich
+viewports can be bounded while opening and restoration still materialize the
+full key order. unfiltered outline navigation can seek a link id directly
+but still inventories open siblings for its structural extent.
 
-retain the small complete path. large observations need bounded group/count
-descriptions and occurrence-to-rank reads under the same revision, then lazy
-structural windows around the viewport. verify cold End, a return deep in the
-list, and a changed revision between description and demand. inspect bridge
-bytes to confirm they scale with the viewport and groups.
+the notes register uses revision-scoped description, range and locate reads
+and provides a measured sparse viewport at large sizes. extend the same
+contract to the remaining families at their sqlite query owners. keep the
+explicit outline filter's full examination of the disclosed adjacency.
+
+resolve with a large cold end, deep return and revision change between
+description and demand. independently check the occurrence and previous
+order, and inspect decoded data to confirm it scales with mounted rows and
+group descriptors.
