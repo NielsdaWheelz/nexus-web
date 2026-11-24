@@ -21,7 +21,7 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
   const presentation = useMemo(() => {
     const before = previous.current;
     const sameRankedRevision = before.ranked !== undefined && before.ranked.revision === incomingRanked?.revision;
-    if (held && before.scope === scope && before.ids.length > 0 && !sameRankedRevision &&
+    if (held && before.scope === scope && (before.ranked?.count ?? before.ids.length) > 0 && !sameRankedRevision &&
       !(motion === "travel" && before.ranked === undefined && incomingRanked === undefined &&
         incoming.length > before.ids.length && before.ids.every((id, rank) => incoming[rank] === id))) {
       return before;
@@ -116,21 +116,31 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
     const root = list.current, port = index.scrollElement;
     if (!windowed || !root || !port) {frame.current = null; return;}
     if (revision.current.measurements !== measurements) revision.current = {measurements, count: revision.current.count + 1};
-    frame.current = {revision: revision.current.count, observation: publishedRevision ?? undefined, root, scrollport: port, origin: margin, anchors: ids,
+    function rankAt(top: number) {
+      let lo = 0, hi = measurements.length;
+      while (lo < hi) {
+        const middle = (lo + hi) >>> 1;
+        if (measurements[middle]!.end - margin <= top) lo = middle + 1;
+        else hi = middle;
+      }
+      return lo;
+    }
+    frame.current = {revision: revision.current.count, observation: publishedRevision ?? undefined,
+      returnOrder: ranked?.returnOrder, root, scrollport: port, origin: margin, anchors: ids,
       firstVisible(top, bottom) {
-        let lo = 0, hi = measurements.length;
-        while (lo < hi) {
-          const middle = (lo + hi) >>> 1;
-          if (measurements[middle]!.end - margin <= top) lo = middle + 1;
-          else hi = middle;
-        }
-        for (let rank = lo; rank < measurements.length; rank++) {
+        for (let rank = rankAt(top); rank < measurements.length; rank++) {
           const offset = measurements[rank]!.start - margin;
           if (offset >= bottom) break;
           const id = idAt(rank);
           if (id !== undefined) return {id, offset};
         }
         return null;
+      },
+      landing(top, bottom) {
+        if (ranked?.returnOrder === undefined) return null;
+        const rank = rankAt(top), slot = measurements[rank];
+        if (slot === undefined || slot.start - margin >= bottom) return null;
+        return {rank, id: idAt(rank), offset: slot.start - margin};
       },
       position(id) {
         const rank = rankOf(id);
@@ -149,7 +159,7 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
     },
     element: id => list.current?.querySelector<HTMLElement>(`[data-collection-row-id="${CSS.escape(id)}"]`) ?? null,
   }), [list]);
-  usePaneAnchorGeometry({scope, geometry: windowed ? geometry : null, ready: !windowed || slots.length > 0});
+  usePaneAnchorGeometry({scope, geometry: windowed ? geometry : null, ready: !windowed || ranked?.returnOrder !== undefined || slots.length > 0});
   const viewport = origin !== null && index.range !== null && index.scrollRect !== null
     ? {first: index.range.startIndex, height: index.scrollRect.height} : null;
   return {slots, height, windowed, count, viewport, measure: windowed ? index.measureElement : undefined};

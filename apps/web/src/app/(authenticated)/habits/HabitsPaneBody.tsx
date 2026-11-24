@@ -15,6 +15,7 @@ import HabitYear, { HabitYearLegend } from "@/components/work/HabitYear";
 import { habitDateLabel } from "@/lib/localDate";
 import { useAccountToday } from "@/lib/notes/accountDay";
 import { useAuthoredQuery, useWorkLabel } from "@/lib/notes/hooks";
+import { useCapturedIndex } from "@/lib/notes/capturedIndex";
 import { useRankedAuthoredWindow } from "@/lib/notes/rankedAuthoredWindow";
 import { useWorkHistory, useOpenHabitHistory, WorkHistoryContext } from "@/lib/notes/work";
 import { usePaneChrome, usePaneTitleYield } from "@/lib/panes/paneChrome";
@@ -24,7 +25,12 @@ import { readerType } from "@/lib/reader/typography";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./habits.module.css";
 
-const habits = (result: QueryResult) => result.habits;
+const HABITS = {kind: "habits"} as const;
+const selectHabits = (result: QueryResult) => result.habits;
+const habits = (result: QueryResult) => {
+  const value = selectHabits(result);
+  return value?.kind === "range" || value?.kind === "locations" ? value : null;
+};
 
 export default function HabitsPaneBody() {
   const today = useAccountToday();
@@ -41,14 +47,14 @@ export default function HabitsPaneBody() {
     return params;
   }}), [defaultYear]);
   const {state: year, setState: setYear} = usePaneUrlState(codec);
-  const read = useAuthoredQuery({kind: "habits", at: {kind: "describe"}, expected_revision: null});
-  const value = read.data?.habits;
+  const {read, order, admitted, observation, shownOrder, revision, held} = useCapturedIndex(HABITS, selectHabits);
+  const value = observation?.habits;
   const description = value?.kind === "description" ? value : null;
-  const revision = read.data?.store_revision ?? null;
   const sparse = description !== null && description.items.length < description.total;
-  const window = useRankedAuthoredWindow({kind: "habits"}, revision, description, habits);
+  const window = useRankedAuthoredWindow(HABITS, revision, description, habits, held);
+  const returnOrder = useMemo(() => shownOrder === null ? undefined : {...shownOrder, prefix: []}, [shownOrder]);
   const {history, error} = useWorkHistory();
-  usePaneReturnReady(read.data !== null || read.error !== null);
+  usePaneReturnReady(admitted !== null || read.error !== null || order.error !== null, revision);
   const type = readerType(useReaderProfile());
   const title = useRef<HTMLParagraphElement>(null);
   usePaneTitleYield(title);
@@ -68,16 +74,16 @@ export default function HabitsPaneBody() {
       items.set(item.ref, item);
     }
     const ranked: Omit<RankedIndex, "heads"> = {
-      count: description.total, revision, failed: window.error !== null,
+      count: description.total, revision, returnOrder, failed: window.error !== null,
       idAt: rank => window.items.get(rank)?.ref,
       rankOf: id => positions.get(id) ?? window.positions?.get(id),
       request: window.request,
     };
     return {ids: [...items.keys()], items, ranked};
-  }, [description, revision, sparse, window.items, window.positions, window.request, window.error]);
+  }, [description, revision, returnOrder, sparse, window.items, window.positions, window.request, window.error]);
   const windowed = (description?.total ?? 0) > INDEX_WINDOW_THRESHOLD;
   const index = useVariableIndex({scope: "Habits", ids, ranked, list, estimate: 160, pinned, windowed});
-  const opened = index.slots.length > 0 || description?.total === 0 || read.error !== null;
+  const opened = index.slots.length > 0 || description?.total === 0 || read.error !== null || order.error !== null;
   useEffect(() => {
     if (currentYear === null || readLatest || !opened) return;
     // The current date makes this a sidecar. Let the first viewport reach paint.
@@ -85,6 +91,7 @@ export default function HabitsPaneBody() {
     return () => cancelAnimationFrame(frame);
   }, [currentYear, readLatest, opened]);
   if (error) throw error;
+  const failure = read.error ? read : order.error ? order : window;
   return <WorkHistoryContext.Provider value={history}><div {...type}>
     <div className={styles.head}>
       <p ref={title} className="reader-display">{year === null ? "Habits" : `Habits, ${year}`}</p>
@@ -97,9 +104,9 @@ export default function HabitsPaneBody() {
     {today === null ? <AccountCalendarUnavailable/> : null}
     <AuthoredReadFailure {...latest} noun="the latest habit year"/>
     <div data-pane-return-scope="Habits">
-      <PaneSurface measured={index.windowed} state={read.data === null && read.error === null ? <Ruling/> : <AuthoredReadFailure {...(read.error ? read : window)} noun="habits"/>}
-        empty={read.data !== null && index.count === 0 ? <p>no daily habits yet. choose repeat daily on a note.</p> : null}>
-        {index.count > 0 ? <ResourceList ref={list} ariaLabel="habits" busy={read.pending} height={index.height} windowed={index.windowed}>
+      <PaneSurface measured={index.windowed} state={description === null && failure.error === null ? <Ruling/> : <AuthoredReadFailure {...failure} noun="habits"/>}
+        empty={description !== null && index.count === 0 ? <p>no daily habits yet. choose repeat daily on a note.</p> : null}>
+        {index.count > 0 ? <ResourceList ref={list} ariaLabel="habits" busy={read.pending || admitted === null && order.error === null} height={index.height} windowed={index.windowed}>
           {index.slots.map(({id, rank, top, size}) => {
             const item = items.get(id);
             return <li key={id} ref={index.measure} data-index={rank} data-collection-row-id={id} aria-posinset={rank + 1} aria-setsize={index.count}

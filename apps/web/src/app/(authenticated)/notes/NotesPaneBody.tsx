@@ -11,7 +11,7 @@ import { Fact } from "@/components/feedback/Fact";
 import { presentNote } from "@/lib/collections/presenters/note";
 import { useAuthoredAccountId } from "@/lib/authored/provider";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
-import { usePageOrder } from "@/lib/notes/pageOrder";
+import { useCapturedIndex } from "@/lib/notes/capturedIndex";
 import { useRankedAuthoredWindow } from "@/lib/notes/rankedAuthoredWindow";
 import type { RankedIndex } from "@/lib/collections/measuredIndexWindow";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
@@ -21,11 +21,12 @@ import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
 import { readerType } from "@/lib/reader/typography";
 import { useRecent } from "@/lib/recent/store";
-import { usePaneReturnReady, usePaneScrollMotion } from "@/lib/workspace/paneReturnMemento";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./NotesPaneBody.module.css";
 
+const selectRegister = (result: QueryResult) => result.page_register;
 const register = (result: QueryResult) => {
-  const value = result.page_register;
+  const value = selectRegister(result);
   return value?.kind === "retained" || value?.kind === "held" || value?.kind === "successor" ? null : value;
 };
 const UNIT = {singular: "page", plural: "pages"};
@@ -45,31 +46,16 @@ export default function NotesPaneBody() {
   const type = readerType(useReaderProfile());
   const filter = usePaneFilterQuery("Notes.Pages");
   const text = filter.query.trim();
-  const read = useAuthoredQuery({kind: "page_register", text, at: {kind: "describe"}, expected_revision: null});
+  const source = useMemo(() => ({kind: "page_register" as const, text}), [text]);
+  const {read, order, admitted: admittedRead, observation, shownOrder, source: shownSource, revision, liveRevision, frozen, held} =
+    useCapturedIndex(source, selectRegister);
   const account = useAuthoredAccountId();
-  const raw = read.data?.page_register;
-  const needsOrder = raw?.kind === "description" && raw.total > raw.items.length;
-  const order = usePageOrder(text, needsOrder ? read.data!.store_revision : null);
-  const admittedRead = needsOrder && order.data === null ? null : read.data;
-  const motion = usePaneScrollMotion();
-  const [last, setLast] = useState<{account: typeof account; text: string; data: NonNullable<typeof read.data>; order: typeof order.data} | null>(null);
-  const frozen = motion !== "still" && last?.account === account && last.text === text && last.order !== null;
-  const current = frozen ? null : admittedRead;
-  if (current && (last?.account !== account || last.text !== text || last.data !== current || last.order !== order.data))
-    setLast({account, text, data: current, order: order.data});
-  const observation = current ?? (last?.account === account ? last.data : null);
-  const shownText = current || last?.account !== account ? text : last.text;
-  const shownOrder = current || last?.account !== account ? order.data : last.order;
+  const shownText = shownSource.text;
   const shown = observation?.page_register;
   const description = shown?.kind === "description" ? shown : null;
-  const revision = observation?.store_revision ?? null;
-  const liveRevision = read.data?.store_revision ?? revision;
   const sparse = description !== null && description.total > description.items.length;
-  const held = useMemo(() => shownOrder === null || liveRevision === null || liveRevision === revision ? undefined
-    : {revision: liveRevision, range: (start: number, limit: number) => shownOrder.range(start, limit, liveRevision)},
-    [shownOrder, revision, liveRevision]);
   const {items, positions, request, error: rangeError, retry: retryRange} = useRankedAuthoredWindow(
-    {kind: "page_register", text: shownText}, revision, description, register, held);
+    shownSource, revision, description, register, held);
   const recent = useRecent();
   const [prefix, setPrefix] = useState<{account: typeof account; refs: readonly string[]} | null>(null);
   const keepPrefix = frozen || held !== undefined;

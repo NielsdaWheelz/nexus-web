@@ -17,7 +17,7 @@ import { syncStatus } from "./status";
 interface WorkerScope { onconnect: ((event: MessageEvent) => void) | null; close(): void }
 const scope = self as unknown as WorkerScope;
 const ports = new Set<MessagePort>();
-const pageOrders = new WeakMap<MessagePort, Set<string>>();
+const indexOrders = new WeakMap<MessagePort, Set<string>>();
 let persistence: Persistence | null = null;
 let sync: Sync | null = null;
 let account: string | null = null;
@@ -98,10 +98,10 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
   if (op === "close") {
     ports.delete(port);
     port.close();
-    const orders = pageOrders.get(port);
-    pageOrders.delete(port);
+    const orders = indexOrders.get(port);
+    indexOrders.delete(port);
     if (orders?.size) await persistence?.db.run(
-      "DELETE FROM page_register_orders WHERE token IN (SELECT value FROM json_each(?))", [JSON.stringify([...orders])]);
+      "DELETE FROM captured_index_orders WHERE token IN (SELECT value FROM json_each(?))", [JSON.stringify([...orders])]);
     return null;
   }
   if (!persistence || retired) throw new Error("authored account is closed");
@@ -130,18 +130,18 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
     case "query": {
       if (!(await persistence.replica()).provisioning_complete) throw new Error("authored corpus is still preparing");
       const query = input.query as unknown as AuthoredQuery;
-      if (query.kind !== "page_register" || !("token" in query.at)) return persistence.query(query);
+      if ((query.kind !== "page_register" && query.kind !== "habits") || !("token" in query.at)) return persistence.query(query);
       const {kind, token} = query.at;
-      const orders = pageOrders.get(port) ?? new Set<string>();
+      const orders = indexOrders.get(port) ?? new Set<string>();
       if (kind === "retain") {
-        pageOrders.set(port, orders);
+        indexOrders.set(port, orders);
         orders.add(token);
       } else if (!orders.has(token)) {
         if (kind === "release") return null;
-        throw new Error("page register observation has retired");
+        throw new Error("captured index order has retired");
       }
       const result = await persistence.query(query);
-      if (kind === "release" || kind === "retain" && result.page_register?.kind !== "retained") orders.delete(token);
+      if (kind === "release" || kind === "retain" && result[query.kind]?.kind !== "retained") orders.delete(token);
       return result;
     }
     case "commit": {

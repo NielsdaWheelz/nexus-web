@@ -36,7 +36,7 @@ export const DEVICE_SCHEMA = [
   `CREATE INDEX IF NOT EXISTS resources_habit_history ON resources(ref) WHERE ${WORK_HABIT_HISTORY}`,
   `CREATE INDEX IF NOT EXISTS resources_annotations ON resources(source_ref,ref) WHERE visible=1`,
   `CREATE INDEX IF NOT EXISTS resources_register ON resources(${PAGE_TITLE_SQL} COLLATE NOCASE,ref) WHERE kind='page' AND visible=1 AND local_date IS NULL`,
-  `CREATE TEMP TABLE IF NOT EXISTS page_register_orders (
+  `CREATE TEMP TABLE IF NOT EXISTS captured_index_orders (
     token TEXT NOT NULL, rank INTEGER NOT NULL, ref TEXT NOT NULL, group_name TEXT NOT NULL,
     PRIMARY KEY(token,rank), UNIQUE(token,ref)
   ) WITHOUT ROWID`,

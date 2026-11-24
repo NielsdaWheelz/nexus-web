@@ -458,7 +458,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         }
     }
     fun releasePageOrders(tokens: List<String>) {
-        run("DELETE FROM page_register_orders WHERE token IN (SELECT value FROM json_each(?))", JSONArray(tokens).toString())
+        run("DELETE FROM captured_index_orders WHERE token IN (SELECT value FROM json_each(?))", JSONArray(tokens).toString())
     }
     fun query(query: JSONObject, plans: JSONArray): JSONObject {
         val replica = replica()
@@ -485,7 +485,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
                 if (rows(sql("literal_missing")).length() > 0) return JSONObject().put("literal_repair", true)
                 literalsComplete = true
             }
-            if (kind == "page_register") {
+            if (kind == "page_register" || kind == "habits") {
                 when (query.getJSONObject("at").getString("kind")) {
                     "retain" -> { read(0); return result.put(field, JSONObject().put("kind", "retained")) }
                     "release" -> { read(0); return result }

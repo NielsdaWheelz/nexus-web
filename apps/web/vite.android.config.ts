@@ -11,7 +11,7 @@ import { Features } from "lightningcss";
 import { compileQuery, compileOutlineWindows, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, SEARCH_READ_SQL, SEARCH_MATCH_SQL, LITERAL_SOURCE_SQL, LITERAL_MISSING_SQL, LITERAL_WRITE_SQL } from "../../node/authored/src/queries";
 import { SCOPE_SQL } from "../../node/authored/src/scope";
 import { nativeQueryPlans } from "./src/lib/authored/nativeQuery";
-import type { AuthoredQuery, WorkRegisterSource } from "../../node/authored/src/types";
+import type { AuthoredQuery, CapturedIndexSource, WorkRegisterSource } from "../../node/authored/src/types";
 import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_TO_6_SQL } from "../../node/authored/src/schema";
 import { appCsp } from "./src/lib/security/csp";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
@@ -58,17 +58,18 @@ export default defineConfig({
           {...source, at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
           {...source, at: {kind: "locate", refs: []}, expected_revision: "0"},
         ];
+        const capturedSamples = (source: CapturedIndexSource): PackagedQuery[] => [
+          {...source, at: {kind: "describe"}, expected_revision: null},
+          {...source, at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
+          {...source, at: {kind: "locate", refs: []}, expected_revision: "0"},
+          {...source, at: {kind: "retain", token: ""}, expected_revision: "0"},
+          {...source, at: {kind: "held", token: "", start: 0, limit: 1}, expected_revision: "0"},
+          {...source, at: {kind: "successor", token: "", ref: null}, expected_revision: "0"},
+          {...source, at: {kind: "landing", token: "", rank: 0}, expected_revision: "0"},
+          {...source, at: {kind: "release", token: ""}, expected_revision: null},
+        ];
         const samples: Record<PackagedQuery["kind"], PackagedQuery[]> = {
-          page_register: ["", "words"].flatMap<PackagedQuery>(text => [
-            {kind: "page_register", text, at: {kind: "describe"}, expected_revision: null},
-            {kind: "page_register", text, at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
-            {kind: "page_register", text, at: {kind: "locate", refs: []}, expected_revision: "0"},
-            {kind: "page_register", text, at: {kind: "retain", token: ""}, expected_revision: "0"},
-            {kind: "page_register", text, at: {kind: "held", token: "", start: 0, limit: 1}, expected_revision: "0"},
-            {kind: "page_register", text, at: {kind: "successor", token: "", ref: null}, expected_revision: "0"},
-            {kind: "page_register", text, at: {kind: "landing", token: "", rank: 0}, expected_revision: "0"},
-            {kind: "page_register", text, at: {kind: "release", token: ""}, expected_revision: null},
-          ]),
+          page_register: ["", "words"].flatMap(text => capturedSamples({kind: "page_register", text})),
           register_label: [{kind: "register_label", ref: ""}],
           outline_filter: [{kind: "outline_filter", parent_ref: "", text: "words", start: 0, limit: 1, expected_revision: null}],
           daily_index: [
@@ -80,11 +81,7 @@ export default defineConfig({
             {kind: "work_pending", local_date: workDate, at: {kind: "place", rows: []}, expected_revision: "0"}],
           work_completed: workSamples({kind:"work_completed", local_date:workDate}),
           work_row: [{kind: "work_row", ref: "", local_date: workDate}],
-          habits: [
-            {kind: "habits", at: {kind: "describe"}, expected_revision: null},
-            {kind: "habits", at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
-            {kind: "habits", at: {kind: "locate", refs: []}, expected_revision: "0"},
-          ],
+          habits: capturedSamples({kind: "habits"}),
           habit_days: [{kind: "habit_days", ref: "", year: 2026}],
           latest_habit_date: [{kind: "latest_habit_date"}],
           mentions: [

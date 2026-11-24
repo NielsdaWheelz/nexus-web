@@ -124,8 +124,8 @@ export class Persistence {
       }
       const rows = await this.db.all(plan.sql, plan.params);
       const [record] = rows;
-      if (query.kind === "page_register" && (query.at.kind === "retain" || query.at.kind === "release")) {
-        if (query.at.kind === "retain") result.page_register = {kind: "retained"};
+      if ((query.kind === "page_register" || query.kind === "habits") && (query.at.kind === "retain" || query.at.kind === "release")) {
+        if (query.at.kind === "retain") result[query.kind] = {kind: "retained"};
         return result;
       }
       if (query.kind === "habit_days") {

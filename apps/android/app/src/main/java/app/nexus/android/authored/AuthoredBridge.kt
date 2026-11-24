@@ -48,7 +48,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
     private val requests = mutableMapOf<Long, Job>()
     private val uploads = mutableMapOf<String, Pair<Int, ByteArrayOutputStream>>()
     private val outputs = mutableMapOf<String, ByteArray>()
-    private val pageOrders = mutableSetOf<String>()
+    private val indexOrders = mutableSetOf<String>()
     private var snapshot: File? = null
     private var lease: String? = null
     private var documentOwner: Pair<OwnedWebMessage, UUID>? = null
@@ -78,8 +78,8 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
         for (request in requests.values.toList()) request.cancel()
         requests.clear()
         val account = boundAccount
-        val tokens = pageOrders.toList()
-        pageOrders.clear()
+        val tokens = indexOrders.toList()
+        indexOrders.clear()
         if (account != null && tokens.isNotEmpty()) orderRetirement.launch {
             commands.withLock {
                 runCatching { store?.takeIf { it.account == account }?.releasePageOrders(tokens) }
@@ -155,12 +155,13 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                                 throw NexusOriginError(403, "E_ACCOUNT_MISMATCH")
                         }
                         val query = if (operation == "query") request.optJSONObject("query") else null
-                        val order = query?.takeIf { it.optString("kind") == "page_register" }?.optJSONObject("at")
+                        val indexKind = query?.optString("kind")
+                        val order = if (indexKind == "page_register" || indexKind == "habits") query?.optJSONObject("at") else null
                         val token = order?.takeIf { it.has("token") }?.getString("token")
                         val orderOperation = order?.optString("kind")
                         if (token != null) when (orderOperation) {
-                            "retain" -> pageOrders.add(token)
-                            "held", "successor", "landing", "release" -> require(token in pageOrders)
+                            "retain" -> indexOrders.add(token)
+                            "held", "successor", "landing", "release" -> require(token in indexOrders)
                         }
                         remoteOperation = operation in setOf("register", "push", "pull", "snapshot", "scope_inputs", "scope_text_remote")
                         if (remoteOperation && foreground && session.remoteAdmission == "Unavailable") {
@@ -203,7 +204,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                         }
                         require(current(message, account))
                         if (token != null && (orderOperation == "release" || orderOperation == "retain" &&
-                                result.optJSONObject("page_register")?.optString("kind") == "changed")) pageOrders.remove(token)
+                                result.optJSONObject(indexKind)?.optString("kind") == "changed")) indexOrders.remove(token)
                         if (operation == "hello") { boundAccount = account; documentOwner = message to account; result.put("wire_revision", BuildConfig.NEXUS_WIRE).put("foreground", foreground).put("foreground_revision", foregroundRevision.toString()) }
                         val bytes = result.toString().toByteArray(Charsets.UTF_8)
                         require(bytes.size <= AUTHORED_TRANSFER_BYTES && outputs.size < 8)
