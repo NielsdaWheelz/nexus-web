@@ -557,23 +557,23 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       validateLocalDate(query.local_date);
       const completed = query.kind === "work_completed";
       const sameDay = "EXISTS(SELECT 1 FROM json_each(state_json,'$.work.habit_checks') day WHERE day.key=?1 AND json_extract(day.value,'$.value')=1)";
-      const rankKeys = `SELECT ref,${WORK_CAPTURE_LAMPORT} AS lamport,${WORK_CAPTURE_REPLICA} AS replica FROM resources`;
       const tasks = completed
-        ? `${rankKeys} INDEXED BY resources_task_days WHERE ${WORK_TASK_HISTORY} AND ${WORK_TASK_DAY}=?1`
-        : `${rankKeys} INDEXED BY resources_open_tasks WHERE ${WORK_OPEN_TASK}`;
+        ? `FROM resources INDEXED BY resources_task_days WHERE ${WORK_TASK_HISTORY} AND ${WORK_TASK_DAY}=?1`
+        : `FROM resources INDEXED BY resources_open_tasks WHERE ${WORK_OPEN_TASK}`;
       const habits = completed
-        ? `${rankKeys} INDEXED BY resources_habit_history WHERE ${WORK_HABIT_HISTORY} AND ${WORK_TASK_DAY} IS NOT ?1 AND ${sameDay}`
-        : `${rankKeys} INDEXED BY resources_active_habits WHERE ${WORK_ACTIVE_HABIT} AND NOT ${sameDay}`;
-      const eligible = `eligible AS NOT MATERIALIZED (${tasks} UNION ALL ${habits})`;
+        ? `FROM resources INDEXED BY resources_habit_history WHERE ${WORK_HABIT_HISTORY} AND ${WORK_TASK_DAY} IS NOT ?1 AND ${sameDay}`
+        : `FROM resources INDEXED BY resources_active_habits WHERE ${WORK_ACTIVE_HABIT} AND NOT ${sameDay}`;
+      const rankKeys = `SELECT ref,${WORK_CAPTURE_LAMPORT} AS lamport,${WORK_CAPTURE_REPLICA} AS replica`;
+      const eligible = `eligible AS NOT MATERIALIZED (${rankKeys} ${tasks} UNION ALL ${rankKeys} ${habits})`;
       const order = "lamport,replica,ref";
-      // Only selected keys look up labels and work facts in the resource table.
+      // Visit the slice first. A reordered join scans bodies to find their keys.
       const detail = `detail AS (SELECT slice.*,${WORK_LABEL_SQL} AS label,json_extract(projection_json,'$.work') AS work
-        FROM slice JOIN resources ON resources.ref=slice.ref)`;
+        FROM slice CROSS JOIN resources ON resources.ref=slice.ref)`;
       const item = `'ref',ref,'label',CASE WHEN length(CAST(json_quote(label) AS BLOB))<=512 THEN label END,
         'work',json_set(work,'$.habit_dates',json('[]'))`;
       switch (query.at.kind) {
         case "describe":
-          return {sql: `WITH ${eligible},extent AS (SELECT count(*) AS total FROM eligible),
+          return {sql: `WITH ${eligible},extent AS (SELECT (SELECT count(*) ${tasks})+(SELECT count(*) ${habits}) AS total),
             slice AS (SELECT * FROM eligible ORDER BY ${order}
               LIMIT (SELECT CASE WHEN total<=${COMPLETE_REGISTER_ROWS} THEN total ELSE 24 END FROM extent)),${detail}
             SELECT json_object('kind','description','total',total,'groups',json('[]'),
