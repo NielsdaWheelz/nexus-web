@@ -285,6 +285,13 @@ deleting a page, note or highlight never consumes an independent related note.
 a highlight owns its single annotation body; ordinary note links confer no
 annotation meaning. pdf resizing preserves the highlight id, annotation and links.
 
+the connections companion ranks distinct incoming mention owners by ref. its
+large register retains old ranks on the local sqlite connection. a held slice
+admits only owners that still mention the target and remain visible. the
+companion resolves the captured landing in the current register and mounts
+that row before restoring its line on the companion scrollport. later input
+and closing the companion retire the placement.
+
 source stubs retain literal references when a source disappears, including a
 deleted conversation. source deletion does not unlink the authored graph; a
 captured label grants no source access.
