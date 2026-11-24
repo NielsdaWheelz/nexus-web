@@ -400,6 +400,7 @@ export function invalidatesQuery(query: AuthoredQuery, corpusChanged: boolean, d
   if (query.kind === "daily_index") return dailyIndexChanged && !onlyTitles;
   if (!corpusChanged || resourceRefs === null) return corpusChanged;
   if (query.kind === "resource") return resourceRefs.includes(query.ref);
+  if (onlyTitles && (query.kind === "work_pending" || query.kind === "work_completed" || query.kind === "habits")) return false;
   if (query.kind === "outline_windows" && onlyTitles && observed?.outline_windows)
     return resourceRefs.includes(query.ref) || observed.outline_windows.some(slice => slice.rows.some(row => resourceRefs.includes(row.resource.ref)));
   return true;
