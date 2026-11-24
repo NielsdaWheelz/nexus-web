@@ -75,6 +75,7 @@ from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, asse
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.locations import (
     ScopedMediaPassage,
+    canonical_source_quote,
     current_passages,
     media_passages,
 )
@@ -670,7 +671,9 @@ def _rows(
             and proof.locator is not None
             and capability(ref.scheme).link_mode == "materialize_passage"
         ):
-            row["link_revision"] = passage_link_revision(proof.owner, proof.quote, proof.locator)
+            canonical = canonical_source_quote(proof.quote, proof.locator)
+            if canonical is not None:
+                row["link_revision"] = passage_link_revision(proof.owner, *canonical)
         if passage is not None:
             supplied = (reading_media_ids or {}).get(ref.uri)
             row["reading_ref"] = (

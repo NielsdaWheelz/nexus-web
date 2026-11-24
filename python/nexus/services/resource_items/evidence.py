@@ -81,6 +81,7 @@ from nexus.services.resource_items.items import (
 )
 from nexus.services.resource_items.locations import (
     TIMED_KINDS,
+    canonical_source_quote,
     captured_quote,
     current_locator,
     current_passages,
@@ -839,41 +840,6 @@ def _bounded_locator(
     if normalize_for_match(words).text.strip() != normalize_for_match(exact).text.strip():
         return None
     return locator
-
-
-def canonical_source_quote(
-    quote: CapturedQuote, locator: dict[str, Any]
-) -> tuple[CapturedQuote, dict[str, Any]] | None:
-    """Native text evidence selects literal words, excluding outer source whitespace.
-
-    Canonical block separators have no native text token. Applying this rule before
-    either port runs keeps canonical and rich quotes at the same exact coordinates.
-    Internal whitespace, including poem line breaks, remains untouched.
-    """
-    if locator["type"] not in ("web_text_offsets", "epub_fragment_offsets", "x_capture_offsets"):
-        return quote, locator
-    exact = quote.exact.strip()
-    if not exact:
-        return None
-    before = len(quote.exact) - len(quote.exact.lstrip())
-    after = len(quote.exact.rstrip())
-    prefix = ((quote.prefix or "") + quote.exact[:before])[-64:] or None
-    suffix = (quote.exact[after:] + (quote.suffix or ""))[:64] or None
-    return (
-        CapturedQuote(
-            excerpt=plain_excerpt(exact, prefix, suffix),
-            exact=exact,
-            prefix=prefix,
-            suffix=suffix,
-            color=quote.color,
-        ),
-        {
-            **locator,
-            "start_offset": locator["start_offset"] + before,
-            "end_offset": locator["start_offset"] + after,
-            "text_quote_selector": {"exact": exact, "prefix": prefix, "suffix": suffix},
-        },
-    )
 
 
 def read_evidence(

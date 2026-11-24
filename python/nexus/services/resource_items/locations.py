@@ -48,7 +48,7 @@ from nexus.services.media_text_scope import (
     text_scope_rows_sql,
     x_capture_scope_rows_sql,
 )
-from nexus.services.reader_excerpts import contains_table, read_captures, scope_excerpts
+from nexus.services.reader_excerpts import contains_table, plain_excerpt, read_captures, scope_excerpts
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 
 if TYPE_CHECKING:
@@ -73,6 +73,38 @@ class CurrentPassage:
     owner: ResourceRef
     quote: LocationQuote
     locator: dict[str, Any] | None
+
+
+def canonical_source_quote[Q: LocationQuote](
+    quote: Q, locator: dict[str, Any]
+) -> tuple[Q, dict[str, Any]] | None:
+    """Native text evidence selects literal words, excluding outer source whitespace.
+
+    Canonical block separators have no native text token. Applying this rule before
+    either port runs keeps canonical and rich quotes at the same exact coordinates.
+    Internal whitespace, including poem line breaks, remains untouched.
+    """
+    if locator["type"] not in ("web_text_offsets", "epub_fragment_offsets", "x_capture_offsets"):
+        return quote, locator
+    exact = quote.exact.strip()
+    if not exact:
+        return None
+    before = len(quote.exact) - len(quote.exact.lstrip())
+    after = len(quote.exact.rstrip())
+    prefix = ((quote.prefix or "") + quote.exact[:before])[-64:] or None
+    suffix = (quote.exact[after:] + (quote.suffix or ""))[:64] or None
+    fields: dict[str, Any] = {"exact": exact, "prefix": prefix, "suffix": suffix}
+    if isinstance(quote, CapturedQuote):
+        fields["excerpt"] = plain_excerpt(exact, prefix, suffix)
+    return (
+        quote.model_copy(update=fields),
+        {
+            **locator,
+            "start_offset": locator["start_offset"] + before,
+            "end_offset": locator["start_offset"] + after,
+            "text_quote_selector": {"exact": exact, "prefix": prefix, "suffix": suffix},
+        },
+    )
 
 
 def reading_owner_sql(candidates_sql: str) -> str:
