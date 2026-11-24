@@ -110,6 +110,7 @@ export type PageRegisterRequest = {kind: "page_register"; text: string} & (Ranke
   {at: {kind: "retain"; token: string}; expected_revision: Counter} |
   {at: {kind: "held"; token: string; start: number; limit: number}; expected_revision: Counter} |
   {at: {kind: "successor"; token: string; ref: ResourceRef | null}; expected_revision: Counter} |
+  {at: {kind: "landing"; token: string; rank: number}; expected_revision: Counter} |
   {at: {kind: "release"; token: string}; expected_revision: null});
 /** Groups are consecutive run lengths in register order. Each slice owns its labels. */
 export type PageRegisterResult = RankedIndexResult<RegisterItem, {source_total: number}> |

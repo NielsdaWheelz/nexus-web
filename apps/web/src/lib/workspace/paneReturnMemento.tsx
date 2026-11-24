@@ -35,6 +35,7 @@ export interface ReturnOrder {
   readonly prefix: readonly string[];
   retain(): () => void;
   successor(id: string | null, revision: string): Promise<string | null | undefined>;
+  land(rank: number, revision: string): Promise<string | null | undefined>;
 }
 
 /** A committed frame keeps the old eye line readable after its DOM has changed. */
@@ -47,6 +48,7 @@ export interface AnchorGeometryFrame {
   readonly origin: number;
   readonly anchors: readonly string[];
   firstVisible(top: number, bottom: number): { id: string; offset: number } | null;
+  landing?(top: number, bottom: number): {rank: number; id: string | undefined; offset: number} | null;
   position(id: string): AnchorPosition;
 }
 export interface AnchorGeometry {
@@ -86,6 +88,8 @@ interface RefreshSnapshot {
   port: Scrollport;
   inputGeneration: number;
   eyeLine: Memento["eyeLine"];
+  landing: {scope: string; rank: number; id: string | undefined; offset: number; order: ReturnOrder; release(): void;
+    proof: {revision: string; id?: string | null} | null} | null;
   anchors: Anchor[];
   restored: boolean;
   requested: boolean;
@@ -188,6 +192,11 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       entry.releaseOrder = release;
     }
     entry.frame = frame;
+  }
+
+  function describedRevision(port: Scrollport) {
+    return [...readiness.get(`${port.visitId}|${port.routeKey}`) ?? []]
+      .find(entry => entry.kind === "Body" && entry.ready && entry.revision != null)?.revision ?? null;
   }
 
   function frames(port: Scrollport): CollectionGeometry[] {
@@ -392,9 +401,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       writeScrollPosition(port.element, 0);
       return finish(paneId, false);
     }
-    const observedRevision = () => [...readiness.get(`${port.visitId}|${port.routeKey}`) ?? []]
-      .find(entry => entry.kind === "Body" && entry.ready && entry.revision != null)?.revision ?? null;
-    const revision = restore.captured === null ? null : observedRevision();
+    const revision = restore.captured === null ? null : describedRevision(port);
     if (restore.captured !== null) {
       if (revision === null) return;
       if (restore.revision !== revision) {
@@ -440,7 +447,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       if (result === undefined) {
         restore.neighbors.set(key, null);
         void order.successor(index >= 0 ? null : anchor.id, revision).then(id => {
-          if (pending.get(paneId) !== restore || observedRevision() !== revision || id === undefined) return;
+          if (pending.get(paneId) !== restore || describedRevision(port) !== revision || id === undefined) return;
           restore.neighbors.set(key, {id});
           attempt(paneId);
         }, () => {if (pending.get(paneId) === restore) finish(paneId, false);});
@@ -472,7 +479,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       } else if (state === "pending" || geometryFor(port, focused.anchor)?.geometry.element(focused.anchor.id) === null) return;
     }
     const ready = () => pending.get(paneId) === restore && scrollports.get(paneId) === port &&
-      (restore.captured === null || observedRevision() === revision) &&
+      (restore.captured === null || describedRevision(port) === revision) &&
       (memento.eyeLine !== null || memento.focus?.anchor ? bodyReady(port) : isReady(port)) &&
       frames(port).every(entry => entry.geometry.layoutReady());
     // The scheduled frame owns placement; publications only advance admission.
@@ -492,7 +499,9 @@ export function createPaneReturnMemento(guard: WorkGuard) {
   function forgetRefresh(paneId: string): void {
     const old = refreshes.get(paneId);
     refreshes.delete(paneId);
-    if (old !== undefined) for (const release of old.mounted.values()) release();
+    if (old === undefined) return;
+    old.landing?.release();
+    for (const release of old.mounted.values()) release();
   }
 
   function requestRestore(paneId: string, port: Scrollport): void {
@@ -531,8 +540,21 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     const captured = refreshes.get(paneId);
     if (captured?.port === port && captured.inputGeneration === port.inputGeneration) return captured;
     forgetRefresh(paneId);
+    const eyeLine = captureEyeLine(port);
+    let landing: RefreshSnapshot["landing"] = null;
+    for (const entry of frames(port)) {
+      const frame = entry.frame!;
+      const order = frame.returnOrder;
+      const top = port.element.scrollTop - frame.origin;
+      const slot = frame.landing?.(top, top + port.element.clientHeight);
+      if (!order || !slot) continue;
+      const offset = port.element.clientTop + slot.offset - top;
+      if (offset > (landing?.offset ?? eyeLine?.offset ?? Number.POSITIVE_INFINITY)) continue;
+      landing?.release();
+      landing = {scope: entry.scope, rank: slot.rank, id: slot.id, offset, order, release: order.retain(), proof: null};
+    }
     const snapshot: RefreshSnapshot = { paneId, port, inputGeneration: port.inputGeneration,
-      eyeLine: captureEyeLine(port), anchors: orderedAnchors(port), restored: false, requested: false, scheduled: false, mounted: new Map() };
+      eyeLine, landing, anchors: orderedAnchors(port), restored: false, requested: false, scheduled: false, mounted: new Map() };
     refreshes.set(paneId, snapshot);
     return snapshot;
   }
@@ -553,7 +575,38 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         return;
       }
       if (!positionReady(snapshot.port)) return;
-      const { port, eyeLine } = snapshot;
+      const {port, landing} = snapshot;
+      let eyeLine = snapshot.eyeLine;
+      const landingPosition = landing?.id === undefined ? null
+        : geometryFor(port, {scope: landing.scope, id: landing.id})?.frame?.position(landing.id);
+      if (landing !== null && (landing.id === undefined || landingPosition?.kind === "missing" ||
+        landingPosition === undefined && findAnchor(port.content, {scope: landing.scope, id: landing.id}) === null)) {
+        const revision = describedRevision(port);
+        if (revision === null) return;
+        if (landing.proof?.revision !== revision) {
+          const proof: NonNullable<typeof landing.proof> = {revision};
+          landing.proof = proof;
+          const {order, scope, rank} = landing;
+          const frame = geometryFor(port, {scope, id: ""})?.frame;
+          const recent = rank < order.prefix.length
+            ? order.prefix.slice(rank).find(id => frame?.position(id).kind === "ready")
+            : undefined;
+          if (recent !== undefined) proof.id = recent;
+          else {
+            void order.land(Math.max(0, rank - order.prefix.length), revision).then(id => {
+              if (refreshes.get(snapshot.paneId) !== snapshot || describedRevision(port) !== revision || id === undefined) return;
+              proof.id = id ?? order.prefix.slice(0, Math.min(rank, order.prefix.length)).findLast(ref => frame?.position(ref).kind === "ready") ?? null;
+              restoreRefresh(snapshot);
+            }, () => {if (refreshes.get(snapshot.paneId) === snapshot) forgetRefresh(snapshot.paneId);});
+          }
+        }
+        const found = landing.proof.id;
+        if (found === undefined) return;
+        if (found !== null) {
+          const anchor = {scope: landing.scope, id: found};
+          eyeLine = {...anchor, offset: landing.offset, parents: parentsFor(port, anchor)};
+        } else eyeLine = null;
+      }
       let anchor: Anchor | null = null;
       if (eyeLine !== null) {
         const frame = geometryFor(port, eyeLine)?.frame;
@@ -1011,6 +1064,11 @@ export function usePaneCollectionGeometry({ scope, window }: {
             if (id !== undefined) return { id, offset };
           }
           return null;
+        },
+        landing(top, bottom) {
+          if (frame.returnOrder === undefined || bottom <= 0 || top >= frame.totalHeight) return null;
+          const rank = frame.rankAt(top), offset = frame.rowTop(rank);
+          return offset < bottom ? {rank, id: frame.idAt(rank), offset} : null;
         },
         position(id) {
           const offset = frame.position(id);

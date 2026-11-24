@@ -433,31 +433,36 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       const item = `'ref',ref,'group',${group},'label',${label}`;
       switch (query.at.kind) {
         case "retain":
-          return {sql: `INSERT INTO page_register_orders(token,rank,ref)
-            SELECT ?${first},row_number() OVER (ORDER BY ${PAGE_TITLE_SQL} COLLATE NOCASE,r.ref)-1,r.ref ${filtered}`,
+          return {sql: `INSERT INTO page_register_orders(token,rank,ref,group_name)
+            SELECT ?${first},row_number() OVER (ORDER BY ${PAGE_TITLE_SQL} COLLATE NOCASE,r.ref)-1,
+              r.ref,upper(substr(${PAGE_TITLE_SQL},1,1)) ${filtered}`,
             params: [...params,query.at.token]};
         case "held": {
           const {start, limit, token} = query.at;
           if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > AUTHORED_INDEX_RANGE)
             throw new RangeError("Invalid held page range");
           return {sql: `WITH slice AS (
-            SELECT o.rank,r.ref,${PAGE_TITLE_SQL} AS name FROM page_register_orders o LEFT JOIN resources r
+            SELECT o.rank,o.group_name,r.ref,${PAGE_TITLE_SQL} AS name FROM page_register_orders o LEFT JOIN resources r
               ON r.ref=o.ref AND ${visible}
               WHERE o.token=?1 AND o.rank>=?2 AND o.rank<?2+?3 ORDER BY o.rank)
             SELECT json_object('kind','held','start',?2,'items',json_group_array(
-              CASE WHEN ref IS NULL THEN NULL ELSE json_object(${item}) END)) AS register FROM slice`,
+              CASE WHEN ref IS NULL THEN NULL ELSE json_object('ref',ref,'group',group_name,'label',${label}) END)) AS register FROM slice`,
             params:[token,start,limit]};
         }
-        case "successor": {
-          const token = `?${first}`, ref = `?${first + 1}`;
+        case "successor":
+        case "landing": {
+          const token = `?${first}`, from = `?${first + 1}`;
+          const at = query.at;
+          if (at.kind === "landing" && (!Number.isSafeInteger(at.rank) || at.rank < 0)) throw new RangeError("Invalid page landing rank");
+          const eye = at.kind === "landing" ? from : `CASE WHEN ${from} IS NULL THEN -1
+            ELSE (SELECT rank FROM page_register_orders WHERE token=${token} AND ref=${from}) END`;
           const live = `FROM page_register_orders o CROSS JOIN resources r ON r.ref=o.ref
             WHERE o.token=${token} AND ${visible}${match}`;
-          return {sql: `WITH eye(rank) AS (SELECT CASE WHEN ${ref} IS NULL THEN -1
-              ELSE (SELECT rank FROM page_register_orders WHERE token=${token} AND ref=${ref}) END)
+          return {sql: `WITH eye(rank) AS (SELECT ${eye})
             SELECT json_object('kind','successor','ref',coalesce(
-              (SELECT o.ref ${live} AND o.rank>(SELECT rank FROM eye) ORDER BY o.rank LIMIT 1),
+              (SELECT o.ref ${live} AND o.rank>=(SELECT rank FROM eye) ORDER BY o.rank LIMIT 1),
               (SELECT o.ref ${live} AND o.rank<(SELECT rank FROM eye) ORDER BY o.rank DESC LIMIT 1))) AS register`,
-            params: [...params,query.at.token,query.at.ref]};
+            params: [...params,at.token,at.kind === "landing" ? at.rank : at.ref]};
         }
         case "release": return {sql: "DELETE FROM page_register_orders WHERE token=?", params: [query.at.token]};
         case "describe":

@@ -22,6 +22,14 @@ export function usePageOrder(text: string, revision: string | null) {
     const release = () => {
       if (--references === 0) void store.query({kind: "page_register", text: "", at: {kind: "release", token}, expected_revision: null}).catch(() => {});
     };
+    const successor = async (at: {kind: "successor"; token: string; ref: string | null} |
+        {kind: "landing"; token: string; rank: number}, expected_revision: string) => {
+      const result = await store.query({kind: "page_register", text, at, expected_revision});
+      const found = result.page_register;
+      if (found?.kind === "changed") return undefined;
+      if (found?.kind !== "successor") throw new Error("missing page register successor");
+      return found.ref?.slice(5) ?? null;
+    };
     const order: PageOrder = {
       retain() {
         references++;
@@ -35,13 +43,8 @@ export function usePageOrder(text: string, revision: string | null) {
           throw new Error("incomplete held page range");
         return range.items;
       },
-      async successor(id, expectedRevision) {
-        const result = await store.query({kind: "page_register", text, at: {kind: "successor", token, ref: id === null ? null : `page:${id}`}, expected_revision: expectedRevision});
-        const successor = result.page_register;
-        if (successor?.kind === "changed") return undefined;
-        if (successor?.kind !== "successor") throw new Error("missing page register successor");
-        return successor.ref?.slice(5) ?? null;
-      },
+      successor: (id, revision) => successor({kind: "successor", token, ref: id === null ? null : `page:${id}`}, revision),
+      land: (rank, revision) => successor({kind: "landing", token, rank}, revision),
     };
     void store.query({kind: "page_register", text, at: {kind: "retain", token}, expected_revision: revision}).then(result => {
       if (live && result.page_register?.kind === "retained") setState({key, data: order, error: null});
