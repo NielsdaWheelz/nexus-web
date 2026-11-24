@@ -9,7 +9,7 @@ import {canonicalSerialization} from "@nexus/authored/canonical";
 import {readBody} from "@nexus/authored/documents";
 import {isVisible} from "@nexus/authored/merge";
 import type {Intent} from "@nexus/authored/commands";
-import type {LinkState, OutlineChildrenOccurrence, OutlineRange, ResourceProjection} from "@nexus/authored/types";
+import type {AuthoredQuery, LinkState, OutlineChildrenOccurrence, OutlineIndexItem, OutlineRange, ResourceProjection} from "@nexus/authored/types";
 import {classifyOutlineOccurrence, enterOutlineOccurrence, type OutlineBranch, type OutlineTarget} from "@/lib/resources/outlineProjection";
 import {localResourceHref, localResourceLabel} from "@/lib/resources/localResource";
 import {pageTitle} from "@nexus/authored/queries";
@@ -34,6 +34,7 @@ import type {DisplayedSplit, FocusSelection, NoteEdit, OutlineCommand} from "./e
 import type {OutlinePresentationAllowance} from "./outlinePresentationAllowance";
 import {continuationLink, mergeOutlineWindows, provesEmptyOutline, OutlineViewport, type BranchPart} from "./outlineViewport";
 import type {AnchorGeometry, AnchorGeometryFrame, AnchorPosition} from "@/lib/workspace/paneReturnMemento";
+import {readAuthoredIndex} from "./indexes";
 import {clipboardPlainText, readOutlineClipboard, writeOutlineClipboard, type ClipItem} from "./clipboard";
 
 interface ChildProof {descriptor: string; store_revision: string; available: boolean | null}
@@ -176,6 +177,88 @@ export class OutlineController {
   private initialTitleApplied = false;
   private titleEdited = false;
   filter = "";
+  private structureRevision: string | null = null;
+  private structureFilter = "";
+  private structure = new Map<string, ReadonlySet<string>>();
+  get structureReady(): boolean {return this.structureRevision !== null && this.structureFilter === this.filter.trim();}
+  get hasFilteredRows(): boolean {return [...this.structure.values()].some(links => links.size > 0);}
+
+  disclosureKey(): string {
+    return JSON.stringify([[...this.opened], [...this.embedded].flatMap(([id, embed]) =>
+      embed.projection === null ? [] : [[id, embed.owner, embed.projection.ref, [...embed.projection.branch.traversedEdgeIds]]])]);
+  }
+
+  observeStructure(text: string, failed: (error: unknown) => void): () => void {
+    type Query = Extract<AuthoredQuery, {kind: "outline_filter"}>;
+    const root = this.pending.root_id, opened = new Set(this.opened), embeds = new Map(this.embedded);
+    const first: Query = {kind: "outline_filter", parent_ref: this.rootRef, text, start: 0, limit: 2048, expected_revision: null};
+    let live = true, generation = 0, stop: (() => void) | undefined;
+    const report = (error: unknown) => {if (live) failed(error);};
+    void this.runtime.store.then(store => {
+      if (!live) return;
+      const receive = (head: import("@nexus/authored/types").QueryResult) => {
+        const ticket = ++generation, current = () => live && generation === ticket;
+        const revision = head.store_revision, rows = new Map<string, Promise<readonly OutlineIndexItem[] | null>>();
+        const read = (ref: string) => {
+          const cached = rows.get(ref);
+          if (cached) return cached;
+          const query = {...first, parent_ref: ref, expected_revision: revision};
+          const next = (ref === this.rootRef ? Promise.resolve(head) : store.query(query)).then(async result =>
+            result.store_revision !== revision ? null :
+              (await readAuthoredIndex(store, query, result => result.outline_filter, result, current))?.items ?? null);
+          rows.set(ref, next);
+          return next;
+        };
+        const branches = new Map<string, readonly string[]>(), protectedRows = this.protectedRows();
+        const visit = async (parent: string, ref: string, branch: OutlineBranch): Promise<boolean | null> => {
+          const items = await read(ref);
+          if (!current() || items === null) return null;
+          const links: string[] = [];
+          for (const item of items) {
+            const projection = classifyOutlineOccurrence({branch, targetRef: item.other_ref, edgeId: item.link_id});
+            if (projection.kind === "omit") continue;
+            const known = this.identities.get(`${parent}/${item.link_id}`)?.id;
+            let keep = item.matched || known !== undefined && protectedRows.has(known);
+            if (known !== undefined && opened.has(known) && projection.kind === "resource") {
+              const child = await visit(known, item.other_ref, enterOutlineOccurrence({branch, ref: item.other_ref,
+                target: {kind: "occurrence", key: known}, edgeIds: [item.link_id]}));
+              if (child === null) return null;
+              keep ||= child;
+            }
+            if (known !== undefined) for (const [id, embed] of embeds) {
+              if (embed.owner !== known || embed.projection === null) continue;
+              const child = await visit(id, embed.projection.ref, embed.projection.branch);
+              if (child === null) return null;
+              keep ||= child;
+            }
+            if (keep) links.push(item.link_id);
+          }
+          branches.set(parent, links);
+          return links.length > 0;
+        };
+        void (async () => {
+          const rootResult = await visit(root, this.rootRef, this.rootBranch);
+          if (!current()) return;
+          let changed = rootResult === null;
+          if (!changed) for (const [id, embed] of embeds) {
+            if (embed.owner !== root || embed.projection === null) continue;
+            if (await visit(id, embed.projection.ref, embed.projection.branch) === null) {changed = true; break;}
+          }
+          if (!current()) return;
+          if (changed) {receive(await store.query(first)); return;}
+          this.structureRevision = revision;
+          this.structureFilter = text;
+          this.structure = new Map([...branches].map(([id, links]) => [id, new Set(links)]));
+          this.viewport.setBranches(branches);
+          const finish = this.layoutTransaction();
+          try {this.changed();} finally {finish();}
+          failed(null);
+        })().catch(error => {if (current()) report(error);});
+      };
+      stop = store.subscribe(first, receive, report);
+    }).catch(report);
+    return () => {live = false; stop?.();};
+  }
   error: unknown | null = null;
   revealExternal: ((target: OutlineTarget) => void) | null = null;
   constructor(readonly runtime: WritingRuntime, readonly history: OutlineHistory, readonly pending: OutlinePendingInput,
@@ -601,8 +684,11 @@ export class OutlineController {
       }
       for (const metric of near) {
         const gap = this.gaps.get(metric.id);
-        if (metric.parent === parent && gap && !metric.id.startsWith("reading:") && !ranges.some(range => range.anchor_link_id === gap.range.anchor_link_id && range.cursor === gap.range.cursor))
-          ranges.push({...gap.range, limit: Math.max(1, Math.min(32, Math.ceil((bottom - top) / Math.max(1, this.viewport.estimate))))});
+        if (metric.parent !== parent || !gap || metric.id.startsWith("reading:")) continue;
+        const anchor_link_id = gap.links === undefined ? gap.range.anchor_link_id :
+          this.viewport.seek(parent, gap.links, Math.max(0, this.viewportRange.top - metric.top));
+        if (!ranges.some(range => range.anchor_link_id === anchor_link_id && range.cursor === gap.range.cursor))
+          ranges.push({...gap.range, anchor_link_id, limit: Math.max(1, Math.min(32, Math.ceil((bottom - top) / Math.max(1, this.viewport.estimate))))});
       }
       // A focused title keeps its root proof, not unrelated offscreen bodies.
       if (!ranges.length && parent === this.pending.root_id && this.rowOverscan === 0)
@@ -614,10 +700,9 @@ export class OutlineController {
         }
         continue;
       }
-      const coalesced = this.viewport.coalesce(parent, ranges);
       const previous = request.ranges ?? [{cursor: request.cursor, anchor_link_id: request.anchor, limit: request.limit}];
-      if (JSON.stringify(previous) === JSON.stringify(coalesced)) continue;
-      this.request({...request, ranges: coalesced}); changed = true;
+      if (JSON.stringify(previous) === JSON.stringify(ranges)) continue;
+      this.request({...request, ranges}); changed = true;
     }
     if (topology) {this.rebuild(); this.publishLayout(); this.retirePresentationDocuments();}
     if (changed || topology) this.notify();
@@ -1058,7 +1143,7 @@ export class OutlineController {
         this.windows.clear(); for (const [id, part] of next) this.windows.set(id, part);
         for (const part of accepted) {
           const slices = this.proposedSlices.get(part.window) ?? [part.window];
-          this.slices.set(part.id, slices); if (part.request) this.admittedRequests.set(part.id, part.request); this.viewport.admit(part.id, slices);
+          this.slices.set(part.id, slices); if (part.request) this.admittedRequests.set(part.id, part.request);
         }
         for (const field of placements) if (!this.pending.rangeHeld(field.row_id) && field.parent_id && selected.has(field.parent_id) && next.get(field.parent_id) === selected.get(field.parent_id) && this.sourceConfirmed(field, next)) {
           const current = this.pending.fields.get(field.row_id)!;
@@ -1337,7 +1422,8 @@ export class OutlineController {
       }
       for (const row of ordered) {
         if (row.gap) {this.rows.set(row.row_id, row); continue;}
-        if (this.filter.trim() && !this.bodyMatches(row) && !protectedRows.has(row.row_id)) continue;
+        if (row.link && this.structureReady && !this.structure.get(parent_id)?.has(row.link.link_id) &&
+          !this.pending.fields.has(row.row_id) && !protectedRows.has(row.row_id)) continue;
         this.rows.set(row.row_id, row);
         for (const [id, embedded] of this.embedded) if (embedded.projection !== null && embedded.owner === row.row_id) collect(id, embedded.projection.ref, embedded.projection.branch, depth + 1);
         if (row.open && !row.terminal) {
@@ -1451,7 +1537,6 @@ export class OutlineController {
       if (plan) this.submitRange(plan);
     } else if (placing && (this.epoch !== placing.epoch || !this.rows.get(placing.destination.parent_id)?.open)) this.placing = null;
   }
-  private bodyMatches(row: OutlineRow): boolean {return [row.resource?.title, row.resource?.body_text, row.resource?.selection?.quote_exact].some(text => text?.toLocaleLowerCase().includes(this.filter.trim().toLocaleLowerCase()));}
   private doc(): PMNode {
     return outlineEditorSchema.topNodeType.create(null, [...this.rows.values()].filter(row => !row.root).map(row => {
       const attrs = {row_id: row.row_id, depth: row.depth, token_active: this.referenceRow === row.row_id && this.canEditReference(row)};

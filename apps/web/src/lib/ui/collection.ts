@@ -3,6 +3,7 @@
 // Collection geometry stays within its owned body. When fixed controls cannot
 // leave one row, the body scrolls instead of nesting two scrolling regions.
 // Resizing keeps the owned focused item visible without moving focus.
+import {writeScrollPosition} from "@/lib/collections/scrollMotion";
 import { useLayoutEffect, useState, type RefObject } from "react";
 
 export function revealCollectionItem(viewport: HTMLElement, item: HTMLElement): void {
@@ -13,8 +14,8 @@ export function revealCollectionItem(viewport: HTMLElement, item: HTMLElement): 
   const row = item.getBoundingClientRect();
   const top = box.top + scrollport.clientTop;
   const bottom = top + scrollport.clientHeight;
-  if (row.top < top) scrollport.scrollTop = Math.floor(scrollport.scrollTop + row.top - top);
-  else if (row.bottom > bottom) scrollport.scrollTop = Math.ceil(scrollport.scrollTop + Math.min(row.bottom - bottom, row.top - top));
+  if (row.top < top) writeScrollPosition(scrollport, Math.floor(scrollport.scrollTop + row.top - top));
+  else if (row.bottom > bottom) writeScrollPosition(scrollport, Math.ceil(scrollport.scrollTop + Math.min(row.bottom - bottom, row.top - top)));
 }
 
 /** True when the whole body owns scrolling; otherwise the inner collection owns it. */
@@ -53,9 +54,9 @@ export function useCollectionLayout(ref: RefObject<HTMLElement | null>, active: 
       const wholeBody = available < row + padding;
       body.dataset.collectionConstrained = String(wholeBody);
       setConstrained(wholeBody);
-      body.scrollTop = bodyScroll.top;
+      writeScrollPosition(body, bodyScroll.top);
       body.scrollLeft = bodyScroll.left;
-      viewport.scrollTop = listScroll.top;
+      writeScrollPosition(viewport, listScroll.top);
       viewport.scrollLeft = listScroll.left;
       const focused = document.activeElement;
       if (focused instanceof HTMLElement && viewport.contains(focused)) revealCollectionItem(viewport, focused);

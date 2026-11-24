@@ -83,7 +83,7 @@ function EpisodesEntry({ query, params, children }: EntryProps) {
   if (active && visible) seen.current = consumption;
   const stale = `${useChangeStamp("Feeds", "Libraries", "Entries", "Metadata", "PodcastEpisodes")}:${useMediaQueryRevision()}:${seen.current}:${useRefreshStamp(active && visible, 0)}:${group.stale}`;
   const read = useMemo(() => ({ key: `/feeds/${id}/entries?${text}`, stale, load: (signal: AbortSignal) => listFeedEntries(id, new URLSearchParams(text ?? ""), signal) }), [id, text, stale]);
-  return <FeedEntries.Provider value={{ read, group }}>{children}</FeedEntries.Provider>;
+  return <FeedEntries.Provider value={{ read, group }}><PaneEntryReads reads={[read]}>{children}</PaneEntryReads></FeedEntries.Provider>;
 }
 function BrowseEntry({ children }: EntryProps) {
   return <SuggestionEntryRead.Provider value={browseSelectionRead}><PaneEntryReads reads={[browseSelectionRead]}>{children}</PaneEntryReads></SuggestionEntryRead.Provider>;

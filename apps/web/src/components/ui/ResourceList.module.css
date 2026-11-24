@@ -33,6 +33,7 @@
 }
 
 .list[data-index-held] > :is([data-collection-row-id], [data-index-head-before]) {
+  --index-held-size: auto;
   block-size: var(--index-held-size);
   min-block-size: var(--index-held-size);
   max-block-size: var(--index-held-size);

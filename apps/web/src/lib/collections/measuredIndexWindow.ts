@@ -258,8 +258,9 @@ export function useMeasuredIndexWindow({ scopeKey, ids, headIds, hold, geometry,
     if (previous?.list !== list || previous.headIds !== headIds || (previous.port === null) !== (port === null)) {
       const samples = enabled && list !== null
         ? [...list.querySelectorAll<HTMLElement>("[data-index-head-sample]")] : [];
-      for (const element of headSamples.current) if (!samples.includes(element)) observer.current?.unobserve(element);
-      for (const element of samples) if (!headSamples.current.includes(element)) observer.current?.observe(element);
+      const next = new Set(samples), before = new Set(headSamples.current);
+      for (const element of before) if (!next.has(element)) observer.current?.unobserve(element);
+      for (const element of next) if (!before.has(element)) observer.current?.observe(element);
       headSamples.current = samples;
     }
     work.current = (measuredHeight, measureHeads = false) => {
@@ -270,7 +271,7 @@ export function useMeasuredIndexWindow({ scopeKey, ids, headIds, hold, geometry,
       if (rowHeight <= 0 || port.clientHeight === 0) return;
       const previousHeads = current.view?.headHeights ?? null;
       let measured = previousHeads ?? new Map<string, number>();
-      if ((!hold && measureHeads) || measured.size !== headIds.length || headIds.some(id => !measured.has(id))) {
+      if (!hold && measureHeads || previousHeads === null || previous?.headIds !== headIds) {
         const next = new Map(headSamples.current.map(element => [element.dataset.indexHeadSample!, element.getBoundingClientRect().height]));
         if (next.size !== headIds.length || headIds.some(id => !next.has(id))) return;
         if (previousHeads === null || next.size !== previousHeads.size || [...next].some(([id, size]) => previousHeads.get(id) !== size)) {

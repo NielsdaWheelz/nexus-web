@@ -114,8 +114,7 @@ export default function CollectionView({
   const [sizes, setSizes] = useState<{ scopeKey: string; heights: ReadonlyMap<string, number> } | null>(null);
   const heldSizes = holding && sizes?.scopeKey === scopeKey ? sizes.heights : null;
   const append = useMemo(() => heldSizes !== null && motion === "travel" && incoming.length > previous.rows.length &&
-    previous.heads.size === liveHeads.size && [...previous.heads.keys()].every(id => liveHeads.has(id)) &&
-    previous.rows.every((row, index) => row.id === incoming[index].id),
+    previous.rows.every((row, index) => row.id === incoming[index].id && previous.heads.has(row.id) === liveHeads.has(row.id)),
     [heldSizes, motion, incoming, previous, liveHeads]);
   const shown = holding && !append ? previous : presentation;
   // The first hold commit keeps its existing contents until the layout effect records
@@ -137,6 +136,7 @@ export default function CollectionView({
   const windowed = window.plan.kind !== "Intrinsic";
   const ready = shownStatus !== "loading" && window.plan.kind !== "Measure";
   const committedIds = useRef(orderedIds);
+  const plan = window.plan;
   useLayoutEffect(() => {
     committed.current = shown;
     committedIds.current = orderedIds;
@@ -149,7 +149,7 @@ export default function CollectionView({
     if (heldSizes === null) for (const element of list.querySelectorAll<HTMLElement>(":scope > [data-index-head-sample]")) {
       measured.set(`head:${element.dataset.indexHeadSample}`, element.getBoundingClientRect().height);
     }
-    const rowHeight = window.plan.kind === "Ready" ? window.plan.height : null;
+    const rowHeight = plan.kind === "Ready" ? plan.height : null;
     for (const element of list.querySelectorAll<HTMLElement>(":scope > [data-collection-row-id], :scope > [data-index-head-before]")) {
       const head = element.dataset.indexHeadBefore;
       const id = head === undefined ? element.dataset.collectionRowId! : `head:${head}`;
@@ -159,7 +159,7 @@ export default function CollectionView({
       element.style.setProperty("--index-held-size", `${height}px`);
     }
     if (heldSizes === null || measured.size !== heldSizes.size) setSizes({ scopeKey, heights: measured });
-  });
+  }, [shown, orderedIds, holding, heldSizes, plan, scopeKey, sizes]);
   const pendingFocus = useRef<{ id: string; selector: string; fallback: HTMLElement | null; release: () => void } | null>(null);
   const fallbackTarget = useCallback(() => {
     const root = returnScopeRef.current;

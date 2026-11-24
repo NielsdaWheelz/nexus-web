@@ -6,10 +6,13 @@ import { flushSync } from "react-dom";
 import { defaultRangeExtractor, observeElementOffset, useVirtualizer } from "@tanstack/react-virtual";
 import { usePaneBeforeLayout, type AnchorGeometry, type AnchorGeometryFrame } from "@/lib/workspace/paneReturnMemento";
 
-export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLDivElement | null>, indexState: "pending" | "ready" | "failed", overscan: 0 | 1) {
+export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLDivElement | null>, indexState: "pending" | "ready" | "failed", overscan: 0 | 1, held: boolean) {
   const beforeLayout = usePaneBeforeLayout();
   const [, changed] = useState(0);
   const revision = useRef(0);
+  const heldLayout = useRef(held);
+  const pendingInvalidation = useRef(false);
+  useLayoutEffect(() => { heldLayout.current = held; }, [held]);
   const heights = useRef(new Map<string, number>());
   const elements = useRef(new Map<string, HTMLElement>());
   const admissions = useRef(new Map<string, "pending" | "ready" | "failed">());
@@ -122,6 +125,8 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
       return JSON.stringify([font(node), heading === null ? null : font(heading), writingTypography]);
     };
     const invalidate = () => {
+      if (heldLayout.current) { pendingInvalidation.current = true; return; }
+      pendingInvalidation.current = false;
       typography = readTypography();
       const finish = beforeLayout();
       flushSync(() => {
@@ -139,6 +144,7 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
       finish();
     };
     const size = (entries: ResizeObserverEntry[]) => {
+      if (!heldLayout.current && pendingInvalidation.current) invalidate();
       const nextTypography = readTypography();
       if (typography !== null && nextTypography !== typography) invalidate();
       typography = nextTypography;
@@ -153,7 +159,7 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
         }
         const element = entry.target as HTMLElement;
         const date = element.dataset.journalDate;
-        if (!date || element.hidden) continue;
+        if (!date || element.hidden || heldLayout.current) continue;
         const index = dates.indexOf(date), height = element.getBoundingClientRect().height;
         if (index >= 0 && height > 0 && heights.current.get(date) !== height) updates.push({ index, date, height });
       }

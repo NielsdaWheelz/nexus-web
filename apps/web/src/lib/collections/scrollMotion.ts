@@ -31,7 +31,7 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
   let motion: ScrollMotion = "still";
   let lastTop = port.scrollTop;
   let press: number | null = null;
-  let claim: number | null = null;
+  let claim: { frame: number; forward: boolean } | null = null;
   let settle: number | null = null;
   const change = (next: ScrollMotion) => {
     if (motion === next) return;
@@ -39,7 +39,7 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
     onMotion(next);
   };
   const clearClaim = () => {
-    if (claim !== null) cancelAnimationFrame(claim);
+    if (claim !== null) cancelAnimationFrame(claim.frame);
     claim = null;
   };
   const clearSettle = () => {
@@ -55,28 +55,37 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
       else settleSoon();
     });
   };
-  const arm = () => {
+  const arm = (forward: boolean) => {
+    if (press !== null) return;
+    const continuing = forward || claim?.forward === true;
     clearClaim();
-    writes.delete(port);
-    claim = requestAnimationFrame(() => {
-      claim = requestAnimationFrame(() => {
+    if (continuing) writes.delete(port);
+    claim = {forward: continuing, frame: requestAnimationFrame(() => {
+      claim = {forward: continuing, frame: requestAnimationFrame(() => {
         claim = null;
-        if (motion === "seek" && press === null) settleSoon();
-      });
-    });
+        if (motion === "seek") settleSoon();
+      })};
+    })};
   };
   const wheel = (event: WheelEvent) => {
-    if (event.isTrusted && !event.defaultPrevented && !event.ctrlKey && event.deltaY !== 0) arm();
+    if (event.isTrusted && !event.defaultPrevented && !event.ctrlKey && event.deltaY !== 0) arm(true);
   };
   const key = (event: KeyboardEvent) => {
-    if (event.isTrusted && !event.defaultPrevented && !event.altKey && !event.ctrlKey && !event.metaKey &&
-      SCROLL_KEYS.has(event.key) && !isEditableTarget(event.target)) arm();
+    if (!event.isTrusted) return;
+    arm(!event.defaultPrevented && !event.altKey && !event.ctrlKey && !event.metaKey &&
+      SCROLL_KEYS.has(event.key) && !isEditableTarget(event.target));
+  };
+  const incidental = (event: Event) => {
+    if (event.isTrusted) arm(false);
   };
   const touch = (event: TouchEvent) => {
-    if (event.isTrusted && !event.defaultPrevented && event.touches.length === 1) arm();
+    if (event.isTrusted && !event.defaultPrevented && event.touches.length === 1) arm(true);
   };
   const down = (event: PointerEvent) => {
-    if (!isScrollportPress(event, port)) return;
+    if (!isScrollportPress(event, port)) {
+      incidental(event);
+      return;
+    }
     clearClaim();
     clearSettle();
     writes.delete(port);
@@ -84,6 +93,7 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
     change("seek");
   };
   const release = () => {
+    if (press === null) return;
     press = null;
     clearClaim();
     settleSoon();
@@ -101,18 +111,21 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
     const forward = top > lastTop;
     const moved = top !== lastTop;
     lastTop = top;
-    if (!moved) return;
     const write = writes.get(port);
     if (write?.kind === "smooth") return;
     writes.delete(port);
-    if (write?.kind === "instant" && Math.abs(top - write.offset) <= 0.5) return;
-    const newlyClaimed = claim !== null;
-    const claimed = newlyClaimed || motion === "travel";
+    if (!moved || write?.kind === "instant" && Math.abs(top - write.offset) <= 0.5) return;
+    const demand = claim?.forward === true || motion === "travel";
+    const incidentalMovement = press === null && claim?.forward === false && !demand;
     clearClaim();
-    if (newlyClaimed) clearSettle();
+    if (incidentalMovement) {
+      if (motion === "seek") settleSoon();
+      return;
+    }
+    if (demand) clearSettle();
     else if (settle !== null) settleSoon();
-    change(press === null && claimed ? "travel" : "seek");
-    if (forward && (claimed || press !== null)) onForward?.(port);
+    change(press === null && demand ? "travel" : "seek");
+    if (forward && (demand || press !== null)) onForward?.(port);
   };
   const end = (event: Event) => {
     if (event.target !== port) return;
@@ -124,6 +137,8 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
   port.addEventListener("scrollend", end);
   port.addEventListener("wheel", wheel, { passive: true });
   port.addEventListener("keydown", key);
+  const incidentalEvents = ["beforeinput", "compositionstart", "focusin"];
+  for (const type of incidentalEvents) port.addEventListener(type, incidental);
   port.addEventListener("touchmove", touch, { passive: true });
   port.addEventListener("pointerdown", down);
   window.addEventListener("pointerup", up, true);
@@ -138,6 +153,7 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
     port.removeEventListener("scrollend", end);
     port.removeEventListener("wheel", wheel);
     port.removeEventListener("keydown", key);
+    for (const type of incidentalEvents) port.removeEventListener(type, incidental);
     port.removeEventListener("touchmove", touch);
     port.removeEventListener("pointerdown", down);
     window.removeEventListener("pointerup", up, true);

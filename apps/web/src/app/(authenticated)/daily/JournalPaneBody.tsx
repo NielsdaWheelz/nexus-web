@@ -28,7 +28,7 @@ import { cx } from "@/lib/ui/cx";
 import * as Icon from "@/lib/ui/icons";
 import { requirePaneRuntime, usePaneEntryDelivery, usePaneParam, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import { PaneRefreshAnchor, usePaneAnchorGeometry, usePaneInputLease, usePaneReturnReady, usePaneRevealAnchor } from "@/lib/workspace/paneReturnMemento";
+import { PaneRefreshAnchor, usePaneAnchorGeometry, usePaneInputLease, usePaneReturnReady, usePaneRevealAnchor, usePaneScrollMotion } from "@/lib/workspace/paneReturnMemento";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import WorkSection from "@/components/work/WorkSection";
 import CompletedWork from "@/components/work/CompletedWork";
@@ -83,7 +83,7 @@ function Journal({ arrival }: { arrival: string }) {
   const pickerId = useId();
   const members = index.data?.daily_index ?? null;
   if (index.data !== null && members === null) throw new Error("daily index result is missing");
-  const days = useMemo<Day[]>(() => {
+  const currentDays = useMemo<Day[]>(() => {
     if (members === null) return [];
     const days: Day[] = [...members];
     // Membership loss must not replace a retained editor with a latent arrival.
@@ -91,9 +91,17 @@ function Journal({ arrival }: { arrival: string }) {
     if (!days.some(day => day.local_date === arrival)) days.push({ local_date: arrival, ref: null });
     return days.sort((a, b) => b.local_date.localeCompare(a.local_date));
   }, [members, arrival, retained]);
+  const motion = usePaneScrollMotion();
+  const presented = useRef(currentDays);
+  const held = motion !== "still" && presented.current.length > 0;
+  const days = held && !(motion === "travel" && currentDays.length > presented.current.length &&
+    presented.current.every((day, rank) => day.local_date === currentDays[rank].local_date)) ? presented.current : currentDays;
+  useLayoutEffect(() => { presented.current = days; }, [days]);
   const dates = useMemo(() => days.map(day => day.local_date), [days]);
+  const ranks = useMemo(() => new Map(dates.map((date, rank) => [date, rank])), [dates]);
+  const currentByDate = useMemo(() => new Map(currentDays.map(day => [day.local_date, day])), [currentDays]);
   const window = useJournalWindow(dates, root, members !== null ? "ready" : index.error !== null ? "failed" : "pending",
-    presentationAllowance.pressured ? 0 : 1);
+    presentationAllowance.pressured ? 0 : 1, held);
   usePaneAnchorGeometry({ scope: "journal", geometry: window.geometry, ready: true });
   usePaneReturnReady(members !== null || index.error !== null);
   const retain = useCallback((day: Day, keep: boolean, presented: boolean) => setRetained(previous => {
@@ -167,11 +175,12 @@ function Journal({ arrival }: { arrival: string }) {
         className={styles.feed} style={{ height: members === null ? undefined : window.height }}>
         {members === null && index.error === null ? <Ruling /> : null}
         {shown.map(day => {
-          const rank = dates.indexOf(day.local_date);
-          return <JournalDay key={day.local_date} day={day} arrival={arrival} writing={writing} allowance={allowance} presentationAllowance={presentationAllowance}
+          const rank = ranks.get(day.local_date) ?? -1;
+          const size = !held || rank < 0 ? undefined : (window.tops[rank + 1] ?? window.height) - window.tops[rank];
+          return <JournalDay key={day.local_date} day={currentByDate.get(day.local_date) ?? {local_date: day.local_date, ref: null}} arrival={arrival} writing={writing} allowance={allowance} presentationAllowance={presentationAllowance}
             attached={(day.local_date === arrival || members !== null && members.some(member => member.local_date === day.local_date)) &&
               (window.dates.includes(day.local_date) || receiving && day.local_date === arrival || day.local_date === lending)}
-            rank={rank} count={days.length} top={rank < 0 ? 0 : window.tops[rank]}
+            rank={rank} count={days.length} top={rank < 0 ? 0 : window.tops[rank]} size={size}
             today={today} headless={headless && day.local_date === today} slot={slot}
             headRef={!watchBand && day.local_date === date ? setTarget : undefined}
             measure={window.measure} admit={window.admit} retain={retain} mayArrive={mayArrive}
@@ -193,7 +202,7 @@ function Journal({ arrival }: { arrival: string }) {
 
 function JournalDay(props: {
   day: Day; arrival: string; writing: WritingRuntime; allowance: OutlineHistoryAllowance; presentationAllowance: OutlinePresentationAllowance;
-  attached: boolean; rank: number; count: number; top: number;
+  attached: boolean; rank: number; count: number; top: number; size: number | undefined;
   today: string | null; headless: boolean; slot: HTMLElement | null;
   headRef: ((node: HTMLElement | null) => void) | undefined;
   measure(date: string, element: HTMLElement | null): void; retain(day: Day, keep: boolean, presented: boolean): void;
@@ -224,7 +233,7 @@ function JournalDay(props: {
     admit(day.local_date, resolved.error === null ? "pending" : "failed");
     return () => measure(day.local_date, null);
   }, [value, day.local_date, measure, admit, resolved.error]);
-  return value === null ? <article ref={stub} className={styles.day} style={{ top: props.top }} data-journal-date={day.local_date}
+  return value === null ? <article ref={stub} className={styles.day} style={{top: props.top, maxBlockSize: props.size, overflow: props.size === undefined ? undefined : "clip"}} data-journal-date={day.local_date}
     data-last={props.rank >= 0 && props.rank + 1 === props.count || undefined}
     data-pane-return-scope="journal" data-collection-row-id={day.local_date} data-row-focusable="true" tabIndex={0}
     aria-labelledby={heading} aria-posinset={props.rank + 1} aria-setsize={props.count} onKeyDown={event => {
@@ -238,7 +247,7 @@ function JournalDay(props: {
   </article> : <DayEditing {...props} resolved={value} />;
 }
 
-function DayEditing({ day, arrival, resolved, allowance, presentationAllowance, attached, rank, count, top, today, headless, slot, headRef, measure, admit, retain, mayArrive, newer, older }: Parameters<typeof JournalDay>[0] & { resolved: Resolved }) {
+function DayEditing({ day, arrival, resolved, allowance, presentationAllowance, attached, rank, count, top, size, today, headless, slot, headRef, measure, admit, retain, mayArrive, newer, older }: Parameters<typeof JournalDay>[0] & { resolved: Resolved }) {
   const { delivery, claim } = usePaneEntryDelivery();
   const { say } = useOutcome();
   const reveal = usePaneRevealAnchor();
@@ -320,7 +329,7 @@ function DayEditing({ day, arrival, resolved, allowance, presentationAllowance, 
         showTitle(); void api.current?.focusRoot().catch(failed);
       } },
     ] }]} />;
-  return <article ref={article} hidden={!visible} className={styles.day} style={{ top }} data-journal-date={day.local_date}
+  return <article ref={article} hidden={!visible} className={styles.day} style={{top, maxBlockSize: size, overflow: size === undefined ? undefined : "clip"}} data-journal-date={day.local_date}
     data-last={rank >= 0 && rank + 1 === count || undefined} data-pane-return-scope="journal" data-collection-row-id={day.local_date} data-row-focusable="true"
     tabIndex={0} aria-labelledby={heading} aria-posinset={rank < 0 ? undefined : rank + 1} aria-setsize={count}
     onFocus={event => {

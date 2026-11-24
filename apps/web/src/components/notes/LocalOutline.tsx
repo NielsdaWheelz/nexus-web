@@ -6,6 +6,7 @@ import {ResourceBranch, ResourceOutlineContext} from "@/components/resources/Res
 import Dialog from "@/components/ui/Dialog";
 import {useCopyFeedback} from "@/components/ui/useCopyFeedback";
 import {Hold, useOutcome} from "@/components/feedback/Feedback";
+import {Fact} from "@/components/feedback/Fact";
 import {Ruling} from "@/components/feedback/Ruling";
 import type {CommandVerb} from "@/components/feedback/stage";
 import {OutlineEmbeddingOccurrence, useEditorDraft} from "@/lib/notes/editorHost";
@@ -148,7 +149,7 @@ export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS
     received={received} onReady={setEditor}/></div>
     // Before the session mounts, its ruling stands in the session's own type, whatever hosts the outline.
     : presented ? <div {...type}><Ruling/></div> : null;
-  if (current && painted !== current.controller && editor === current.controller &&
+  if (current && painted !== current.controller && editor === current.controller && current.controller.structureReady &&
     [...current.controller.requests.keys()].every(id => current.controller.windows.has(id) || current.controller.branchRead(id).error !== null)) setPainted(current.controller);
   const read = controller?.branchRead(input.root_id);
   return {rootEditor, rootTitle: presentation.rootTitle, rootReady: presentation.rootReady, rootRead, error: read?.error ?? null,
@@ -185,6 +186,10 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
   }, [controller]);
   const editorReady = useCallback((handle: NoteEditorHandle | null) => {controller.setHandle(handle); onReady(handle ? controller : null);}, [controller, onReady]);
   useLayoutEffect(() => {controller.filter = filter; controller.revealExternal = resources?.reveal ?? null; controller.configure(rootField); controller.refresh();}, [controller, filter, pending.value.revision, rootField, resources?.reveal]);
+  const filterText = filter.trim(), disclosure = controller.disclosureKey();
+  const [structureAttempt, retryStructure] = useState(0);
+  const [structureError, setStructureError] = useState<unknown | null>(null);
+  useEffect(() => controller.observeStructure(filterText, setStructureError), [controller, filterText, disclosure, structureAttempt]);
   useEffect(() => {
     const intent = (event: Event) => {
       if (!event.isTrusted || controller.inertInput(event)) return;
@@ -254,7 +259,9 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
       </Dialog>
       {/* rows stand once the root's window is installed, not once it is read: its admission can fail */}
       {rootState.error !== null ? <AuthoredReadFailure {...rootState} noun="linked items"/>
-        : controller.windows.has(pending.value.input.root_id) ? null : <Ruling/>}
+        : controller.windows.has(pending.value.input.root_id) && controller.structureReady ? null : <Ruling/>}
+      <AuthoredReadFailure error={structureError} retry={() => retryStructure(attempt => attempt + 1)} noun="the outline index"/>
+      {filterText && controller.structureReady && structureError === null && !controller.hasFilteredRows ? <Fact line={{fact: "no linked items match this filter."}}/> : null}
       {[...controller.requests.values()].map(request => <BranchCollector key={request.parent_id} controller={controller} request={request} received={request.parent_id === pending.value.input.root_id ? received : null}/>)}
       <NoteEditor editorKey={`outline:${occurrencePrefix}`} occurrenceKey={`outline:${occurrencePrefix}`} containingNoteRef={rootRef}
         projection={controller.projection} body={emptyBody()} revision={0} editable={!filter.trim()} label="edit linked items" wordsAtRisk={wordsAtRisk || pendingError !== null}
