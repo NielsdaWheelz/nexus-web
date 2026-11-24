@@ -105,13 +105,13 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   let closed = false;
   let queue: Promise<unknown> = Promise.resolve();
   const serialize = <T,>(work: () => Promise<T>): Promise<T> => { const next = queue.then(work); queue = next.catch(() => undefined); return next; };
-  const queries = new Set<(corpusChanged: boolean, dailyIndexChanged: boolean, resourceRefs: readonly string[] | null, onlyTitles: boolean) => void>();
+  const queries = new Set<(corpusChanged: boolean, dailyIndexChanged: boolean, resourceRefs: readonly string[] | null, onlyTitles: boolean, ownsCommit: boolean) => void>();
   const evidence = new Set<() => void>();
   const closedWaiters = new Set<() => void>();
   const statuses = new Set<(status: SyncStatus, detail: string | null, failure: SyncFailure) => void>();
-  const changed = (corpusChanged = false, dailyIndexChanged = false, resourceRefs: readonly string[] | null = null, onlyTitles = false) => {
+  const changed = (corpusChanged = false, dailyIndexChanged = false, resourceRefs: readonly string[] | null = null, onlyTitles = false, ownsCommit = false) => {
     for (const listener of statuses) listener(syncStatus(sync.facts), sync.detail, sync.facts.failure);
-    for (const listener of queries) listener(corpusChanged, dailyIndexChanged, resourceRefs, onlyTitles);
+    for (const listener of queries) listener(corpusChanged, dailyIndexChanged, resourceRefs, onlyTitles, ownsCommit);
   };
   const queryLocal = async (query: Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult> => {
     if (query.kind !== "search" && query.kind !== "search_preview" && query.kind !== "search_admission" && query.kind !== "source_alias" && query.kind !== "excerpt") {
@@ -147,9 +147,9 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       let raced = false;
       for (;;) {
         const current = await call<ReplicaState>("replica");
-        // Another native owner can have merged a foreign prefix while this
-        // document's queries still need to observe it.
-        const applied = entries.filter(entry => entry.replica_id !== current.replica_id).map(entry => entry.change);
+        // Native documents share SQLite. This document may not have observed
+        // an entry written by another document on the same replica.
+        const applied = entries.map(entry => entry.change);
         if (BigInt(current.server_cursor) >= BigInt(nextCursor)) return {replica: current, applied, only_titles: false};
         const changes = entries.filter(entry => BigInt(entry.server_seq) > BigInt(current.server_cursor));
         const incoming = changes.filter(entry => !isLocalFeedEcho(entry, current)).map(entry => entry.change);
@@ -160,7 +160,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
           expected_store_revision: current.store_revision, expected_server_cursor: current.server_cursor, changes, next_cursor: nextCursor, states: merged,
         });
         if (!("kind" in result)) return {
-          replica: result, applied, only_titles: !raced && changes.length === entries.length && titleOnlyChanges(incoming, states, merged),
+          replica: result, applied, only_titles: !raced && incoming.length === entries.length && titleOnlyChanges(incoming, states, merged),
         };
         raced = true;
       }
@@ -239,7 +239,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
         frame = { ...frame, states: merged };
         const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease });
         sync.facts.pending = true;
-        if (result.kind === "committed") changed(true, changesDailyIndex(frame.change), changedResourceRefs([frame.change]), titleOnlyChanges([frame.change], states, merged));
+        if (result.kind === "committed") changed(true, changesDailyIndex(frame.change), changedResourceRefs([frame.change]), titleOnlyChanges([frame.change], states, merged), true);
         replication.wake();
         return result;
       }
@@ -261,6 +261,13 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       };
       queries.add(read); read(true, true, null, false);
       return () => { live = false; queries.delete(read); };
+    },
+    onResourceChange: (ref, listener) => {
+      const notify = (corpus: boolean, _index: boolean, refs: readonly string[] | null, _titles: boolean, ownsCommit: boolean) => {
+        if (corpus && !ownsCommit && (refs === null || refs.includes(ref))) listener();
+      };
+      queries.add(notify);
+      return () => { queries.delete(notify); };
     },
     evidence_changed: listener => { evidence.add(listener); return () => { evidence.delete(listener); }; },
     sync_status: listener => { statuses.add(listener); listener(syncStatus(sync.facts), sync.detail, sync.facts.failure); return () => { statuses.delete(listener); }; },

@@ -129,6 +129,8 @@ export interface AuthoredStore {
   query(query: AuthoredQuery): Promise<QueryResult>;
   /** One initial read and later invalidations share the caller's success/failure owners. */
   subscribe(query: AuthoredQuery, listener: (result: QueryResult) => void, failed: (error: unknown) => void): () => void;
+  /** Causal state changed outside this document's own command receipts. The caller owns the initial read. */
+  onResourceChange(ref: string, listener: () => void): () => void;
   commit(frame: CommitFrame): Promise<CommitResult>;
   /** Derived evidence changes independently of canonical authored content. */
   evidence_changed(listener: () => void): () => void;

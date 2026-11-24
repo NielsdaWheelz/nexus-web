@@ -31,9 +31,9 @@ function serialize<T>(operation: () => Promise<T>): Promise<T> {
   queue = next.catch(() => undefined);
   return next;
 }
-function changed(corpusChanged = false, dailyIndexChanged = false, resourceRefs: readonly string[] | null = null, onlyTitles = false) {
+function changed(corpusChanged = false, dailyIndexChanged = false, resourceRefs: readonly string[] | null = null, onlyTitles = false, commandOwner: MessagePort | null = null) {
   for (const port of ports) port.postMessage({ kind: "changed", corpus_changed: corpusChanged, daily_index_changed: dailyIndexChanged,
-    resource_refs: resourceRefs, only_titles: onlyTitles,
+    resource_refs: resourceRefs, only_titles: onlyTitles, owns_commit: port === commandOwner,
     status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.detail ?? null, failure: sync?.facts.failure ?? null });
 }
 /** `readResponse` takes any abort for its caller's, and here the caller may not have aborted:
@@ -95,7 +95,7 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
       const state = await persistence.replica();
       sync.facts.ready = state.provisioning_complete;
       sync.facts.cursor = state.server_cursor;
-      sync.facts.pending = (await persistence.pending()).length > 0;
+      sync.facts.pending = await persistence.hasPending();
     }
     return { wire_revision: WIRE_REVISION, format_revision: FORMAT_REVISION, status: syncStatus(sync!.facts), detail: sync!.detail, failure: sync!.facts.failure };
   }
@@ -123,20 +123,16 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
     case "read_snapshot": return persistence.readSnapshot(input.selection as unknown as StateSelection);
     case "replica": return persistence.replica();
     case "states": return persistence.states(input.selection as unknown as StateSelection);
-    case "query": {
-      if (!(await persistence.replica()).provisioning_complete) throw new Error("authored corpus is still preparing");
-      return persistence.query(input.query as unknown as AuthoredQuery);
-    }
+    case "query": return persistence.query(input.query as unknown as AuthoredQuery);
     case "commit": {
       const held = (await navigator.locks.query()).held?.find(lock => lock.name === `nexus-authored-command-${account}`);
       if (preparation?.port !== port || preparation.lease !== input.lease || held?.clientId !== preparation.holder) throw new Error("authored preparation retired before local commit");
-      if (!(await persistence.replica()).provisioning_complete) throw new Error("authored corpus is still preparing");
       sync!.facts.saving = true; changed();
       try {
         const frame = input.frame as unknown as CommitFrame;
         const { only_titles: onlyTitles, ...result } = await persistence.commit(frame);
-        if (result.kind === "committed") changed(true, changesDailyIndex(frame.change), changedResourceRefs([frame.change]), onlyTitles);
-        sync!.facts.pending = (await persistence.pending()).length > 0;
+        if (result.kind === "committed") changed(true, changesDailyIndex(frame.change), changedResourceRefs([frame.change]), onlyTitles, port);
+        sync!.facts.pending = await persistence.hasPending();
         return result;
       } finally { sync!.facts.saving = false; changed(); }
     }

@@ -53,7 +53,7 @@ export class Persistence {
       const state = await this.replica();
       if (state.account_id !== accountId) throw new Error("authored account mismatch");
       if (state.format_revision === 4 || state.format_revision === 5) {
-        if ((await this.db.all("SELECT 1 FROM pending_changes LIMIT 1")).length > 0)
+        if (await this.hasPending())
           throw Object.assign(new Error("sync all writing with the previous client before updating this device"), { code: "E_AUTHORED_UPGRADE_PENDING" });
         for (const sql of UPGRADE_TO_6_SQL) await this.db.run(sql);
       } else if (state.format_revision !== FORMAT_REVISION) throw new Error("authored format mismatch; drain the previous client before reprovisioning this device");
@@ -92,13 +92,16 @@ export class Persistence {
     return this.states(selection);
   }
   async query(query: AuthoredQuery): Promise<QueryResult> {
+    // The worker keeps this revision fixed across every statement of the query.
+    const { provisioning_complete, store_revision } = await this.replica();
+    if (!provisioning_complete) throw new Error("authored corpus is still preparing");
     if (query.kind === "excerpt") {
       const result = await excerptQuery(plan => this.db.all(plan.sql,plan.params),query);
-      return {store_revision:(await this.replica()).store_revision,...result};
+      return {store_revision,...result};
     }
     if (query.kind === "source_alias") {
       const result = await sourceAliasQuery(plan => this.db.all(plan.sql, plan.params), query);
-      return {store_revision:(await this.replica()).store_revision,...result};
+      return {store_revision,...result};
     }
     if (query.kind === "search" || query.kind === "search_preview" || query.kind === "search_admission") {
       const result = await searchQuery(plan => this.db.all(plan.sql, plan.params), query, async (text, expression) => {
@@ -110,29 +113,29 @@ export class Persistence {
           return row ? Number(row.score) : null;
         } finally { await this.db.run(SEARCH_MATCH_SQL.search_match_clear); }
       });
-      return {store_revision:(await this.replica()).store_revision,...result};
+      return {store_revision,...result};
     }
     if (query.kind === "outline_windows") {
       const windows: OutlineWindowSlice[] = [];
       for (const compiled of compileOutlineWindows(query)) windows.push(decodeOutlineWindow(await this.db.all(compiled.sql, compiled.params), query.ref));
-      return {store_revision: (await this.replica()).store_revision, rows: [], children: [], outline_windows: windows, daily_index: null,
+      return {store_revision, rows: [], children: [], outline_windows: windows, daily_index: null,
         next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], scope_available: true};
     }
     const compiled = compileQuery(query);
     const raw = await this.db.all(compiled.sql, compiled.params);
-    if (query.kind === "daily_index") return {store_revision: (await this.replica()).store_revision,
+    if (query.kind === "daily_index") return {store_revision,
       daily_index: raw.map(row => ({local_date: String(row.local_date), ref: row.ref === null ? null : String(row.ref)})),
       rows: [], children: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null,
       positions: [], scope_available: true, outline_windows: null};
     if (query.kind === "outline_children") return {
-      store_revision: (await this.replica()).store_revision, rows: [], next_cursor: null,
+      store_revision, rows: [], next_cursor: null,
       previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [],
       children: raw.map(row => row.child_available === null ? null : Number(row.child_available) === 1), scope_available: true, daily_index: null, outline_windows: null,
     };
-    if (query.kind === "binding") return { store_revision: (await this.replica()).store_revision, rows: [], children: [], next_cursor: null, previous_cursor: null, positions: [], binding_id: raw[0] ? String(raw[0].binding_id) : null, canonical_source_ref: null, scope_available: true, daily_index: null, outline_windows: null };
+    if (query.kind === "binding") return { store_revision, rows: [], children: [], next_cursor: null, previous_cursor: null, positions: [], binding_id: raw[0] ? String(raw[0].binding_id) : null, canonical_source_ref: null, scope_available: true, daily_index: null, outline_windows: null };
     if (query.kind === "positions") {
       const positions = raw.map(row => JSON.parse(String(row.position_json)));
-      return { store_revision: (await this.replica()).store_revision, rows: [], children: [], positions, next_cursor: query.at.kind === "tie" && positions.length === Math.min(100, query.at.limit) ? String(raw.at(-1)?.cursor_json) : null, previous_cursor: null, binding_id: null, canonical_source_ref: null, scope_available: true, daily_index: null, outline_windows: null };
+      return { store_revision, rows: [], children: [], positions, next_cursor: query.at.kind === "tie" && positions.length === Math.min(100, query.at.limit) ? String(raw.at(-1)?.cursor_json) : null, previous_cursor: null, binding_id: null, canonical_source_ref: null, scope_available: true, daily_index: null, outline_windows: null };
     }
     const rows = raw.map(row => ({ resource: JSON.parse(String(row.projection_json)), link: row.link_json === null ? null : JSON.parse(String(row.link_json)), match_text: null, activation_ref: null, matched_field: null, activation_field: null }));
     const last = rows.at(-1);
@@ -141,7 +144,7 @@ export class Persistence {
       const cursor = raw.at(-1)?.cursor_json;
       next = typeof cursor === "string" ? cursor : last.resource.ref;
     }
-    return { store_revision: (await this.replica()).store_revision, rows, next_cursor: next, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, outline_windows: null };
+    return { store_revision, rows, next_cursor: next, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, outline_windows: null };
   }
   async write(states: MergeResult) {
     for (const state of states.resources) {
@@ -174,6 +177,7 @@ export class Persistence {
     if (new TextEncoder().encode(bytes).byteLength > MAX_COMMAND_BYTES) throw new Error("authored command exceeds 2 mib");
     return this.db.transaction(async () => {
       const current = await this.replica();
+      if (!current.provisioning_complete) throw new Error("authored corpus is still preparing");
       if (frame.replica_id !== current.replica_id) throw new Error("wrong authored replica");
       if (BigInt(frame.change.command_seq) <= BigInt(current.command_seq)) return { kind: "committed", command_seq: frame.change.command_seq, store_revision: current.store_revision, only_titles: false };
       if (BigInt(frame.change.command_seq) !== BigInt(current.command_seq) + BigInt(1)) throw new Error("authored command sequence gap");
@@ -232,6 +236,9 @@ export class Persistence {
       }
       await this.db.run("UPDATE replica_state SET provisioning_complete=1,server_cursor=?,store_revision=store_revision+1,lamport=MAX(lamport,?) WHERE singleton=1", [BigInt(cursor), BigInt(lamport)]);
     });
+  }
+  async hasPending(): Promise<boolean> {
+    return (await this.db.all("SELECT 1 FROM pending_changes LIMIT 1")).length > 0;
   }
   async pending(): Promise<Change[]> {
     const rows = await this.db.all(PENDING_CHANGES_SQL);

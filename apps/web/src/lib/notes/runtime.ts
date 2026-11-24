@@ -10,7 +10,7 @@ import { prepareChange, createNoteIntent, type Intent, type CommandContext } fro
 import { decodeBytes, encodeBytes, hydrateNote, createTitle, readBody } from "@nexus/authored/documents";
 import { noteBodySchema, rawBodyText, type NoteBody } from "@nexus/authored/body";
 import { advanceCoverage, mergeChanges, mergeVector } from "@nexus/authored/merge";
-import { MAX_COMMAND_BYTES, CommandTooLargeError, WorkConversionError, WorkJoinError, WorkUnavailableError, type AuthoredStore, type Change, type CommitFrame, type Corpus, type QueryResult, type MergeResult, type ResourceState, type StateSelection, type Vector, type NoteWork } from "@nexus/authored/types";
+import { MAX_COMMAND_BYTES, CommandTooLargeError, WorkConversionError, WorkJoinError, WorkUnavailableError, type AuthoredStore, type Change, type CommitFrame, type Corpus, type MergeResult, type ResourceState, type StateSelection, type Vector, type NoteWork } from "@nexus/authored/types";
 import { openAuthoredStore } from "@/lib/authored/client";
 export interface WritingSnapshot { body_state: string; observed_touch: Vector }
 export interface WritingDocument {
@@ -592,18 +592,20 @@ export class WritingRuntime {
     cached.unsubscribe();
     const current = () => !this.retired && this.documents.get(ref) === entry && cached.read_subscription === subscription && (!entry?.value || entry.value === cached);
     const failed = (error: unknown) => {if (current() && !isAuthoredStorageFailure(error)) reportError(error);};
-    const refresh = (result: QueryResult) => {
+    const refresh = (initial: { revision: string; resource: ResourceState } | null) => {
       if (!current()) return;
       const attempt = ++cached.read_attempt;
-      const initial = loaded; loaded = null;
-      void (initial !== null && result.store_revision === initial.revision
-        ? Promise.resolve({resources: [initial.resource]}) : store.readStates(selectStates({refs: [ref]}))).then(states => {
+      const read = async () => {
+        if (initial && (await store.readReplica()).store_revision === initial.revision) return initial.resource;
+        return (await store.readStates(selectStates({refs: [ref]}))).resources.find(resource => resource.ref === ref);
+      };
+      void read().then(latest => {
         if (!current() || cached.read_attempt !== attempt) return;
-        const latest = states.resources.find(resource => resource.ref === ref);
         if (latest) cached.receive(latest);
       }).catch(error => {if (current() && cached.read_attempt === attempt) failed(error);});
     };
-    cached.unsubscribe = store.subscribe({kind: "resource", ref}, refresh, failed);
+    cached.unsubscribe = store.onResourceChange(ref, () => refresh(null));
+    refresh(loaded);
   }
   private async evict(): Promise<void> {
     const opened = await Promise.allSettled([...this.documents.values()].map(entry=>entry.promise));

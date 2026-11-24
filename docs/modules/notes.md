@@ -75,8 +75,9 @@ can change. provisioning and bulk scope publication can invalidate the whole
 store. a commit or feed batch that only changes titles of already visible pages
 wakes an outline when its root or a raw row uses one of those pages. an outline
 admission reads causal state for newly held documents at the slice's store
-revision and retries when another commit advances that revision first. existing
-document owners keep their own subscriptions.
+revision and retries when another commit advances that revision first. an open
+writing document installs its exact local receipt and reads causal state on a
+change from outside its own writer.
 
 ## work
 
@@ -833,8 +834,10 @@ chunks within 64 kib frames. the whole streamed corpus snapshot has no 3 mib cap
 `GET /authored/changes?after=…` returns a bounded ascending prefix through one
 captured head. applying changes and advancing the cursor share one device
 transaction. an entry from this replica within its durable source prefix only
-advances the feed cursor. only incoming changes advance the corpus revision and
-wake its queries. sending and receiving proceed independently.
+advances the feed cursor. only incoming changes advance the corpus revision.
+native observers also receive feed invalidation for same-replica entries because
+separate webviews can write to the same sqlite store. sending and receiving
+proceed independently.
 
 the document schedules finite `Sync.step({refresh})` units while foregrounded.
 each unit admits at most one upload batch, feed page and scope unit. registration
