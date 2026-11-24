@@ -14,6 +14,14 @@ const WORK_CAPTURE_REPLICA = "json_extract(state_json,'$.work.captured.replica_i
 export const WORK_CAPTURE_ORDER = `${WORK_CAPTURE_LAMPORT},${WORK_CAPTURE_REPLICA},ref`;
 const WORK_LABEL_SQL = "trim(substr(COALESCE(body_text,'')||char(10),1,instr(COALESCE(body_text,'')||char(10),char(10))-1))";
 export const WORK_REGISTER_MEMBERSHIP = `kind='note' AND visible=1 AND json_type(state_json,'$.work')='object'`;
+const WORK_KIND = "json_extract(state_json,'$.work.designation.value.kind')";
+const WORK_ENABLED = "json_extract(state_json,'$.work.designation.value.enabled')=1";
+export const WORK_TASK_DAY = "json_extract(state_json,'$.work.task_completed_on.value')";
+const WORK_HABIT_CHECKS = "json_extract(state_json,'$.work.habit_checks')";
+export const WORK_OPEN_TASK = `${WORK_REGISTER_MEMBERSHIP} AND ${WORK_ENABLED} AND ${WORK_KIND}='task' AND ${WORK_TASK_DAY} IS NULL`;
+export const WORK_TASK_HISTORY = `${WORK_REGISTER_MEMBERSHIP} AND ${WORK_TASK_DAY} IS NOT NULL`;
+export const WORK_ACTIVE_HABIT = `${WORK_REGISTER_MEMBERSHIP} AND ${WORK_ENABLED} AND ${WORK_KIND}='habit'`;
+export const WORK_HABIT_HISTORY = `${WORK_REGISTER_MEMBERSHIP} AND ${WORK_HABIT_CHECKS}<>'{}'`;
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
 const COMPLETE_REGISTER_ROWS = 200;
 const HIGHLIGHT_TEXT_FIELDS = ["prefix", "quote_exact", "suffix"] as const;
