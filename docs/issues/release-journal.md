@@ -39,4 +39,8 @@ focused. evidence is `takeover-android-reconnect-d046d75-033111/android.json`.
 at `15e15f096` a trusted native fling kept the active editor and made no
 programmatic scroll writes. native input continued in that editor and the
 exact body committed locally. `takeover-android-15e15f0-034630/android.json`
-records both. [spoken work-only marks](journal-android-talkback.md) remain open.
+records both. packaged `5b8e4d93f` repeated the exact pending-byte upgrade and
+original-sequence upload. packaged `d0a08d7e0` spoke `recorded day` for both
+the work-only date and empty saved date in the real chooser. the private
+`takeover-android-speech-direct-d0a08d7-042323/talkback-spoken.json` records the
+two captured utterances.
