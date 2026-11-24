@@ -11,7 +11,7 @@ import { Features } from "lightningcss";
 import { compileQuery, compileOutlineWindows, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, SEARCH_READ_SQL, SEARCH_MATCH_SQL, LITERAL_SOURCE_SQL, LITERAL_MISSING_SQL, LITERAL_WRITE_SQL } from "../../node/authored/src/queries";
 import { SCOPE_SQL } from "../../node/authored/src/scope";
 import { nativeQueryPlans } from "./src/lib/authored/nativeQuery";
-import type { AuthoredQuery } from "../../node/authored/src/types";
+import type { AuthoredQuery, WorkRegisterSource } from "../../node/authored/src/types";
 import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_TO_6_SQL } from "../../node/authored/src/schema";
 import { appCsp } from "./src/lib/security/csp";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
@@ -53,10 +53,10 @@ export default defineConfig({
         const index = {start: 0, limit: 100, expected_revision: null};
         type PackagedQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;
         const workDate = "2026-11-11";
-        const workSamples = (kind: "work_pending" | "work_completed"): PackagedQuery[] => [
-          {kind, local_date: workDate, at: {kind: "describe"}, expected_revision: null},
-          {kind, local_date: workDate, at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
-          {kind, local_date: workDate, at: {kind: "locate", refs: []}, expected_revision: "0"},
+        const workSamples = (source: WorkRegisterSource): PackagedQuery[] => [
+          {...source, at: {kind: "describe"}, expected_revision: null},
+          {...source, at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
+          {...source, at: {kind: "locate", refs: []}, expected_revision: "0"},
         ];
         const samples: Record<PackagedQuery["kind"], PackagedQuery[]> = {
           page_register: ["", "words"].flatMap<PackagedQuery>(text => [
@@ -67,9 +67,9 @@ export default defineConfig({
           register_label: [{kind: "register_label", ref: ""}],
           outline_filter: ["","words"].map(text => ({kind: "outline_filter", parent_ref: "", text, start: 0, limit: 1, expected_revision: null})),
           daily_index: [{kind: "daily_index"}],
-          work_pending: [...workSamples("work_pending"),
+          work_pending: [...workSamples({kind:"work_pending", local_date:workDate}),
             {kind: "work_pending", local_date: workDate, at: {kind: "place", rows: []}, expected_revision: "0"}],
-          work_completed: workSamples("work_completed"),
+          work_completed: workSamples({kind:"work_completed", local_date:workDate}),
           habits: [
             {kind: "habits", at: {kind: "describe"}, expected_revision: null},
             {kind: "habits", at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},

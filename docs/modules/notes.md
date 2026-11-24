@@ -85,9 +85,12 @@ both typed histories and the winning designation controls current behavior. disa
 tracking retains dates. unlink changes placement; deletion hides work and restoration
 returns it. text always uses the note's current wording.
 
-`work_pending`, `work_completed` and `habits` read bounded rank ranges of one
-local revision. unfinished tasks and today's unchecked habits share numeric
-capture order, with replica and ref ties. the habit register carries the
+`work_pending`, `work_completed` and `habits` describe the complete order of
+one local revision. large registers load visible rank ranges and resolve saved
+occurrences directly. unfinished tasks and today's unchecked habits share
+numeric capture order, with replica and ref ties. the pending view places
+retained editors and completion receipts at the matching gap in that order.
+large completed days keep seekable rows inside the journal. the habit register carries the
 ordered ref, its label and whether repetition is active. its visible rows
 separately read positive checks for the selected year.
 the journal agenda ends with `add a task`, which opens its capture form in
