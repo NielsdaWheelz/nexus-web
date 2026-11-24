@@ -1017,10 +1017,10 @@ export class OutlineController {
       };
       if (!valid()) return;
       const missingRefs = new Set([...this.refs(next)].filter(ref => !this.documents.has(ref)));
-      const store = await this.runtime.store;
-      const snapshot = await store.readSnapshot({refs: [...missingRefs], link_ids: [], anchor_ids: [], source_refs: []});
+      const snapshot = missingRefs.size === 0 ? null
+        : await (await this.runtime.store).readSnapshot({refs: [...missingRefs], link_ids: [], anchor_ids: [], source_refs: []});
       if (!valid()) return;
-      if (snapshot.replica.store_revision !== window.data.store_revision) {
+      if (snapshot !== null && snapshot.replica.store_revision !== window.data.store_revision) {
         this.reads.get(parent_id)?.value.retry();
         return;
       }
@@ -1048,7 +1048,7 @@ export class OutlineController {
         const editable = this.refs(next);
         for (const ref of editable) if (!this.documents.has(ref)) {
           // A branch can retire a held document while the selected root is being read.
-          if (!missingRefs.has(ref)) {retryAdmission = true; return;}
+          if (snapshot === null || !missingRefs.has(ref)) {retryAdmission = true; return;}
           const resource = snapshot.states.resources.find(resource => resource.ref === ref);
           const prelude = ref === this.rootRef ? this.prelude : [];
           const document = await (resource && resource.kind !== "highlight"

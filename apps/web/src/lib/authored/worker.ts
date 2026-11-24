@@ -157,8 +157,9 @@ scope.onconnect = event => {
           if (data.op !== "close" && data.op !== "retire") port.postMessage({ id: data.id, ok: true, result });
         } catch (error) { port.postMessage({ id: data.id, ok: false, error: error instanceof Error ? error.message : "authored operation failed", status: error instanceof ApiError ? error.status : null, code: error instanceof ApiError ? error.code : error instanceof Error && "code" in error && (error.code === "E_AUTHORED_LOCAL" || error.code === "E_AUTHORED_UPGRADE_PENDING") ? error.code : null }); }
       };
-      // Network work reacquires the SQL queue for each local transaction.
-      if (data.op === "sync_step") void answer();
+      // Network work reacquires the SQL queue. Ending the matching ephemeral
+      // lease touches only the message port's preparation token.
+      if (data.op === "sync_step" || data.op === "command_end") void answer();
       else void serialize(answer);
     };
     submit();
