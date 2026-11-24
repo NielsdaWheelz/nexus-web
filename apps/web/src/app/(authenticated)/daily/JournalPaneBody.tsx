@@ -87,13 +87,18 @@ function Journal({ arrival }: { arrival: string }) {
     presented && day.local_date !== arrival ? [day.local_date] : []).sort().join(",");
   const source = useMemo<DailyIndexSource>(() => ({kind: "daily_index", arrival, retained: retainedDates === "" ? [] : retainedDates.split(",")}), [arrival, retainedDates]);
   const index = useAuthoredQuery({...source, at: {kind: "describe"}, expected_revision: null});
-  const last = useRef<{source: DailyIndexSource; data: QueryResult} | null>(null);
-  const admitted = index.data === null ? last.current : {source, data: index.data};
-  useLayoutEffect(() => { if (index.data !== null) last.current = {source, data: index.data}; }, [index.data, source]);
-  const description = admitted?.data.daily_index;
+  const last = useRef<QueryResult | null>(null);
+  const admitted = index.data ?? last.current;
+  useLayoutEffect(() => { if (index.data !== null) last.current = index.data; }, [index.data]);
+  const description = admitted?.daily_index;
   if (admitted !== null && description?.kind !== "description") throw new Error("daily index description is missing");
-  const revision = admitted?.data.store_revision ?? null;
-  const ranked = useRankedAuthoredWindow(admitted?.source ?? source, revision,
+  const revision = admitted?.store_revision ?? null;
+  // Durable dates already belong to the union. Focusing one need not retire its admitted ranges.
+  const syntheticDates = description?.kind === "description" ? description.attachments
+    .filter(day => !day.recorded && day.local_date !== arrival).map(day => day.local_date).sort().join(",") : "";
+  const rankedSource = useMemo<DailyIndexSource>(() => ({kind: "daily_index", arrival,
+    retained: syntheticDates === "" ? [] : syntheticDates.split(",")}), [arrival, syntheticDates]);
+  const ranked = useRankedAuthoredWindow(rankedSource, revision,
     description?.kind === "description" ? description : null, dailyIndex, index.retry);
   const current = useMemo(() => {
     const byRank = new Map<number, DailyIndexEntry>();
@@ -106,11 +111,11 @@ function Journal({ arrival }: { arrival: string }) {
     }
     const byDate = new Map([...byRank.entries()].sort(([a], [b]) => a - b).map(([rank, day]) => [day.local_date, {day, rank}]));
     const order: JournalOrder = {count: total, dates: [...byDate.keys()],
-      observation: sparse ? JSON.stringify([revision, admitted?.source]) : null,
+      observation: sparse ? JSON.stringify([revision, rankedSource]) : null,
       dateAt: rank => byRank.get(rank)?.local_date,
       rankOf: date => byDate.get(date)?.rank ?? (sparse ? ranked.positions?.get(date) : null)};
     return {order, byDate};
-  }, [description, revision, admitted?.source, ranked.items, ranked.positions]);
+  }, [description, revision, rankedSource, ranked.items, ranked.positions]);
   const motion = usePaneScrollMotion();
   const presented = useRef(current);
   const before = presented.current.order;
