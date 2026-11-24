@@ -21,7 +21,8 @@ programmatic scrolling. the journal's variable-height date geometry composes
 immutable outline row frames. resize, projection and binding reconciliation
 capture the prior eye line before publishing geometry; user input cancels stale
 restoration. a child frame refines only its enclosing logical date; placement
-waits for measured extents to reach the committed geometry. explicit date
+waits for measured extents to reach the committed geometry. end on the
+focused pane scrollport reveals the oldest civil date. explicit date
 activation reveals; back/resume restore the saved visit. workspace labels and
 recents describe the arrival date without title
 reads or rewriting the destination to a standalone page.

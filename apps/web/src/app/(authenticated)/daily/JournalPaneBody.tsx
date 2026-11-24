@@ -130,6 +130,20 @@ function Journal({ arrival }: { arrival: string }) {
     });
   usePaneAnchorGeometry({ scope: "journal", geometry: window.geometry, ready: true });
   usePaneReturnReady(admitted !== null || error !== null);
+  const reveal = usePaneRevealAnchor();
+  const lastDate = order.dateAt(order.count - 1);
+  useLayoutEffect(() => {
+    const port = root.current?.closest<HTMLElement>("[data-pane-content]");
+    if (!port || lastDate === undefined) return;
+    const end = (event: KeyboardEvent) => {
+      if (!event.isTrusted || event.defaultPrevented || event.target !== port || event.key !== "End" ||
+          event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      event.preventDefault();
+      reveal("journal", lastDate, false);
+    };
+    port.addEventListener("keydown", end, true);
+    return () => port.removeEventListener("keydown", end, true);
+  }, [lastDate, reveal]);
   const retain = useCallback((day: Day, keep: boolean, presented: boolean) => setRetained(previous => {
     const old = previous.get(day.local_date);
     if (!keep && old === undefined || keep && old?.day.ref === day.ref && old.presented === presented) return previous;
