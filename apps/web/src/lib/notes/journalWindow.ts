@@ -94,7 +94,14 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
     },
     element: date => elements.current.get(date) ?? null,
     // The pane writes before scroll delivery; admit dates from its actual offset.
-    refreshRange: () => { syncOffset.current?.(); changed(value => value + 1); },
+    refreshRange() {
+      syncOffset.current?.();
+      const current = frame.current;
+      if (current === null) return;
+      const {root, scrollport, origin} = current;
+      const top = root.getBoundingClientRect().top - scrollport.getBoundingClientRect().top - scrollport.clientTop + scrollport.scrollTop;
+      if (top !== origin) changed(value => value + 1);
+    },
   }), []);
 
   useLayoutEffect(() => {
