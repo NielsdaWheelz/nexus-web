@@ -66,15 +66,17 @@ costs `o(log days + mounted)`. unseen heights are
 estimates; active selections and rich bodies have no hard total-memory bound.
 android's existing 16-mib result cap applies to the compact index and compound
 windows. the ui, worker and packaged native plans share the same closed query
-contract. provisioning, dated-page patches and note changes invalidate the index.
-note invalidation is conservative: body edits can revive a deleted work note.
-this accepts extra local index reads without a second dependency cache.
-link/status changes do not invalidate it.
+contract. provisioning and changes that can affect dated-page or work membership
+invalidate the index. note invalidation is conservative because body edits can
+revive a deleted work note. link and status changes leave membership intact.
 
 direct resource subscriptions wake for the refs a commit or feed application
 can change. provisioning and bulk scope publication can invalidate the whole
-store. an outline admission reads causal state for newly held documents from
-the slice's store revision. existing document owners keep their own subscriptions.
+store. a commit or feed batch that only changes titles of already visible pages
+wakes an outline when its root or a raw row uses one of those pages. an outline
+admission reads causal state for newly held documents at the slice's store
+revision and retries when another commit advances that revision first. existing
+document owners keep their own subscriptions.
 
 ## work
 

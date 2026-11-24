@@ -391,7 +391,7 @@ export function titleOnlyChanges(changes: readonly Change[], before: Corpus, aft
   const next = new Map(after.projections.map(resource => [resource.ref, resource]));
   return changes.every(change => change.resources.every(patch => {
     const resource = prior.get(patch.ref);
-    return patch.kind === "page" && patch.title_update !== null && resource?.kind === "page" &&
+    return patch.kind === "page" && patch.title_update !== null && Object.keys(patch.delete_vv).length === 0 && resource?.kind === "page" &&
       isVisible(resource.touch_vv, resource.delete_vv) && next.get(patch.ref)?.visible === true;
   }));
 }

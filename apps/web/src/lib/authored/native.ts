@@ -144,6 +144,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
     pending: async () => (await call<{ changes: Change[] }>("pending")).changes,
     acknowledge: async (sequence: string) => { await call("acknowledge", { sequence }); },
     applyRemote: async (entries: FeedChange[], nextCursor: string): Promise<{replica: ReplicaState; only_titles: boolean}> => {
+      let raced = false;
       for (;;) {
         const current = await call<ReplicaState>("replica");
         if (BigInt(current.server_cursor) >= BigInt(nextCursor)) return {replica: current, only_titles: false};
@@ -153,7 +154,10 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
         await validateBindings(accountId, states, accepted);
         const merged = mergeChanges(states, accepted);
         const result = await call<ReplicaState | { kind: "stale" }>("apply_remote", { expected_store_revision: current.store_revision, changes, next_cursor: nextCursor, states: merged });
-        if (!("kind" in result)) return {replica: result, only_titles: titleOnlyChanges(accepted, states, merged)};
+        if (!("kind" in result)) return {
+          replica: result, only_titles: !raced && changes.length === entries.length && titleOnlyChanges(accepted, states, merged),
+        };
+        raced = true;
       }
     },
     resetProvisioning: async () => { await call("reset_provisioning"); },
