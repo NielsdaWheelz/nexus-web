@@ -34,6 +34,7 @@ export type AnchorPosition =
 /** A committed frame keeps the old eye line readable after its DOM has changed. */
 export interface AnchorGeometryFrame {
   readonly revision: number;
+  readonly observation?: string;
   readonly root: HTMLElement;
   readonly scrollport: HTMLElement;
   readonly origin: number;
@@ -80,6 +81,7 @@ interface RefreshSnapshot {
   restored: boolean;
   requested: boolean;
   scheduled: boolean;
+  readonly mounted: Map<string, () => void>;
 }
 interface Readiness {
   kind: "Body" | "Descendant";
@@ -237,12 +239,17 @@ export function createPaneReturnMemento(guard: WorkGuard) {
   /** Recover through the previous full order, including unmounted rows. */
   function survivingAnchor(port: Scrollport, anchor: Anchor, remembered: readonly Anchor[]): Anchor | null {
     const remaining = new Set(orderedAnchors(port).map(anchorKey));
+    const survives = (candidate: Anchor) => {
+      if (remaining.has(anchorKey(candidate))) return true;
+      const frame = geometryFor(port, candidate)?.frame;
+      return frame?.observation !== undefined && frame.position(candidate.id).kind === "pending";
+    };
     const at = remembered.findIndex(item => anchorKey(item) === anchorKey(anchor));
     for (let index = at + 1; index < remembered.length; index += 1) {
-      if (remaining.has(anchorKey(remembered[index]))) return remembered[index];
+      if (survives(remembered[index])) return remembered[index];
     }
     for (let index = at - 1; index >= 0; index -= 1) {
-      if (remaining.has(anchorKey(remembered[index]))) return remembered[index];
+      if (survives(remembered[index])) return remembered[index];
     }
     return null;
   }
@@ -412,9 +419,15 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     place(port, memento);
   }
 
+  function forgetRefresh(paneId: string): void {
+    const old = refreshes.get(paneId);
+    refreshes.delete(paneId);
+    if (old !== undefined) for (const release of old.mounted.values()) release();
+  }
+
   function requestRestore(paneId: string, port: Scrollport): void {
     finish(paneId, false);
-    refreshes.delete(paneId);
+    forgetRefresh(paneId);
     holds.delete(paneId);
     // The reader's own scrolling wins over a restore still waiting for rows.
     const cancel = (event: Event) => {
@@ -443,9 +456,9 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     if (!port || port.motion !== "still" || pending.has(paneId)) return null;
     const captured = refreshes.get(paneId);
     if (captured?.port === port && captured.inputGeneration === port.inputGeneration) return captured;
-    refreshes.delete(paneId);
+    forgetRefresh(paneId);
     const snapshot: RefreshSnapshot = { paneId, port, inputGeneration: port.inputGeneration,
-      eyeLine: captureEyeLine(port), anchors: orderedAnchors(port), restored: false, requested: false, scheduled: false };
+      eyeLine: captureEyeLine(port), anchors: orderedAnchors(port), restored: false, requested: false, scheduled: false, mounted: new Map() };
     refreshes.set(paneId, snapshot);
     return snapshot;
   }
@@ -462,22 +475,33 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       if (scrollports.get(snapshot.paneId) !== snapshot.port || snapshot.port.motion !== "still" ||
         snapshot.port.inputGeneration !== snapshot.inputGeneration) {
         snapshot.restored = true;
-        refreshes.delete(snapshot.paneId);
+        forgetRefresh(snapshot.paneId);
         return;
       }
       if (!positionReady(snapshot.port)) return;
-      flushSync(() => {
-        snapshot.restored = true;
-        refreshes.delete(snapshot.paneId);
-        const { port, eyeLine } = snapshot;
-        if (scrollports.get(snapshot.paneId) !== port || port.inputGeneration !== snapshot.inputGeneration) return;
-        if (eyeLine === null) { refreshRanges(port); return; }
-        const entry = geometryFor(port, eyeLine);
-        const position = entry?.geometry.read()?.position(eyeLine.id);
+      const { port, eyeLine } = snapshot;
+      let anchor: Anchor | null = null;
+      if (eyeLine !== null) {
+        const frame = geometryFor(port, eyeLine)?.frame;
+        const position = frame?.position(eyeLine.id);
         const located = position?.kind === "ready" || position?.kind === "pending" && position.estimate !== null ||
           findAnchor(port.content, eyeLine) !== null;
-        const anchor = located ? eyeLine : survivingAnchor(port, eyeLine, snapshot.anchors);
-        if (anchor === null) refreshRanges(port);
+        anchor = located || frame?.observation !== undefined && position?.kind === "pending"
+          ? eyeLine : survivingAnchor(port, eyeLine, snapshot.anchors);
+        if (anchor !== null) {
+          const entry = geometryFor(port, anchor);
+          if (entry?.frame?.observation !== undefined && entry.frame.position(anchor.id).kind === "pending") {
+            const key = anchorKey(anchor);
+            if (!snapshot.mounted.has(key)) snapshot.mounted.set(key, entry.geometry.demand(anchor.id));
+            return;
+          }
+        }
+      }
+      flushSync(() => {
+        snapshot.restored = true;
+        forgetRefresh(snapshot.paneId);
+        if (scrollports.get(snapshot.paneId) !== port || port.inputGeneration !== snapshot.inputGeneration) return;
+        if (anchor === null || eyeLine === null) refreshRanges(port);
         else place(port, {routeKey: port.routeKey, scrollTop: port.element.scrollTop, anchors: snapshot.anchors,
           eyeLine: {...anchor, offset: eyeLine.offset, parents: parentsFor(port, anchor)}, focus: null});
       });
@@ -558,7 +582,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         if (!isNavigationAttention(event)) return;
         port.inputGeneration += 1;
         holds.delete(paneId);
-        refreshes.delete(paneId);
+        forgetRefresh(paneId);
       };
       const intents = NAVIGATION_ATTENTION_EVENTS;
       for (const type of intents) port.element.addEventListener(type, intent, { capture: true, passive: true });
@@ -568,7 +592,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         if (motion !== "still") {
           port.inputGeneration += 1;
           holds.delete(paneId);
-          refreshes.delete(paneId);
+          forgetRefresh(paneId);
           finish(paneId, false);
         }
         announceMotion();
@@ -583,7 +607,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         stop();
         for (const type of intents) port.element.removeEventListener(type, intent, { capture: true });
         if (scrollports.get(paneId) !== port) return;
-        refreshes.delete(paneId);
+        forgetRefresh(paneId);
         if (pending.get(paneId)?.visitId === port.visitId) finish(paneId, false);
         scrollports.delete(paneId);
         announceMotion();
@@ -651,7 +675,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       const next = entry.geometry.read();
       const port = scrollports.get(paneId);
       const changed = before !== null && next !== null && (before.revision !== next.revision || before.origin !== next.origin ||
-        (before.anchors !== next.anchors && (before.anchors.length !== next.anchors.length || before.anchors.some((id, index) => id !== next.anchors[index]))));
+        before.observation !== next.observation || (next.observation === undefined && before.anchors !== next.anchors && (before.anchors.length !== next.anchors.length || before.anchors.some((id, index) => id !== next.anchors[index]))));
       // Geometry epochs use the same whole-pane snapshot as row publications.
       const captured = changed && port && !holds.has(paneId) ? captureRefresh(paneId) : null;
       entry.frame = next;
@@ -692,7 +716,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     /** Keeps the live offset across a same-path view swap (filters, sort). */
     hold(paneId: string): (() => void) | null {
       finish(paneId, false);
-      refreshes.delete(paneId);
+      forgetRefresh(paneId);
       const port = scrollports.get(paneId);
       if (port === undefined) return null;
       const held = { element: port.element, top: port.element.scrollTop, scheduled: false };
@@ -893,15 +917,20 @@ export function usePaneCollectionGeometry({ scope, window }: {
     read() {
       const frame = readGeometry();
       if (frame === null) return null;
-      return { revision: frame.epoch, root: frame.list, scrollport: frame.scrollport, origin: frame.listTop, anchors: frame.ids,
+      return { revision: frame.epoch, observation: frame.revision ?? undefined, root: frame.list, scrollport: frame.scrollport, origin: frame.listTop, anchors: frame.ids,
         firstVisible(top, bottom) {
-          if (bottom <= 0 || top >= frame.totalHeight || frame.ids.length === 0) return null;
-          const index = frame.rankAt(top);
-          const offset = frame.rowTop(index);
-          return index >= frame.ids.length || offset >= bottom ? null : { id: frame.ids[index], offset };
+          if (bottom <= 0 || top >= frame.totalHeight) return null;
+          for (let rank = frame.rankAt(top); rank < frame.count; rank++) {
+            const offset = frame.rowTop(rank);
+            if (offset >= bottom) break;
+            const id = frame.idAt(rank);
+            if (id !== undefined) return { id, offset };
+          }
+          return null;
         },
         position(id) {
           const offset = frame.position(id);
+          if (offset === undefined) return frame.failed ? { kind: "failed" } : { kind: "pending", estimate: null };
           return offset === null ? { kind: "missing" } : { kind: "ready", offset };
         },
       };

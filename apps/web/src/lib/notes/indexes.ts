@@ -1,6 +1,6 @@
 import type { AuthoredQuery, AuthoredStore, IndexRange, QueryResult } from "@nexus/authored/types";
 
-export type StructuralQuery = Extract<AuthoredQuery, {expected_revision: string | null}>;
+export type StructuralQuery = Extract<AuthoredQuery, {start: number; expected_revision: string | null}>;
 export interface AuthoredIndex<Row> {revision: string; items: Row[]; sourceTotal: number}
 
 export async function readAuthoredIndex<Row>(store: AuthoredStore, query: StructuralQuery,

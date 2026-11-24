@@ -53,7 +53,11 @@ export default defineConfig({
         const index = {start: 0, limit: 100, expected_revision: null};
         type PackagedQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;
         const samples: Record<PackagedQuery["kind"], PackagedQuery[]> = {
-          page_register: ["","words"].map(text => ({kind: "page_register", text, start: 0, limit: 1, expected_revision: null})),
+          page_register: ["", "words"].flatMap<PackagedQuery>(text => [
+            {kind: "page_register", text, at: {kind: "describe"}, expected_revision: null},
+            {kind: "page_register", text, at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
+            {kind: "page_register", text, at: {kind: "locate", refs: []}, expected_revision: "0"},
+          ]),
           page_label: [{kind: "page_label", ref: ""}],
           outline_filter: ["","words"].map(text => ({kind: "outline_filter", parent_ref: "", text, start: 0, limit: 1, expected_revision: null})),
           daily_index: [{kind: "daily_index"}],

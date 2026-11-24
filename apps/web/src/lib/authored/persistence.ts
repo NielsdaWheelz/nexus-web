@@ -126,12 +126,11 @@ export class Persistence {
         result.latest_habit_date = typeof record?.local_date === "string" ? record.local_date : null;
       } else if (query.kind === "page_label") {
         result.page_label = {label: typeof record?.label === "string" ? record.label : null, oversized: Number(record?.oversized) === 1};
+      } else if (query.kind === "page_register") {
+        result.page_register = JSON.parse(String(record!.register));
       } else {
         const total = Number(record!.total), start = query.start;
-        if (query.kind === "page_register") {
-          const raw: [string,string,string|null][] = JSON.parse(String(record!.items));
-          result.page_register = {kind: "range", start, total, source_total: Number(record!.source_total), items: raw.map(([ref,group,label]) => ({ref,group,label}))};
-        } else if (query.kind === "outline_filter") {
+        if (query.kind === "outline_filter") {
           const raw: [string,string,number][] = JSON.parse(String(record!.items));
           result.outline_filter = {kind: "range", start, total, source_total: total, items: raw.map(([link_id,other_ref,matched]) => ({link_id,other_ref,matched: matched === 1}))};
         } else if (query.kind === "mentions") {

@@ -396,19 +396,51 @@ export function compileOutlineWindows(query: Extract<AuthoredQuery, {kind: "outl
 export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission" | "outline_windows"}>): CompiledQuery {
   const limit = "limit" in query ? Math.max(1, Math.min(100, Math.floor(query.limit))) : 100;
   switch (query.kind) {
-    case "page_register":
-    case "outline_filter": {
-      const maximum = query.kind === "page_register" ? AUTHORED_INDEX_RANGE : 2048;
-      if (!Number.isSafeInteger(query.start) || query.start < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > maximum) throw new RangeError("Invalid index range");
+    case "page_register": {
       const needle = foldFilterText(query.text.trim());
-      if (query.kind === "page_register") {
-        const base = `FROM resources AS r INDEXED BY resources_register WHERE kind='page' AND visible=1 AND local_date IS NULL`;
-        const selected = `${base}${needle ? " AND EXISTS(SELECT 1 FROM literal_fields f WHERE f.ref=r.ref AND instr(f.title,?3)>0)" : ""}`;
-        return {sql: `WITH slice AS (SELECT ref,${PAGE_TITLE_SQL} AS name ${selected} ORDER BY name COLLATE NOCASE,ref LIMIT ?1 OFFSET ?2)
-          SELECT (SELECT count(*) ${selected}) AS total, (SELECT count(*) ${base}) AS source_total,
-            json_group_array(json_array(ref,upper(substr(name,1,1)),CASE WHEN length(CAST(json_quote(name) AS BLOB))<=512 THEN name END)) AS items FROM slice`,
-          params: [query.limit,query.start,...needle ? [needle] : []]};
+      const base = `FROM resources AS r INDEXED BY resources_register WHERE kind='page' AND visible=1 AND local_date IS NULL`;
+      const filtered = `${base}${needle ? " AND EXISTS(SELECT 1 FROM literal_fields f WHERE f.ref=r.ref AND instr(f.title,?1)>0)" : ""}`;
+      const params = needle ? [needle] : [];
+      const first = params.length + 1;
+      const order = "name COLLATE NOCASE,ref";
+      const group = "upper(substr(name,1,1))";
+      const label = "CASE WHEN length(CAST(json_quote(name) AS BLOB))<=512 THEN name END";
+      const item = `'ref',ref,'group',${group},'label',${label}`;
+      switch (query.at.kind) {
+        case "describe":
+          return {sql: `WITH extent AS (SELECT (SELECT count(*) ${filtered}) AS total,(SELECT count(*) ${base}) AS source_total),
+            slice AS (SELECT ref,${PAGE_TITLE_SQL} AS name ${filtered} ORDER BY ${order}
+              LIMIT (SELECT CASE WHEN total<=${AUTHORED_INDEX_RANGE} THEN total ELSE 24 END FROM extent)),
+            groups AS (SELECT ${group} AS label,count(*) AS size,substr(name,1,1) AS initial FROM (SELECT ${PAGE_TITLE_SQL} AS name ${filtered})
+              GROUP BY substr(name,1,1) COLLATE NOCASE),
+            starts AS (SELECT label,sum(size) OVER (ORDER BY initial COLLATE NOCASE ROWS UNBOUNDED PRECEDING)-size AS start FROM groups)
+            SELECT json_object('kind','description','total',total,'source_total',source_total,
+              'groups',json(CASE WHEN total>${AUTHORED_INDEX_RANGE} THEN
+                (SELECT json_group_array(json_object('start',start,'label',label)) FROM (SELECT * FROM starts ORDER BY start)) ELSE '[]' END),
+              'items',json((SELECT json_group_array(json_object(${item})) FROM slice))) AS register FROM extent`, params};
+        case "range": {
+          const {start,limit} = query.at;
+          if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > AUTHORED_INDEX_RANGE)
+            throw new RangeError("Invalid page register range");
+          return {sql: `WITH slice AS (SELECT ref,${PAGE_TITLE_SQL} AS name ${filtered} ORDER BY ${order}
+              LIMIT ?${first} OFFSET ?${first+1})
+            SELECT json_object('kind','range','start',?${first+1},'items',json_group_array(json_object(${item}))) AS register FROM slice`,
+            params: [...params,limit,start]};
+        }
+        case "locate": {
+          if (query.at.refs.length > 100) throw new RangeError("Too many page register locations");
+          return {sql: `WITH targets AS (SELECT ref,${PAGE_TITLE_SQL} AS name ${filtered} AND ref IN (SELECT value FROM json_each(?${first}))),
+            ranked AS (SELECT targets.*, (SELECT count(*) ${filtered} AND (${PAGE_TITLE_SQL} COLLATE NOCASE,r.ref) <
+              (targets.name COLLATE NOCASE,targets.ref)) AS rank FROM targets)
+            SELECT json_object('kind','locations','items',json_group_array(json_object(${item},'rank',rank))) AS register FROM ranked`,
+            params: [...params,JSON.stringify(query.at.refs)]};
+        }
       }
+    }
+    case "outline_filter": {
+      if (!Number.isSafeInteger(query.start) || query.start < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 2048)
+        throw new RangeError("Invalid index range");
+      const needle = foldFilterText(query.text.trim());
       const incident = (["a","b"] as const).map(side => {
         const peer = side === "a" ? "b" : "a";
         return `SELECT l.link_id,l.endpoint_${peer} AS other_ref,l.position_${side} AS position FROM links l INDEXED BY links_${side}
