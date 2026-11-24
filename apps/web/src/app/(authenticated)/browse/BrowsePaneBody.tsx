@@ -216,7 +216,7 @@ function BrowseSourceSection({ queryKey, text, section, scoped, quiet, onStatus 
   const feedback = useCollectionReadFeedback({ list: badCursor || continuedRefusal !== null ? { ...list, failure: null } : list, unit: { singular: "result", plural: "results" }, waiting: false, outcome: null });
   return <section ref={sectionRef} tabIndex={-1} className={styles.sourceSection} aria-labelledby={headingId}
     onKeyDownCapture={event => {
-      if (event.key !== "Tab" || event.shiftKey || !canContinue) return;
+      if (!canContinue || event.shiftKey || !["Tab", "ArrowDown", "PageDown", "End"].includes(event.key)) return;
       const port = sectionRef.current?.closest<HTMLElement>("[data-pane-content]");
       if (port && nearDiscoveryTail(port, tail.current)) list.fetchAhead();
     }}>
@@ -236,7 +236,7 @@ function BrowseSourceSection({ queryKey, text, section, scoped, quiet, onStatus 
       surface={false}
     />
     {badCursor ? <Fact line={{ fact: "couldn’t load more results.", reason: "the source repeated or refused its continuation." }}
-      verbs={continuedFailure?.code === "E_INVALID_CURSOR" ? [{ label: "refresh results", commandKey: "refresh browse source", run: () => { void list.refetch().catch(() => {}); } }] : undefined} />
+      verbs={[{ label: "refresh results", commandKey: "refresh browse source", busy: running, run: () => { void list.refetch().catch(() => {}); } }]} />
       : continuedRefusal === null ? feedback.notice : <Fact line={{ fact: `couldn’t load more ${noun}.`, reason: continuedRefusal.reason }}
         verbs={continuedRefusal.retry ? [{ label: "retry", commandKey: `retry more ${noun}`, run: list.retry, busy: running }] : undefined} />}
     {feedback.announcement}
@@ -344,7 +344,7 @@ function DirectoryBrowse() {
       <section key={kind} className={styles.chapter} hidden={shared !== null}>
         <h2 className={styles.chapterHeading}>{BROWSE_KIND_LABELS[kind]}</h2>
         {sections.filter((section) => section.kind === kind).map((section) => (
-          <BrowseSourceSection key={keyOf(section)} queryKey={queryKey} text={text} section={section} scoped={sections.length === 1} quiet={awaiting || shared !== null} onStatus={onStatus} />
+          <BrowseSourceSection key={`${queryKey}:${keyOf(section)}`} queryKey={queryKey} text={text} section={section} scoped={sections.length === 1} quiet={awaiting || shared !== null} onStatus={onStatus} />
         ))}
       </section>
     )) : null}</div>

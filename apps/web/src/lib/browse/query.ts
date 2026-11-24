@@ -106,7 +106,7 @@ export function readBrowseQuery(params: URLSearchParams): BrowseQuery | null {
   );
   if (named === undefined) return null;
   return {
-    text: params.get("q") ?? "",
+    text: (params.get("q") ?? "").trim().normalize("NFC"),
     kind: kind === "All" ? "All" : named[0],
     source: source === null ? null : named[1],
     sort: params.get("sort") === "Newest" ? "Newest" : "Relevance",

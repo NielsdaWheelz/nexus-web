@@ -46,7 +46,7 @@ export function useLinkTargets(
     cursorRecovery: "manual",
     prefixTimeoutMs: pages => SEARCH_READ_TIMEOUT_MS.hybrid * (pages ?? 101),
     active: active && admitted,
-    continuation: item => isRemoteTarget(item) && !localTargets.some(target => targetKey(target) === targetKey(item)),
+    continuation: item => isRemoteTarget(item) && !localKeys.has(targetKey(item)),
     id: targetKey,
     fetchPage: async (cursor, _limit, signal) => {
       const { data } = await apiFetch<
@@ -68,6 +68,7 @@ export function useLinkTargets(
     .filter(({ resource }) => resource.ref !== excludeRef && resource.kind !== "highlight")
     .map(({ resource, activation_ref }) => ({ kind: "resource", item: authoredItem(resource, activation_ref,
       localResourceHref(resource, { activationRef: activation_ref })), existing_link_id: null }));
+  const localKeys = new Set(localTargets.map(targetKey));
   const seen = new Set<string>();
   const items = [...localTargets, ...remoteTargets].filter(target => {
     const key = targetKey(target);

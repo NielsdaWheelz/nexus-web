@@ -126,7 +126,7 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
   const stamp = `${useMediaQueryRevision()}:${useChangeStamp("Notes", "NoteBodies", "Metadata")}`;
   const captured = useRef<SearchVisit | null>(null);
   const restored = usePaneVisitData(VISIT, useCallback(() => captured.current, []));
-  const [visit, setVisit] = useState<SearchVisit>(() => restored?.accountId === accountId ? restored : {
+  const [visit, setVisit] = useState<SearchVisit>(() => restored?.accountId === accountId && restored.key === key ? restored : {
     accountId, key, adopted: null, latched: false, attempts: { lexical: 0, hybrid: 0 }, selection: null, cursorRejected: false,
   });
   const latched = useRef(visit.latched);
@@ -406,7 +406,7 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
   return <PaneRefreshAnchor identity={key} value={refreshValue} ready={enabled && !stale}>
     <div ref={root} data-pane-return-scope="Search.Results" onPointerDownCapture={select} onFocusCapture={select} onKeyDownCapture={event => {
       interact();
-      if ((event.key === "Tab" && !event.shiftKey) || event.key === "ArrowDown") {
+      if (!event.shiftKey && ["Tab", "ArrowDown", "PageDown", "End"].includes(event.key)) {
         const port = viewport();
         if (port) forward(port);
       }
@@ -429,7 +429,8 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
       ? <Failed error={phaseIncidents.hybrid} noun="related matches" retry={UNFIXABLE.includes(phaseIncidents.hybrid.code) ? undefined
         : { run: () => { returning.current = false; retryPhase("hybrid"); }, busy: hybrid.running !== null }} />
       : null}
-    {repeatedCursor ? <Fact line={{ fact: `couldn’t load more ${noun}.`, reason: "the source repeated its continuation." }} />
+    {repeatedCursor ? <Fact line={{ fact: `couldn’t load more ${noun}.`, reason: "the source repeated its continuation." }}
+      verbs={[{ label: "refresh results", commandKey: "refresh results", run: refreshResults, busy: refreshPhase !== null }]} />
       : rejectedCursor ? <Fact line={{ fact: "the ranking has changed." }}
         verbs={[{ label: "refresh results", commandKey: "refresh results", run: refreshResults, busy: refreshPhase !== null }]} />
       : readFeedback.notice}

@@ -31,6 +31,7 @@ import styles from "./LibrarianSearch.module.css";
 type Row = ApiJson<"/search", "get">["results"][number];
 const RESULTS = definePaneVisitDataKey<ListSnapshot<Row>>("Librarian.SearchResults");
 const SELECTION = definePaneVisitDataKey<SearchActive>("Librarian.SearchSelection");
+const ATTEMPT = definePaneVisitDataKey<{ key: string; count: number }>("Librarian.SearchAttempt");
 const QUERY_SETTLE_MS = 120;
 
 export function useLibrarianSearch() {
@@ -88,7 +89,10 @@ export function useLibrarianSearch() {
   const query: SearchQuery = { ...emptySearchQuery(), text: applied, requestedKinds: new Set(["messages"]), view: "passages" };
   const eligible = searching && Array.from(applied).length >= 2;
   const key = JSON.stringify([accountId, applied]);
-  const [attempt, restart] = useState({ key, count: 0 });
+  const capturedAttempt = useRef<{ key: string; count: number } | null>(null);
+  const restoredAttempt = usePaneVisitData(ATTEMPT, () => capturedAttempt.current);
+  const [attempt, restart] = useState(() => restoredAttempt?.key === key ? restoredAttempt : { key, count: 0 });
+  capturedAttempt.current = attempt;
   const readKey = `${key}:${attempt.key === key ? attempt.count : 0}`;
   const settled = text.trim() === applied && !composing;
   const list = useServerList<Row>({
@@ -133,7 +137,7 @@ export function useLibrarianSearch() {
   const pending = eligible && !list.current && list.failure === null;
   const feedback = useCollectionReadFeedback({ list, unit: { singular: "message", plural: "messages" }, waiting: pending,
     outcome: list.current ? `${rows.length} messages shown.` : null });
-  const rejected = list.failure?.error.code === "E_INVALID_CURSOR";
+  const rejected = list.failure?.error.code === "E_INVALID_CURSOR" || list.failure?.error.code === "E_REPEATED_CURSOR";
   const refresh = async () => {
     if (rejected) restart(value => ({ key, count: value.key === key ? value.count + 1 : 1 }));
     else await list.refetch();
@@ -199,8 +203,8 @@ function LibrarianSearchResults({ query, eligible, list, current, canContinue, r
       {!eligible ? <Fact line={{ fact: "type at least two characters" }} />
         : failure ? <Fact line={{ fact: list.current ? "couldn’t load more messages." : "couldn’t search messages.",
           reason: repeated ? "the source repeated its continuation." : rejected ? "the ranking has changed." : undefined }}
-          verbs={repeated ? undefined : [{ label: rejected ? "refresh results" : "retry", commandKey: "search librarian", busy: list.running !== null,
-            run: rejected ? refresh : list.retry }]} />
+          verbs={[{ label: rejected || repeated ? "refresh results" : "retry", commandKey: "search librarian", busy: list.running !== null,
+            run: rejected || repeated ? refresh : list.retry }]} />
         : !list.current ? rows.length === 0 ? <Ruling /> : null
         : list.complete && rows.length === 0 ? <Fact line={{ fact: `no messages match “${query}”` }} /> : null}
       <div {...navigation.listProps} className={styles.rows} aria-busy={eligible && !list.current || undefined}>
