@@ -563,12 +563,32 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       }
     }
     case "mentions": {
-      if (!Number.isSafeInteger(query.start) || query.start < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > AUTHORED_INDEX_RANGE) throw new RangeError("Invalid index range");
-      return {sql: `WITH admitted AS (
-        SELECT i.owner_ref AS ref FROM reference_index i JOIN resources r INDEXED BY resources_visible_refs ON r.ref=i.owner_ref WHERE i.target_ref=?3 AND r.visible=1
-      ), slice AS (SELECT ref FROM admitted ORDER BY ref LIMIT ?1 OFFSET ?2)
-      SELECT (SELECT count(*) FROM admitted) AS total,json_group_array(ref) AS items FROM slice`,
-        params: [query.limit, query.start, query.ref]};
+      const admitted = `FROM reference_index i JOIN resources r INDEXED BY resources_visible_refs ON r.ref=i.owner_ref
+        WHERE i.target_ref=?1 AND r.visible=1`;
+      switch (query.at.kind) {
+        case "describe":
+          return {sql: `WITH extent AS (SELECT count(*) AS total ${admitted}),
+            slice AS (SELECT i.owner_ref AS ref ${admitted} ORDER BY i.owner_ref
+              LIMIT (SELECT CASE WHEN total<=200 THEN total ELSE 24 END FROM extent))
+            SELECT json_object('kind','description','total',total,
+              'items',json((SELECT json_group_array(json_object('ref',ref)) FROM slice))) AS register FROM extent`,
+            params: [query.ref]};
+        case "range": {
+          const {start,limit} = query.at;
+          if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > AUTHORED_INDEX_RANGE)
+            throw new RangeError("Invalid mention range");
+          return {sql: `WITH slice AS (SELECT i.owner_ref AS ref ${admitted} ORDER BY i.owner_ref LIMIT ?2 OFFSET ?3)
+            SELECT json_object('kind','range','start',?3,'items',json_group_array(json_object('ref',ref))) AS register FROM slice`,
+            params: [query.ref, limit, start]};
+        }
+        case "locate": {
+          if (query.at.refs.length > 100) throw new RangeError("Too many mention locations");
+          return {sql: `WITH targets AS (SELECT i.owner_ref AS ref ${admitted} AND i.owner_ref IN (SELECT value FROM json_each(?2))),
+            ranked AS (SELECT targets.ref,(SELECT count(*) ${admitted} AND i.owner_ref<targets.ref) AS rank FROM targets)
+            SELECT json_object('kind','locations','items',json_group_array(json_object('ref',ref,'rank',rank))) AS register FROM ranked`,
+            params: [query.ref, JSON.stringify(query.at.refs)]};
+        }
+      }
     }
     case "habit_days": {
       if (!Number.isInteger(query.year) || query.year < 1 || query.year > 9999) throw new RangeError("Invalid habit year");

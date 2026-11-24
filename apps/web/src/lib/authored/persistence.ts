@@ -130,19 +130,14 @@ export class Persistence {
         result.latest_habit_date = typeof record?.local_date === "string" ? record.local_date : null;
       } else if (query.kind === "register_label") {
         result.register_label = record ? {label: typeof record.label === "string" ? record.label : null, oversized: Number(record.oversized) === 1} : null;
-      } else if (query.kind === "page_register" || query.kind === "habits") {
+      } else if (query.kind === "page_register" || query.kind === "habits" || query.kind === "mentions") {
         result[query.kind] = JSON.parse(String(record!.register));
       } else if (query.kind === "work_pending" || query.kind === "work_completed") {
         result.work_index = JSON.parse(String(record!.register));
       } else {
         const total = Number(record!.total), start = query.start;
-        if (query.kind === "outline_filter") {
-          const raw: [string,string,number][] = JSON.parse(String(record!.items));
-          result.outline_filter = {kind: "range", start, total, source_total: total, items: raw.map(([link_id,other_ref,matched]) => ({link_id,other_ref,matched: matched === 1}))};
-        } else {
-          const items: string[] = JSON.parse(String(record!.items));
-          result.mentions = {kind: "range", start, total, source_total: total, items};
-        }
+        const raw: [string,string,number][] = JSON.parse(String(record!.items));
+        result.outline_filter = {kind: "range", start, total, source_total: total, items: raw.map(([link_id,other_ref,matched]) => ({link_id,other_ref,matched: matched === 1}))};
       }
       return result;
     }

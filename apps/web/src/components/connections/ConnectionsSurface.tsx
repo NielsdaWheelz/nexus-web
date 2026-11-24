@@ -22,16 +22,17 @@ import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
-import { usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
+import { usePaneScrollMotion, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import { outcomeUnknown } from "@/lib/api/client";
 import { modeledApiError } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchDiscoveryScanStatus, requestDiscoveryScan, type DiscoveryScanStatus } from "@/lib/connectionDiscovery";
-import { INDEX_WINDOW_THRESHOLD } from "@/lib/collections/measuredIndexWindow";
+import { INDEX_WINDOW_THRESHOLD, type RankedIndex } from "@/lib/collections/measuredIndexWindow";
 import { useVariableIndex } from "@/lib/collections/variableIndex";
-import { AUTHORED_INDEX_RANGE, type QueryResult } from "@nexus/authored/types";
-import { useAuthoredIndex, useAuthoredQuery } from "@/lib/notes/hooks";
+import type { QueryResult } from "@nexus/authored/types";
+import { useAuthoredQuery } from "@/lib/notes/hooks";
+import { useRankedAuthoredWindow } from "@/lib/notes/rankedAuthoredWindow";
 import { isAuthoredStorageFailure } from "@/lib/notes/runtime";
 import { formatResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { CONNECTION_DISCOVERY_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
@@ -45,7 +46,7 @@ import { useConnectionAttachments } from "./useConnectionAttachments";
 import styles from "./ConnectionsSurface.module.css";
 
 const mentionIndex = (result: QueryResult) => result.mentions;
-const NO_MENTIONS: readonly string[] = [];
+type MentionDescription = Extract<NonNullable<QueryResult["mentions"]>, {kind: "description"}>;
 
 export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   resourceRef: ResourceRef;
@@ -59,7 +60,8 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const remote = useRemoteConnections(selfRef, `${refreshKey}:${refreshTick}`);
   const self = useAuthoredQuery({ kind: "resource", ref: selfRef });
   const linked = useAuthoredQuery({ kind: "adjacency", ref: selfRef, cursor: null, limit: 1 });
-  const mentions = useAuthoredIndex({kind: "mentions", ref: selfRef, start: 0, limit: AUTHORED_INDEX_RANGE, expected_revision: null}, mentionIndex);
+  const mentions = useAuthoredQuery({kind: "mentions", ref: selfRef, at: {kind: "describe"}, expected_revision: null});
+  const description = mentions.data?.mentions?.kind === "description" ? mentions.data.mentions : null;
   const embedded = self.data?.rows[0]?.resource.embedded_refs ?? [];
   const scannable = (CONNECTION_DISCOVERY_SOURCE_SCHEMES as readonly string[]).includes(resourceRef.scheme);
   const scan = useDiscoveryScan({ selfRef, enabled: scannable, onSettled: reload });
@@ -67,9 +69,9 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const local = [self, linked, mentions];
   for (const read of local) if (read.error !== null && !isAuthoredStorageFailure(read.error)) throw read.error;
   const unread = local.find(read => read.error !== null && read.data === null);
-  const empty = linked.data?.rows.length === 0 && mentions.data?.items.length === 0 && self.data !== null &&
+  const empty = linked.data?.rows.length === 0 && description?.total === 0 && self.data !== null &&
     embedded.length === 0 && remote.status === "ready" && remote.data.edge_ids.length === 0;
-  const shown = Boolean(linked.data?.rows.length || mentions.data?.items.length || embedded.length || remote.status === "ready" && remote.data.edge_ids.length);
+  const shown = Boolean(linked.data?.rows.length || description?.total || embedded.length || remote.status === "ready" && remote.data.edge_ids.length);
   const opening = !shown && unread === undefined && remote.status !== "failed"
     && (local.some(read => read.data === null && read.pending) || remote.status === "loading");
 
@@ -91,7 +93,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
         retry={() => {self.retry(); linked.retry(); mentions.retry();}}/> : null}
       {opening ? <Ruling /> : empty ? <Fact line={{ fact: "no connections yet." }} /> : null}
       <LocalOutline rootRef={selfRef} occurrencePrefix={`connections:${selfRef}`} />
-      <MentionedIn selfRef={selfRef} ids={mentions.data?.items ?? NO_MENTIONS}/>
+      <MentionedIn selfRef={selfRef} description={description} revision={mentions.data?.store_revision ?? null}/>
       {embedded.length ? <section aria-label="embedded in this note">
         <h3 className={styles.subtitle}>embedded in this note</h3>
         <ResourceOutlineList scope={`embeds:${selfRef}`} ariaLabel="embedded in this note" ancestorRef={selfRef}>
@@ -103,14 +105,35 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   );
 }
 
-function MentionedIn({selfRef, ids}: {selfRef: string; ids: readonly string[]}) {
+function MentionedIn({selfRef, description, revision}: {
+  selfRef: string; description: MentionDescription | null; revision: string | null;
+}) {
   const list = useRef<HTMLUListElement>(null);
   const [focused, setFocused] = useState<string | null>(null);
   const pinned = useMemo(() => new Set(focused === null ? [] : [focused]), [focused]);
   const scope = `mentions:${selfRef}`;
-  const windowed = ids.length > INDEX_WINDOW_THRESHOLD;
-  const index = useVariableIndex({scope, ids, list, estimate: 68, pinned, windowed});
-  const members = useMemo(() => new Set(ids), [ids]);
+  const motion = usePaneScrollMotion();
+  const windowed = (description?.total ?? 0) > INDEX_WINDOW_THRESHOLD;
+  const window = useRankedAuthoredWindow({kind: "mentions", ref: selfRef}, revision, description, mentionIndex);
+  // A held frame retains its order, while its shown refs are checked at the current revision.
+  const demand = useRef({request: window.request, retained: [] as string[]});
+  const request = useCallback((ranks: readonly number[], refs: readonly string[]) => {
+    demand.current.request(ranks, [...refs, ...demand.current.retained]);
+  }, []);
+  const {members, ids, ranked} = useMemo(() => {
+    const members = new Map<string, number>();
+    if (description === null || revision === null || !windowed) {
+      for (const [rank, item] of (description?.items ?? []).entries()) members.set(item.ref, rank);
+      return {members, ids: [...members.keys()], ranked: undefined};
+    }
+    for (const [rank, item] of window.items) members.set(item.ref, rank);
+    const ranked: Omit<RankedIndex, "heads"> = {count: description.total, revision, failed: window.error !== null,
+      idAt: rank => window.items.get(rank)?.ref, rankOf: ref => members.get(ref) ?? window.positions?.get(ref), request};
+    return {members, ids: [...members.keys()], ranked};
+  }, [description, revision, windowed, window.items, window.positions, window.error, request]);
+  const index = useVariableIndex({scope, ids, ranked, list, estimate: 68, pinned, windowed});
+  demand.current = {request: window.request, retained: motion === "still" ? [] : index.slots.map(slot => slot.id)};
+  if (window.error !== null && !isAuthoredStorageFailure(window.error)) throw window.error;
   if (index.count === 0) return null;
   return <section aria-label="mentioned in">
     <h3 className={styles.subtitle}>mentioned in</h3>
@@ -118,13 +141,14 @@ function MentionedIn({selfRef, ids}: {selfRef: string; ids: readonly string[]}) 
       listProps={{ref: list, style: index.windowed ? {position: "relative", height: index.height} : undefined}}>
       {index.slots.map(({id, rank, top, size}) => {
         const style = top === undefined ? undefined : {position: "absolute", insetInline: 0, top, blockSize: size, overflow: size === undefined ? undefined : "clip"} as const;
-        return members.has(id)
+        return (windowed ? window.positions?.get(id) !== null : members.has(id))
           ? <ResourceOutlineRow key={id} resourceRef={id} occurrenceKey={`connections:${selfRef}/mention:${id}`} incoming={null}
               rowRef={index.measure} rootProps={{style, "data-index": rank, "data-collection-row-id": id, "aria-posinset": rank + 1, "aria-setsize": index.count,
                 onFocus: () => setFocused(id), onBlur: event => {if (!event.currentTarget.contains(event.relatedTarget)) setFocused(null);}}}/>
-          : <li key={id} aria-hidden="true" role="presentation" style={style}/>;
+          : <li key={id} data-collection-row-id={id} aria-hidden="true" role="presentation" style={style}/>;
       })}
     </ResourceOutlineList>
+    {motion === "still" ? <AuthoredReadFailure {...window} noun="these mentions"/> : null}
   </section>;
 }
 

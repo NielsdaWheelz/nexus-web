@@ -12,7 +12,7 @@ const EMPTY = new Map<never, never>();
 /** The admitted viewport and pins own this cache. The description's compact
  * head sample survives seeks, and each reply belongs to its requested revision. */
 export function useRankedAuthoredWindow<Row extends {ref: string}>(
-  source: {kind: "page_register"; text: string} | {kind: "habits"} | WorkRegisterSource,
+  source: {kind: "page_register"; text: string} | {kind: "habits"} | WorkRegisterSource | {kind: "mentions"; ref: string},
   revision: string | null,
   description: Description<Row> | null,
   select: (result: QueryResult) => RankedIndexResult<Row> | null,
