@@ -15,15 +15,15 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
 }) {
   const motion = usePaneScrollMotion();
   const held = motion !== "still";
-  const previous = useRef({ids: incoming, windowed: requestedWindow});
+  const previous = useRef({scope, ids: incoming, windowed: requestedWindow});
   const presentation = useMemo(() => {
     const before = previous.current;
-    if (held && before.ids.length > 0 && (!requestedWindow || before.windowed) &&
+    if (held && before.scope === scope && before.ids.length > 0 &&
       !(motion === "travel" && incoming.length > before.ids.length && before.ids.every((id, rank) => incoming[rank] === id))) {
       return before;
     }
-    return {ids: incoming, windowed: requestedWindow};
-  }, [incoming, requestedWindow, held, motion]);
+    return {scope, ids: incoming, windowed: requestedWindow};
+  }, [scope, incoming, requestedWindow, held, motion]);
   const {ids, windowed} = presentation;
   useLayoutEffect(() => {previous.current = presentation;}, [presentation]);
   const frame = useRef<AnchorGeometryFrame | null>(null);
