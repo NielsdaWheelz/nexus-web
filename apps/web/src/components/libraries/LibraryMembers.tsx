@@ -96,8 +96,10 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
     key: key && `/libraries/${key}/invites`, stale: String(version), enabled: active, visit: INVITATIONS,
     load: signal => libraryInvitationsIndex(id, signal),
   });
-  const memberRows = members.status === "ready" && members.error?.status !== 403 && members.error?.status !== 404 ? members.data.items : [];
-  const invitationRows = invitations.status === "ready" && invitations.error?.status !== 403 && invitations.error?.status !== 404 ? invitations.data.items : [];
+  const denied = [members, invitations].some(read => read.status !== "loading" &&
+    (read.error?.status === 403 || read.error?.status === 404));
+  const memberRows = !denied && members.status === "ready" ? members.data.items : [];
+  const invitationRows = !denied && invitations.status === "ready" ? invitations.data.items : [];
   const pending = owner.value;
   let observed = false;
   if (pending !== null && !pending.running && pending.unknown > 0) {
@@ -116,7 +118,7 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
   }
   useEffect(() => { if (observed) set(value => value === pending ? null : value); }, [observed, pending, set]);
   async function send(command: Command, previous: Pending | null): Promise<boolean> {
-    if (!mounted.current || !owns() || read() !== previous || previous?.running ||
+    if (denied || !mounted.current || !owns() || read() !== previous || previous?.running ||
       remoteAdmission() === "Checking" || !remoteAttemptAllowed() || !navigator.onLine) return false;
     const key = previous?.key ?? crypto.randomUUID();
     set({ key, command, running: true, unknown: previous?.unknown ?? 0 });
@@ -152,15 +154,15 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
     {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
       resend: { label: "retry", commandKey: `${owner.owner}:${pending.key}:retry`, busy: pending.running,
         run: () => { void send(pending.command, pending); } } })} />;
-  const blocked = pending !== null || admission === "Checking" || !remoteAttemptAllowed() || connectivity === "Offline";
-  return { held, shown: library?.can_manage ? { library, members, invitations, memberRows, invitationRows, blocked, running: pending?.running === true,
+  const blocked = denied || pending !== null || admission === "Checking" || !remoteAttemptAllowed() || connectivity === "Offline";
+  return { held, shown: library?.can_manage ? { library, members, invitations, memberRows, invitationRows, denied, blocked, running: pending?.running === true,
     run: (command: Command) => send(command, null) } : null };
 }
 
 export type LibraryMembersState = NonNullable<ReturnType<typeof useLibraryMembers>["shown"]>;
 
 export default function LibraryMembers({ state }: { readonly state: LibraryMembersState }) {
-  const { library, members, invitations, memberRows, invitationRows, blocked, running, run } = state;
+  const { library, members, invitations, memberRows, invitationRows, denied, blocked, running, run } = state;
   const [person, setPerson] = useState<Person | null>(null);
   const [role, setRole] = useState<LibraryRole>("member");
   const [question, setQuestion] = useState<Question | null>(null);
@@ -239,7 +241,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
         </h3>
         <p>Manage who can open {library.name}.</p>
       </div>
-      <div className={styles.invite}>
+      {denied ? null : <div className={styles.invite}>
         <PeopleSearch
           context={library.id}
           label="Find an existing Nexus user by name or account email"
@@ -268,7 +270,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
             Invite
           </Button>
         </span>
-      </div>
+      </div>}
 
       <div className={styles.section}>
         <h4>People</h4>
@@ -356,7 +358,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
 
       <div className={styles.section}>
         <h4>Pending invitations</h4>
-        {invitations.status === "ready" && invitations.error === null && invitationRows.length === 0 ? <Fact line={{ fact: "no pending invitations." }} /> : null}
+        {!denied && invitations.status === "ready" && invitations.error === null && invitationRows.length === 0 ? <Fact line={{ fact: "no pending invitations." }} /> : null}
         {invitationRows.map((invitation) => {
           const key = `invitation:${invitation.id}`;
           const name = personLabel({
