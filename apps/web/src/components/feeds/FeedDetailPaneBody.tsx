@@ -166,9 +166,10 @@ function FeedDetailPane({ feedId, kind, paneId }: { readonly feedId: string; rea
     const previous = observedPublication.current;
     observedPublication.current = { key: publicationKey, signature: publication };
     if (previous !== null && previous.signature !== publication) publishChange("Entries");
-    if (showTitle !== null && (observedShow.current?.key !== showKey || observedShow.current.title !== showTitle)) {
+    if (showTitle !== null) {
+      const previousShow = observedShow.current;
       observedShow.current = { key: showKey, title: showTitle };
-      publishChange("Feeds");
+      if (previousShow?.key === showKey && previousShow.title !== showTitle) publishChange("Feeds");
     }
   }, [publication, publicationKey, showKey, showTitle]);
 
