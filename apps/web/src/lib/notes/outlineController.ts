@@ -29,7 +29,7 @@ import {canonicalBody, fieldAt, fieldById, outlineEditorSchema, outlineTransacti
 import {OutlinePendingInput, type PendingOutlineField} from "./outlinePending";
 import {OutlineHistory, type Birth, type EditorHistory, type DisplayedWriting, type OccurrenceBookmark, type OutlineVisibility} from "./structure";
 import type {LocalCommit, WritingDocument, WritingRuntime} from "./runtime";
-import {projectOutlineWindow, type OutlineWindow, type OutlineEdge} from "./useOutlineWindow";
+import {projectOutlineWindow, type OutlineWindow} from "./useOutlineWindow";
 import type {DisplayedSplit, FocusSelection, NoteEdit, OutlineCommand} from "./editorTypes";
 import type {OutlinePresentationAllowance} from "./outlinePresentationAllowance";
 import {continuationLink, mergeOutlineWindows, provesEmptyOutline, OutlineViewport, type BranchPart} from "./outlineViewport";
@@ -56,7 +56,7 @@ export interface BranchRequest {parent_id: string; ref: string; branch: OutlineB
   ranges?: OutlineRange[];
   navigation?: {lease(): boolean; previous: BranchRequest}}
 interface Held {document: WritingDocument; captureBytes: number; release(): void}
-interface ReadingWindow {rows: Map<string, OutlineRow>; before: OutlineEdge | null; after: OutlineEdge | null}
+interface ReadingWindow {rows: Map<string, OutlineRow>; before: LinkState | null; after: LinkState | null}
 interface EmbeddedBranch {owner: string; projection: {ref: string; branch: OutlineBranch} | null}
 export interface RootField {label: string; placeholder?: string; initialTitle?: string; inspection?: import("@/components/notes/NoteEditor").NoteInspection | null}
 export interface OutlineRootAttachment {
@@ -99,7 +99,7 @@ export class OutlineController {
   private readonly anchorDemands = new Map<object, string>();
   private readonly missingAnchors = new Set<string>();
   private nativeSelection: {anchor: Node; anchorOffset: number; head: Node; headOffset: number; rows: readonly string[]} | null = null;
-  private readingContinuation: {request: BranchRequest; token: object; direction: "before" | "after"; edge: OutlineEdge; lease(): boolean} | null = null;
+  private readingContinuation: {request: BranchRequest; token: object; direction: "before" | "after"; edge: LinkState; lease(): boolean} | null = null;
   private readingEntry: {token: object; parent: string; row: string; selection: FocusSelection | null | ((document: WritingDocument) => FocusSelection); lease(): boolean; resolve(): void} | null = null;
   private readonly geometry: AnchorGeometry = {
     layoutReady: () => true,
@@ -489,8 +489,7 @@ export class OutlineController {
     const first = indexOf(displayed[from]), last = indexOf(displayed[to]);
     const before = window.rows[first - 1], after = window.rows[last + 1];
     return {rows: new Map(displayed.slice(from, to + 1).map(row => [row.row_id, row])),
-      before: before ? {link: before.link!, resource: before.resource} : window.beforeEdge,
-      after: after ? {link: after.link!, resource: after.resource} : window.afterEdge};
+      before: before?.link ?? window.beforeEdge, after: after?.link ?? window.afterEdge};
   }
   setViewport(range: {top: number; bottom: number}): void {
     this.planViewport(range);
@@ -548,19 +547,19 @@ export class OutlineController {
     const origin = view.dom.getBoundingClientRect().top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop;
     this.frame = {revision: this.viewport.revision, root: view.dom, scrollport: port, origin, anchors: [...positions.keys()],
       firstVisible: (top, bottom) => {
-        const item = metrics.find(metric => metric.anchor !== null && metric.top + metric.height > top && metric.top < bottom);
+        const item = metrics.find(metric => metric.anchor !== null && metric.measured && metric.top + metric.height > top && metric.top < bottom);
         return item?.anchor ? {id: item.anchor, offset: item.top} : null;
       },
       position: (id): AnchorPosition => {
         const metric = positions.get(id);
-        if (metric) return {kind: "ready", offset: metric.top};
+        if (metric) return metric.measured ? {kind: "ready", offset: metric.top} : {kind: "pending", estimate: metric.top};
         if (failed.some(prefix => prefix === "" || id.startsWith(`${prefix}/`))) return {kind: "failed"};
         return missing.has(id) ? {kind: "missing"} : {kind: "pending", estimate: null};
       }};
   }
   private planViewport(range?: {top: number; bottom: number}): void {
     if (range) this.viewportRange = range;
-    if (!this.presentation || !this.view || this.handle?.canArrange() === false) return;
+    if (!this.presentation || !this.view?.dom.isConnected || !this.view.dom.getClientRects().length || this.handle?.canArrange() === false) return;
     if (!range && this.frame) {
       const top = this.frame.scrollport.scrollTop - this.frame.origin;
       this.viewportRange = {top, bottom: top + this.frame.scrollport.clientHeight};
@@ -1385,7 +1384,7 @@ export class OutlineController {
         if (boundary && direction === "after") {insert++; while (insert < ordered.length && ordered[insert]!.depth > boundary.depth) insert++;}
         const parent = ordered.find(row => row.row_id === this.reading!.parent);
         const row_id = `reading:${this.reading.parent}:${direction}`;
-        this.gaps.set(row_id, {kind: "gap", key: row_id, height: this.viewport.estimate, range: {cursor: null, anchor_link_id: edge.link.link_id, limit: 32}, direction});
+        this.gaps.set(row_id, {kind: "gap", key: row_id, height: this.viewport.estimate, range: {cursor: null, anchor_link_id: edge.link_id, limit: 32}, direction});
         ordered.splice(Math.max(0, insert), 0, {row_id, ref: null, link: null, parent_id: this.reading.parent,
           parent_ref: boundary?.parent_ref ?? parent?.ref ?? this.rootRef, depth: boundary?.depth ?? (parent && !parent.root ? parent.depth + 1 : 0),
           branch: boundary?.branch ?? parent?.branch ?? this.rootBranch, resource: null, kind: "reference", children: null,
@@ -1598,19 +1597,10 @@ export class OutlineController {
     for (let at = order.indexOf(row) - 1; at >= 0; at--) {const candidate = order[at]!; if (!candidate.seed && !candidate.root) return candidate;}
     return null;
   }
-  private peer(row: OutlineRow): OutlineRow | OutlineEdge | null {
-    const siblings = [...this.rows.values()].filter(item => item.parent_id === row.parent_id && !item.seed && !item.root), at = siblings.findIndex(item => item.row_id === row.row_id);
-    return siblings[at + 1] ?? this.windows.get(row.parent_id!)?.afterEdge ?? null;
-  }
-  /** The next sibling; one just past the window edge is shown first so a join can address it. */
+  /** An unloaded sibling is represented by the branch’s gap row. */
   private following(row: OutlineRow): OutlineRow | null {
-    const peer = this.peer(row); if (!peer) return null;
-    if ("row_id" in peer) return peer;
-    if (peer.resource.kind !== "note" || classifyOutlineOccurrence({branch: row.branch, targetRef: peer.resource.ref, edgeId: peer.link.link_id}).kind !== "resource") return null;
-    const id = this.id(row.parent_id!, peer.link.link_id);
-    this.pending.fields.set(id, {row_id: id, parent_id: row.parent_id, parent_ref: row.parent_ref, after_id: row.row_id,
-      ref: peer.resource.ref, link: peer.link, kind: "body", body: emptyBody(), hidden: false, pending: false, origin: this.origin(id)});
-    this.rebuild("semantic"); return this.rows.get(id) ?? null;
+    const siblings = [...this.rows.values()].filter(item => item.parent_id === row.parent_id && !item.seed && !item.root);
+    return siblings[siblings.indexOf(row) + 1] ?? null;
   }
   private join(row_id: string, direction: "backward" | "forward"): void {
     const row = this.rows.get(row_id); if (!row || row.kind !== "body") return;
@@ -1867,8 +1857,8 @@ export class OutlineController {
     const edge = held ? held[direction] : direction === "before" ? window.beforeEdge : window.afterEdge;
     if (!edge) return;
     const lease = this.lease();
-    const range = {cursor: null, anchor_link_id: edge.link.link_id, limit: 32};
-    this.request({...request, ranges: [range], cursor: null, anchor: edge.link.link_id}, lease);
+    const range = {cursor: null, anchor_link_id: edge.link_id, limit: 32};
+    this.request({...request, ranges: [range], cursor: null, anchor: edge.link_id}, lease);
     if (held) this.readingContinuation = {request: this.requests.get(parent_id)!, token: held.token, direction, edge, lease};
     this.notify();
   }
@@ -1979,7 +1969,7 @@ export class OutlineController {
     try {
       if (window.afterEdge) {
         if (!window.tailEdge) {this.refuse(rangeReasonMessage("gap")); return;}
-        const at = {...request, cursor: null, anchor: window.tailEdge.link.link_id};
+        const at = {...request, cursor: null, anchor: window.tailEdge.link_id};
         const data = await (await this.runtime.store).query({kind: "outline_windows", ref: at.ref, ranges: [{cursor: null, anchor_link_id: at.anchor, limit: at.limit}],
           excluded_link_ids: [...at.branch.traversedEdgeIds], entering_link_id: [...at.branch.traversedEdgeIds].at(-1) ?? null});
         if (!lease()) return;

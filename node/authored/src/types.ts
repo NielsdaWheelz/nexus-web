@@ -87,9 +87,9 @@ export type PositionQuery =
   | { kind: "tie"; position: string; cursor: string | null; limit: number }
   | { kind: "bounds"; position: string };
 export interface OutlineChildrenOccurrence { refs: ResourceRef[]; excluded_link_ids: string[] }
-/** Raw rows own their projections; this proof adds only the root and missing
- * boundary peers. Every field belongs to the same serialized SQL read. */
-export interface OutlineWindowProof { resources: ResourceProjection[]; before: LinkState | null; after: LinkState | null; tail: LinkState | null }
+/** Raw rows own their projections. The proof contains the root projection and
+ * the before, after and tail links from the same serialized SQL read. */
+export interface OutlineWindowProof { root: ResourceProjection | null; before: LinkState | null; after: LinkState | null; tail: LinkState | null }
 export interface DailyIndexEntry { local_date: string; ref: ResourceRef | null }
 export interface OutlineRange { cursor: string | null; anchor_link_id: string | null; limit: number }
 export interface OutlineWindowSlice { rows: QueryRow[]; children: (boolean | null)[]; next_cursor: string | null; previous_cursor: string | null; proof: OutlineWindowProof }

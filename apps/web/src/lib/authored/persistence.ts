@@ -19,7 +19,7 @@ import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFram
 import type { Database } from "./sqlite";
 import { SCOPE_SQL, type ScopeInputsPage, type ScopeProgress, type ScopeTextPage, type ScopeNormalizationInterval, type ScopeRawChunk, type ScopeNormalizationObservation, type NormalizedScopeChunk } from "@nexus/authored/scope";
 
-function decodeOutlineWindow(raw: Record<string, unknown>[]): OutlineWindowSlice {
+function decodeOutlineWindow(raw: Record<string, unknown>[], rootRef: string): OutlineWindowSlice {
   const resources = new Map<string, ResourceProjection>();
   for (const record of raw) if (record.part === "resource") {
     const resource: ResourceProjection = JSON.parse(String(record.value_json));
@@ -27,20 +27,19 @@ function decodeOutlineWindow(raw: Record<string, unknown>[]): OutlineWindowSlice
   }
   const meta = raw.find(record => record.part === "meta");
   if (!meta) throw new Error("outline window metadata is missing");
-  const rows: QueryResult["rows"] = [], children: QueryResult["children"] = [], rawRefs = new Set<string>();
-  const proof: OutlineWindowProof = {resources: [], before: null, after: null, tail: null};
+  const rows: QueryResult["rows"] = [], children: QueryResult["children"] = [];
+  const proof: OutlineWindowProof = {root: resources.get(rootRef) ?? null, before: null, after: null, tail: null};
   for (const record of raw) {
     if (record.part === "resource" || record.part === "meta") continue;
-    const resource = resources.get(String(record.ref));
-    if (!resource) throw new Error("outline edge peer is missing from its proven revision");
     const link: LinkState = JSON.parse(String(record.value_json));
     if (record.part === "raw") {
-      rows.push({resource, link, match_text: null, activation_ref: null, matched_field: null, activation_field: null}); rawRefs.add(resource.ref);
+      const resource = resources.get(String(record.ref));
+      if (!resource) throw new Error("outline row resource is missing from its proven revision");
+      rows.push({resource, link, match_text: null, activation_ref: null, matched_field: null, activation_field: null});
       children.push(record.child_available === null ? null : Number(record.child_available) === 1);
     } else if (record.part === "before" || record.part === "after" || record.part === "tail") proof[record.part] = link;
     else throw new Error("unknown outline window record");
   }
-  proof.resources = [...resources.values()].filter(resource => !rawRefs.has(resource.ref));
   return {rows, children, proof, next_cursor: meta.next_cursor === null ? null : String(meta.next_cursor),
     previous_cursor: meta.previous_cursor === null ? null : String(meta.previous_cursor)};
 }
@@ -115,7 +114,7 @@ export class Persistence {
     }
     if (query.kind === "outline_windows") {
       const windows: OutlineWindowSlice[] = [];
-      for (const compiled of compileOutlineWindows(query)) windows.push(decodeOutlineWindow(await this.db.all(compiled.sql, compiled.params)));
+      for (const compiled of compileOutlineWindows(query)) windows.push(decodeOutlineWindow(await this.db.all(compiled.sql, compiled.params), query.ref));
       return {store_revision: (await this.replica()).store_revision, rows: [], children: [], outline_windows: windows, daily_index: null,
         next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], scope_available: true};
     }

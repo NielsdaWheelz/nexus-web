@@ -332,7 +332,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             JSONObject().put("score", if (found.length() == 0) JSONObject.NULL else found.getJSONObject(0).getDouble("score"))
         } finally { run(sql("search_match_clear")) }
     }
-    private fun outlineWindow(records: JSONArray): JSONObject {
+    private fun outlineWindow(records: JSONArray, rootRef: String): JSONObject {
         val resources = linkedMapOf<String, JSONObject>()
         var metadata: JSONObject? = null
         for (index in 0 until records.length()) {
@@ -342,24 +342,23 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             } else if (record.getString("part") == "meta") metadata = record
         }
         val meta = metadata ?: error("outline window metadata is missing")
-        val output = JSONArray(); val children = JSONArray(); val rawRefs = mutableSetOf<String>()
-        val proof = JSONObject().put("before", JSONObject.NULL).put("after", JSONObject.NULL).put("tail", JSONObject.NULL)
+        val output = JSONArray(); val children = JSONArray()
+        val proof = JSONObject().put("root", resources[rootRef] ?: JSONObject.NULL)
+            .put("before", JSONObject.NULL).put("after", JSONObject.NULL).put("tail", JSONObject.NULL)
         for (index in 0 until records.length()) {
             val record = records.getJSONObject(index); val part = record.getString("part")
             if (part == "resource" || part == "meta") continue
-            val resource = resources[record.getString("ref")] ?: error("outline edge peer is missing from its proven revision")
             val link = JSONObject(record.getString("value_json"))
             when (part) {
                 "raw" -> {
+                    val resource = resources[record.getString("ref")] ?: error("outline row resource is missing from its proven revision")
                     output.put(JSONObject().put("resource", resource).put("link", link).put("match_text", JSONObject.NULL).put("activation_ref", JSONObject.NULL).put("matched_field", JSONObject.NULL).put("activation_field", JSONObject.NULL))
-                    rawRefs.add(resource.getString("ref"))
                     children.put(if (record.isNull("child_available")) JSONObject.NULL else record.getInt("child_available") == 1)
                 }
                 "before", "after", "tail" -> proof.put(part, link)
                 else -> error("unknown outline window record")
             }
         }
-        proof.put("resources", JSONArray().apply { for ((ref, resource) in resources) if (ref !in rawRefs) put(resource) })
         return JSONObject().put("rows", output).put("children", children).put("proof", proof)
             .put("next_cursor", meta.get("next_cursor")).put("previous_cursor", meta.get("previous_cursor"))
     }
@@ -382,7 +381,8 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             .put("scope_available", true).put("daily_index", JSONObject.NULL).put("outline_windows", JSONObject.NULL)
         if (kind == "outline_windows") {
             val windows = JSONArray()
-            for (index in 0 until count) windows.put(outlineWindow(read(index)))
+            val ref = query.getString("ref")
+            for (index in 0 until count) windows.put(outlineWindow(read(index), ref))
             return result.put("outline_windows", windows)
         }
         val records = read(0)

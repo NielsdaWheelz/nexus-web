@@ -354,7 +354,7 @@ function outlineWindow(query: Omit<Extract<AuthoredQuery, {kind: "outline_window
       UNION ALL SELECT 'before',link_id,position,position_json,other_ref,NULL FROM before_edge
       UNION ALL SELECT 'after',link_id,position,position_json,other_ref,NULL FROM after_edge
       UNION ALL SELECT 'tail',link_id,position,position_json,other_ref,NULL FROM tail_edge),
-    wanted(ref) AS(SELECT ?1 UNION SELECT other_ref FROM edges),
+    wanted(ref) AS(SELECT ?1 UNION SELECT other_ref FROM page_links),
     readable AS NOT MATERIALIZED(${BOUNDED_READABLE})
     SELECT 'resource' AS part,r.ref,r.projection_json AS value_json,NULL AS child_available,
       NULL AS next_cursor,NULL AS previous_cursor,NULL AS position,NULL AS link_id FROM readable r
