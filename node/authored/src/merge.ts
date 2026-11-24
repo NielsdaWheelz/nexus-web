@@ -1,6 +1,6 @@
 /** Causal observed-delete graph plus Yjs text. Applying identical changes is
  * idempotent. Merging never invents a touch, repairs text, or removes neighbors. */
-import type { Change, Corpus, HighlightState, LinkState, MergeResult, PassageState, Register, ResourcePatch, ResourceProjection, ResourceState, SourceStub, Vector } from "./types.ts";
+import type { Change, Corpus, FeedChange, HighlightState, LinkState, MergeResult, PassageState, Register, ReplicaState, ResourcePatch, ResourceProjection, ResourceState, SourceStub, Vector } from "./types.ts";
 import { canonicalSerialization } from "./canonical.ts";
 import { captureRevision, excerptView, excerptTextParts } from "./excerpt.ts";
 import { validateChange } from "./validate.ts";
@@ -9,6 +9,16 @@ import { bodyHasContent } from "./body.ts";
 import { mergeNote, mergeTitle } from "./documents.ts";
 import { isResourceRef, sortedEndpoints } from "./identity.ts";
 import { mergeWork, projectWork } from "./work.ts";
+/** The feed republishes this replica's submitted causal change. Its durable
+ * command prefix already contains the change, regardless of acknowledgement. */
+export function isLocalFeedEcho(entry: FeedChange, replica: ReplicaState): boolean {
+  if (entry.replica_id !== replica.replica_id) return false;
+  const sequence = counter(entry.change.command_seq);
+  if (sequence === 0n || sequence > counter(replica.command_seq))
+    throw new Error("authored feed source sequence is outside the durable local prefix");
+  return true;
+}
+
 export function counter(value:string):bigint {
   if(typeof value !== "string" || !/^(0|[1-9][0-9]*)$/u.test(value)) throw new TypeError("Counter must be a canonical nonnegative decimal");
   const n=BigInt(value);

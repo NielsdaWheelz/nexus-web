@@ -2,7 +2,7 @@
  * closed SQL transactions and fixed foreground transport operations. */
 import { bindingQueries, changedResourceRefs, changesDailyIndex, excerptQuery, invalidatesQuery, searchQuery, sourceAliasQuery, titleOnlyChanges, type CompiledQuery } from "@nexus/authored/queries";
 import { validateBindings } from "@nexus/authored/identity";
-import { mergeChanges } from "@nexus/authored/merge";
+import { isLocalFeedEcho, mergeChanges } from "@nexus/authored/merge";
 import { FORMAT_REVISION, type AuthoredStore, type Change, type FeedChange, type ReplicaState, type StateSelection, type QueryResult, type SyncFailure, type SyncStatus } from "@nexus/authored/types";
 import type { ScopeInputsPage, ScopeProgress, ScopeTextPage, ScopeNormalizationInterval, ScopeRawChunk, ScopeNormalizationObservation, NormalizedScopeChunk } from "@nexus/authored/scope";
 import { selectionFor } from "./persistence";
@@ -143,19 +143,24 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
     replica: () => call<ReplicaState>("replica"),
     pending: async () => (await call<{ changes: Change[] }>("pending")).changes,
     acknowledge: async (sequence: string) => { await call("acknowledge", { sequence }); },
-    applyRemote: async (entries: FeedChange[], nextCursor: string): Promise<{replica: ReplicaState; only_titles: boolean}> => {
+    applyRemote: async (entries: FeedChange[], nextCursor: string): Promise<{replica: ReplicaState; applied: Change[]; only_titles: boolean}> => {
       let raced = false;
       for (;;) {
         const current = await call<ReplicaState>("replica");
-        if (BigInt(current.server_cursor) >= BigInt(nextCursor)) return {replica: current, only_titles: false};
+        // Another native owner can have merged a foreign prefix while this
+        // document's queries still need to observe it.
+        const applied = entries.filter(entry => entry.replica_id !== current.replica_id).map(entry => entry.change);
+        if (BigInt(current.server_cursor) >= BigInt(nextCursor)) return {replica: current, applied, only_titles: false};
         const changes = entries.filter(entry => BigInt(entry.server_seq) > BigInt(current.server_cursor));
-        const accepted = changes.map(entry => entry.change);
-        const states = await changeStates(accepted);
-        await validateBindings(accountId, states, accepted);
-        const merged = mergeChanges(states, accepted);
-        const result = await call<ReplicaState | { kind: "stale" }>("apply_remote", { expected_store_revision: current.store_revision, changes, next_cursor: nextCursor, states: merged });
+        const incoming = changes.filter(entry => !isLocalFeedEcho(entry, current)).map(entry => entry.change);
+        const states = await changeStates(incoming);
+        await validateBindings(accountId, states, incoming);
+        const merged = mergeChanges(states, incoming);
+        const result = await call<ReplicaState | { kind: "stale" }>("apply_remote", {
+          expected_store_revision: current.store_revision, expected_server_cursor: current.server_cursor, changes, next_cursor: nextCursor, states: merged,
+        });
         if (!("kind" in result)) return {
-          replica: result, only_titles: !raced && changes.length === entries.length && titleOnlyChanges(accepted, states, merged),
+          replica: result, applied, only_titles: !raced && changes.length === entries.length && titleOnlyChanges(incoming, states, merged),
         };
         raced = true;
       }

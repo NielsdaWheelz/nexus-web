@@ -831,8 +831,10 @@ content. local queries return bounded rows; native transfer retains 24 kib raw
 chunks within 64 kib frames. the whole streamed corpus snapshot has no 3 mib cap.
 
 `GET /authored/changes?after=…` returns a bounded ascending prefix through one
-captured head. applying each command and advancing its cursor is one device
-transaction. sending and receiving proceed independently.
+captured head. applying changes and advancing the cursor share one device
+transaction. an entry from this replica within its durable source prefix only
+advances the feed cursor. only incoming changes advance the corpus revision and
+wake its queries. sending and receiving proceed independently.
 
 the document schedules finite `Sync.step({refresh})` units while foregrounded.
 each unit admits at most one upload batch, feed page and scope unit. registration

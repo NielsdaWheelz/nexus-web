@@ -155,9 +155,7 @@ export class Sync {
     if (typeof data.evidence_revision !== "string") throw new Error("authored feed omitted its evidence revision");
     if (data.evidence_revision !== this.evidenceRevision) { this.evidenceRevision = data.evidence_revision; this.evidenceChanged(); }
     await this.local(async () => {
-      const before = await this.persistence.replica();
-      const applied = data.changes.filter(entry => BigInt(entry.server_seq) > BigInt(before.server_cursor)).map(entry => entry.change);
-      const { replica: current, only_titles } = await this.persistence.applyRemote(data.changes, data.next_cursor);
+      const { replica: current, applied, only_titles } = await this.persistence.applyRemote(data.changes, data.next_cursor);
       this.facts.cursor = current.server_cursor;
       this.changed(applied.length > 0, applied.some(changesDailyIndex), changedResourceRefs(applied), only_titles);
     });

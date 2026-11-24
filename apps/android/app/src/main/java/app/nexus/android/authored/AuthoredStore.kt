@@ -193,12 +193,30 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
     }
     fun applyRemote(frame: JSONObject): JSONObject = transaction {
         val current = replica()
-        if (frame.getString("expected_store_revision") != current.getString("store_revision")) return@transaction JSONObject().put("kind", "stale")
-        val entries = frame.getJSONArray("changes"); var cursor = current.getString("server_cursor").toLong(); var lamport = current.getString("lamport").toLong()
-        for (index in 0 until entries.length()) { val entry = entries.getJSONObject(index); val next = entry.getString("server_seq").toLong(); require(next == cursor + 1); cursor = next; lamport = maxOf(lamport, entry.getJSONObject("change").getString("lamport").toLong()) }
+        if (frame.getString("expected_store_revision") != current.getString("store_revision") ||
+            frame.getString("expected_server_cursor") != current.getString("server_cursor")
+        ) return@transaction JSONObject().put("kind", "stale")
+        require(current.getBoolean("provisioning_complete"))
+        val entries = frame.getJSONArray("changes")
+        val replicaId = current.getString("replica_id")
+        val committedPrefix = current.getString("command_seq").toLong()
+        var cursor = current.getString("server_cursor").toLong()
+        var lamport = current.getString("lamport").toLong()
+        var incoming = 0
+        for (index in 0 until entries.length()) {
+            val entry = entries.getJSONObject(index)
+            val next = entry.getString("server_seq").toLong()
+            require(next == cursor + 1)
+            val change = entry.getJSONObject("change")
+            if (entry.getString("replica_id") == replicaId) {
+                require(change.getString("command_seq").toLong() in 1L..committedPrefix)
+            } else incoming++
+            cursor = next
+            lamport = maxOf(lamport, change.getString("lamport").toLong())
+        }
         require(cursor.toString() == frame.getString("next_cursor"))
-        write(frame.getJSONObject("states"))
-        run("UPDATE replica_state SET server_cursor=?,store_revision=store_revision+?,lamport=? WHERE singleton=1", cursor, entries.length(), lamport)
+        if (incoming > 0) write(frame.getJSONObject("states"))
+        run("UPDATE replica_state SET server_cursor=?,store_revision=store_revision+?,lamport=? WHERE singleton=1", cursor, incoming, lamport)
         replica()
     }
     fun resetProvisioning() = transaction { for (table in listOf("resources", "links", "passages", "source_stubs", "reference_index", "search_documents")) run("DELETE FROM $table") }

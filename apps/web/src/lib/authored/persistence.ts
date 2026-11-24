@@ -11,7 +11,7 @@
  * Fresh complete metadata may reuse one exactly unchanged active reading's complete
  * raw/normalized rows. Unpublished first-setup work is not a cross-revision donor. */
 import { validateBindings } from "@nexus/authored/identity";
-import { mergeChanges } from "@nexus/authored/merge";
+import { isLocalFeedEcho, mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
 import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_TO_6_SQL } from "@nexus/authored/schema";
 import { bindingQueries, compileQuery, compileOutlineWindows, excerptQuery, searchQuery, sourceAliasQuery, titleOnlyChanges, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
@@ -188,24 +188,34 @@ export class Persistence {
       return { kind: "committed", command_seq: frame.change.command_seq, store_revision: revision, only_titles: titleOnlyChanges([frame.change], states, merged) };
     });
   }
-  async applyRemote(entries: FeedChange[], nextCursor: string): Promise<{ replica: ReplicaState; only_titles: boolean }> {
+  async applyRemote(entries: FeedChange[], nextCursor: string): Promise<{ replica: ReplicaState; applied: Change[]; only_titles: boolean }> {
     return this.db.transaction(async () => {
-      let current = await this.replica();
-      const previousCursor = current.server_cursor;
+      const current = await this.replica();
+      if (!current.provisioning_complete) throw new Error("authored corpus is still preparing");
+      let cursor = BigInt(current.server_cursor);
+      let lamport = BigInt(current.lamport);
+      const applied: Change[] = [];
       let onlyTitles = true;
       for (const entry of entries) {
-        if (BigInt(entry.server_seq) <= BigInt(current.server_cursor)) continue;
-        if (BigInt(entry.server_seq) !== BigInt(current.server_cursor) + BigInt(1)) throw new Error("authored feed sequence gap");
-        const states = await this.changeStates(entry.change);
-        await validateBindings(current.account_id, states, [entry.change]);
-        const merged = mergeChanges(states, [entry.change]);
-        onlyTitles &&= titleOnlyChanges([entry.change], states, merged);
+        const sequence = BigInt(entry.server_seq);
+        if (sequence <= cursor) continue;
+        if (sequence !== cursor + 1n) throw new Error("authored feed sequence gap");
+        cursor = sequence;
+        const clock = BigInt(entry.change.lamport);
+        if (clock > lamport) lamport = clock;
+        if (isLocalFeedEcho(entry, current)) continue;
+        const change = entry.change;
+        const states = await this.changeStates(change);
+        await validateBindings(current.account_id, states, [change]);
+        const merged = mergeChanges(states, [change]);
+        onlyTitles &&= titleOnlyChanges([change], states, merged);
         await this.write(merged);
-        await this.db.run("UPDATE replica_state SET server_cursor=?,store_revision=store_revision+1,lamport=MAX(lamport,?) WHERE singleton=1", [BigInt(entry.server_seq), BigInt(entry.change.lamport)]);
-        current = await this.replica();
+        applied.push(change);
       }
-      if (current.server_cursor !== nextCursor) throw new Error("authored feed cursor disagrees with applied commands");
-      return { replica: current, only_titles: current.server_cursor !== previousCursor && onlyTitles };
+      if (cursor.toString() !== nextCursor) throw new Error("authored feed cursor disagrees with applied commands");
+      if (current.server_cursor === nextCursor) return { replica: current, applied, only_titles: false };
+      await this.db.run("UPDATE replica_state SET server_cursor=?,store_revision=store_revision+?,lamport=? WHERE singleton=1", [cursor, applied.length, lamport]);
+      return { replica: await this.replica(), applied, only_titles: applied.length > 0 && onlyTitles };
     });
   }
   async resetProvisioning() {
