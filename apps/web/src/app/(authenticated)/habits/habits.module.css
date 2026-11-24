@@ -23,4 +23,6 @@
 
 .muted { color: var(--ink-muted); font-size: var(--text-sm); }
 
+.calendar { min-block-size: 5.5rem; }
+
 .foot { padding: var(--space-4) var(--space-2); }

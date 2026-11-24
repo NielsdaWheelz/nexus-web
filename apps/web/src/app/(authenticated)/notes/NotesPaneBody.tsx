@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { PAGE_REGISTER_RANGE, type QueryResult, type RegisterItem } from "@nexus/authored/types";
+import { AUTHORED_INDEX_RANGE, type QueryResult, type RegisterItem } from "@nexus/authored/types";
 import * as Icon from "@/lib/ui/icons";
 import CollectionView, { type CollectionViewRowRenderProps } from "@/components/collections/CollectionView";
 import type { CollectionRowView } from "@/lib/collections/types";
@@ -39,7 +39,7 @@ export default function NotesPaneBody() {
   const type = readerType(useReaderProfile());
   const filter = usePaneFilterQuery("Notes.Pages");
   const text = filter.query.trim();
-  const read = useAuthoredIndex({kind: "page_register", text, start: 0, limit: PAGE_REGISTER_RANGE, expected_revision: null}, register);
+  const read = useAuthoredIndex({kind: "page_register", text, start: 0, limit: AUTHORED_INDEX_RANGE, expected_revision: null}, register);
   const account = useAuthoredAccountId();
   const [last, setLast] = useState<{account: typeof account; text: string; data: NonNullable<typeof read.data>} | null>(null);
   if (read.data && (last?.account !== account || last.text !== text || last.data !== read.data))

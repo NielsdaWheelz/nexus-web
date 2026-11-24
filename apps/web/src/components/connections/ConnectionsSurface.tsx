@@ -8,7 +8,7 @@ import * as Icon from "@/lib/ui/icons";
 // which may fail without hiding local writing. Until anything has shown, the body
 // is a ruling; a local storage failure says so until its rows have shown, and a
 // defect in any local read throws to the boundary.
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Fact } from "@/components/feedback/Fact";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
@@ -28,7 +28,9 @@ import { outcomeUnknown } from "@/lib/api/client";
 import { modeledApiError } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchDiscoveryScanStatus, requestDiscoveryScan, type DiscoveryScanStatus } from "@/lib/connectionDiscovery";
-import type { QueryResult } from "@nexus/authored/types";
+import { INDEX_WINDOW_THRESHOLD } from "@/lib/collections/measuredIndexWindow";
+import { useVariableIndex } from "@/lib/collections/variableIndex";
+import { AUTHORED_INDEX_RANGE, type QueryResult } from "@nexus/authored/types";
 import { useAuthoredIndex, useAuthoredQuery } from "@/lib/notes/hooks";
 import { isAuthoredStorageFailure } from "@/lib/notes/runtime";
 import { formatResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -56,7 +58,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const remote = useRemoteConnections(selfRef, `${refreshKey}:${refreshTick}`);
   const self = useAuthoredQuery({ kind: "resource", ref: selfRef });
   const linked = useAuthoredQuery({ kind: "adjacency", ref: selfRef, cursor: null, limit: 1 });
-  const mentions = useAuthoredIndex({kind: "mentions", ref: selfRef, start: 0, limit: 2048, expected_revision: null}, mentionIndex);
+  const mentions = useAuthoredIndex({kind: "mentions", ref: selfRef, start: 0, limit: AUTHORED_INDEX_RANGE, expected_revision: null}, mentionIndex);
   const embedded = self.data?.rows[0]?.resource.embedded_refs ?? [];
   const scannable = (CONNECTION_DISCOVERY_SOURCE_SCHEMES as readonly string[]).includes(resourceRef.scheme);
   const scan = useDiscoveryScan({ selfRef, enabled: scannable, onSettled: reload });
@@ -88,13 +90,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
         retry={() => {self.retry(); linked.retry(); mentions.retry();}}/> : null}
       {opening ? <Ruling /> : empty ? <Fact line={{ fact: "no connections yet." }} /> : null}
       <LocalOutline rootRef={selfRef} occurrencePrefix={`connections:${selfRef}`} />
-      {mentions.data?.items.length ? <section aria-label="mentioned in">
-        <h3 className={styles.subtitle}>mentioned in</h3>
-        <ResourceOutlineList scope={`mentions:${selfRef}`} ariaLabel="mentioned in" ancestorRef={selfRef}>
-          {mentions.data.items.map(ref => <ResourceOutlineRow key={ref} resourceRef={ref}
-            occurrenceKey={`connections:${selfRef}/mention:${ref}`} incoming={null} />)}
-        </ResourceOutlineList>
-      </section> : null}
+      {mentions.data?.items.length ? <MentionedIn selfRef={selfRef} ids={mentions.data.items}/> : null}
       {embedded.length ? <section aria-label="embedded in this note">
         <h3 className={styles.subtitle}>embedded in this note</h3>
         <ResourceOutlineList scope={`embeds:${selfRef}`} ariaLabel="embedded in this note" ancestorRef={selfRef}>
@@ -104,6 +100,30 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       <RemoteConnections ownerRef={selfRef} occurrencePrefix={`connections:${selfRef}`} list={remote} onChanged={reload} />
     </section>
   );
+}
+
+function MentionedIn({selfRef, ids}: {selfRef: string; ids: readonly string[]}) {
+  const list = useRef<HTMLUListElement>(null);
+  const [focused, setFocused] = useState<string | null>(null);
+  const pinned = useMemo(() => new Set(focused === null ? [] : [focused]), [focused]);
+  const scope = `mentions:${selfRef}`;
+  const windowed = ids.length > INDEX_WINDOW_THRESHOLD;
+  const index = useVariableIndex({scope, ids, list, estimate: 68, pinned, windowed});
+  const members = useMemo(() => new Set(ids), [ids]);
+  return <section aria-label="mentioned in">
+    <h3 className={styles.subtitle}>mentioned in</h3>
+    <ResourceOutlineList scope={scope} ariaLabel="mentioned in" ancestorRef={selfRef}
+      listProps={{ref: list, style: windowed ? {position: "relative", height: index.height} : undefined}}>
+      {index.slots.map(({id, rank, top, size}) => {
+        const style = top === undefined ? undefined : {position: "absolute", insetInline: 0, top, blockSize: size, overflow: size === undefined ? undefined : "clip"} as const;
+        return members.has(id)
+          ? <ResourceOutlineRow key={id} resourceRef={id} occurrenceKey={`connections:${selfRef}/mention:${id}`} incoming={null}
+              rowRef={index.measure} rootProps={{style, "data-index": rank, "data-collection-row-id": id, "aria-posinset": rank + 1, "aria-setsize": index.count,
+                onFocus: () => setFocused(id), onBlur: event => {if (!event.currentTarget.contains(event.relatedTarget)) setFocused(null);}}}/>
+          : <li key={id} aria-hidden="true" role="presentation" style={style}/>;
+      })}
+    </ResourceOutlineList>
+  </section>;
 }
 
 const DISCOVERY_SCAN_TIMEOUT_MS = 45_000;

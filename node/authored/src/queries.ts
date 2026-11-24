@@ -4,7 +4,7 @@
  * return separate literal evidence without rewriting canonical resource content.
  * Adjacency uses the exact (position,link_id) tuple, including prefix/equal keys. */
 import { excerptTextParts, excerptView, scopeExcerpt, type ExcerptScope, type ExcerptNode } from "./excerpt.ts";
-import { PAGE_REGISTER_RANGE, type AuthoredQuery, type Change, type OutlineRange, type PassageState, type QueryResult, type QueryRow, type ResourceProjection, type SelectionCapture, type ResourceState, type PassageCapture } from "./types.ts";
+import { AUTHORED_INDEX_RANGE, type AuthoredQuery, type Change, type OutlineRange, type PassageState, type QueryResult, type QueryRow, type ResourceProjection, type SelectionCapture, type ResourceState, type PassageCapture } from "./types.ts";
 import { normalizeQuote } from "./identity.ts";
 import { validateLocalDate } from "./work.ts";
 import { foldFilterText } from "./filter.ts";
@@ -396,7 +396,7 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
   switch (query.kind) {
     case "page_register":
     case "outline_filter": {
-      const maximum = query.kind === "page_register" ? PAGE_REGISTER_RANGE : 2048;
+      const maximum = query.kind === "page_register" ? AUTHORED_INDEX_RANGE : 2048;
       if (!Number.isSafeInteger(query.start) || query.start < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > maximum) throw new RangeError("Invalid index range");
       const needle = foldFilterText(query.text.trim());
       if (query.kind === "page_register") {
@@ -432,7 +432,7 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
     case "work_completed":
     case "habits":
     case "mentions": {
-      if (!Number.isSafeInteger(query.start) || query.start < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 2048) throw new RangeError("Invalid index range");
+      if (!Number.isSafeInteger(query.start) || query.start < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > AUTHORED_INDEX_RANGE) throw new RangeError("Invalid index range");
       if (query.kind === "mentions") return {sql: `WITH admitted AS (
         SELECT i.owner_ref AS ref FROM reference_index i JOIN resources r ON r.ref=i.owner_ref WHERE i.target_ref=?3 AND r.visible=1
       ), slice AS (SELECT ref FROM admitted ORDER BY ref LIMIT ?1 OFFSET ?2)

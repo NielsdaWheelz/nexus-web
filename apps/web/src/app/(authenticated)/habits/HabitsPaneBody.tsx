@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { QueryResult, WorkIndexItem } from "@nexus/authored/types";
-import CollectionView, { type CollectionViewRowRenderProps } from "@/components/collections/CollectionView";
+import { AUTHORED_INDEX_RANGE, type QueryResult, type WorkIndexItem } from "@nexus/authored/types";
+import { Ruling } from "@/components/feedback/Ruling";
+import PaneSurface from "@/components/ui/PaneSurface";
+import ResourceList from "@/components/ui/ResourceList";
+import { INDEX_WINDOW_THRESHOLD } from "@/lib/collections/measuredIndexWindow";
+import { useVariableIndex } from "@/lib/collections/variableIndex";
 import AccountCalendarUnavailable from "@/components/notes/AccountCalendarUnavailable";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import ResourceRow from "@/components/ui/ResourceRow";
@@ -12,8 +16,6 @@ import { habitDateLabel } from "@/lib/localDate";
 import { useAccountToday } from "@/lib/notes/accountDay";
 import { useAuthoredIndex, useAuthoredQuery } from "@/lib/notes/hooks";
 import { useWorkHistory, useOpenHabitHistory, WorkHistoryContext } from "@/lib/notes/work";
-import type { CollectionRowView } from "@/lib/collections/types";
-import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneChrome, usePaneTitleYield } from "@/lib/panes/paneChrome";
 import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
 import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
@@ -37,25 +39,22 @@ export default function HabitsPaneBody() {
     return params;
   }}), [defaultYear]);
   const {state: year, setState: setYear} = usePaneUrlState(codec);
-  const read = useAuthoredIndex({kind: "habits", start: 0, limit: 2048, expected_revision: null}, habits);
+  const read = useAuthoredIndex({kind: "habits", start: 0, limit: AUTHORED_INDEX_RANGE, expected_revision: null}, habits);
   const {history, error} = useWorkHistory();
   usePaneReturnReady(read.data !== null || read.error !== null);
   const type = readerType(useReaderProfile());
   const title = useRef<HTMLParagraphElement>(null);
   usePaneTitleYield(title);
   usePaneChrome({displayTitle: "habits"});
-  const index = useMemo(() => {
-    const rows: CollectionRowView[] = [], items = new Map<string, WorkIndexItem>();
-    for (const item of read.data?.items ?? []) {
-      rows.push({id: item.ref, kind: "note", presentation: "Details",
-        title: {text: item.label === null ? "name too large to display" : item.label || "empty note"},
-        primary: {kind: "link", href: `/notes/${item.ref.slice(11)}`},
-        resourceRef: canonicalResourceRef({scheme: "note_block", id: item.ref.slice(11)}),
-        contributors: [], publicationDate: null, context: null, selected: false});
-      items.set(item.ref, item);
-    }
-    return {rows, items};
+  const list = useRef<HTMLUListElement>(null);
+  const [focused, setFocused] = useState<string | null>(null);
+  const pinned = useMemo(() => new Set(focused === null ? [] : [focused]), [focused]);
+  const {ids, items} = useMemo(() => {
+    const items = new Map((read.data?.items ?? []).map(item => [item.ref, item]));
+    return {ids: [...items.keys()], items};
   }, [read.data]);
+  const windowed = ids.length > INDEX_WINDOW_THRESHOLD;
+  const index = useVariableIndex({scope: "Habits", ids, list, estimate: 160, pinned, windowed});
   if (error) throw error;
   return <WorkHistoryContext.Provider value={history}><div {...type}>
     <div className={styles.head}>
@@ -68,15 +67,27 @@ export default function HabitsPaneBody() {
     </div>
     {today === null ? <AccountCalendarUnavailable/> : null}
     <AuthoredReadFailure {...latest} noun="the latest habit year"/>
-    <CollectionView returnScope="Habits" rows={index.rows} ariaLabel="habits" status={read.data !== null ? "ready" : read.error !== null ? "error" : "loading"}
-      error={<AuthoredReadFailure {...read} noun="habits"/>} notice={read.data !== null && read.error !== null ? <AuthoredReadFailure {...read} noun="habits"/> : undefined}
-      empty={<p>no daily habits yet. choose repeat daily on a note.</p>}
-      renderRow={props => <HabitRow {...props} item={index.items.get(props.row.id)!} today={today} year={year} history={history}/>}/>
+    <div data-pane-return-scope="Habits">
+      <PaneSurface measured={windowed} state={read.data === null && read.error === null ? <Ruling/> : <AuthoredReadFailure {...read} noun="habits"/>}
+        empty={read.data !== null && ids.length === 0 ? <p>no daily habits yet. choose repeat daily on a note.</p> : null}>
+        {ids.length > 0 ? <ResourceList ref={list} ariaLabel="habits" busy={read.pending} height={index.height} windowed={windowed}>
+          {index.slots.map(({id, rank, top, size}) => {
+            const item = items.get(id);
+            return <li key={id} ref={index.measure} data-index={rank} data-collection-row-id={id} aria-posinset={rank + 1} aria-setsize={index.count}
+              style={top === undefined ? undefined : {position: "absolute", insetInline: 0, top, blockSize: size, overflow: size === undefined ? undefined : "clip"}}
+              aria-hidden={item === undefined || undefined}
+              onFocus={() => setFocused(id)} onBlur={event => {if (!event.currentTarget.contains(event.relatedTarget)) setFocused(null);}}>
+              {item ? <HabitRow item={item} today={today} year={year} history={history}/> : null}
+            </li>;
+          })}
+        </ResourceList> : null}
+      </PaneSurface>
+    </div>
     <div className={styles.foot}><HabitYearLegend/></div>
   </div></WorkHistoryContext.Provider>;
 }
 
-function HabitRow({row, as, item, today, year, history}: CollectionViewRowRenderProps & {
+function HabitRow({item, today, year, history}: {
   item: WorkIndexItem; today: string | null; year: number | null; history: ReturnType<typeof useWorkHistory>["history"];
 }) {
   const marker = useRef<HTMLSpanElement>(null);
@@ -98,13 +109,14 @@ function HabitRow({row, as, item, today, year, history}: CollectionViewRowRender
   const currentYear = today === null ? null : Number(today.slice(0, 4));
   const start = today === null ? dates.at(-1) ?? null :
     year === null || year === currentYear ? today : currentYear !== null && year < currentYear ? `${String(year).padStart(4, "0")}-01-01` : dates[0] ?? today;
-  return <ResourceRow as={as} primary={row.primary} title={row.title.text} rootProps={{"data-collection-row-id": row.id}}
+  const title = item.label === null ? "name too large to display" : item.label || "empty note";
+  return <ResourceRow as="div" primary={{kind: "link", href: `/notes/${item.ref.slice(11)}`}} title={title}
     content={{kind: "Details", body: <>
       <span ref={marker} hidden/>
       {!item.work.designation.enabled || item.work.designation.kind !== "habit" ? <p className={styles.muted}>daily repetition is off</p> : null}
       <AuthoredReadFailure {...read} noun="this habit’s dates"/>
-      {today !== null && year !== null ? <div inert={!resolved} aria-busy={!resolved}>
-        <HabitYear year={year} today={today} dates={dates} onOpen={date => {if (history) open(item.ref, date, history);}}/>
+      {today !== null && year !== null ? <div className={styles.calendar} aria-busy={read.pending}>
+        {resolved ? <HabitYear year={year} today={today} dates={dates} onOpen={date => {if (history) open(item.ref, date, history);}}/> : null}
       </div> : resolved ? <p>{dates.length ? dates.map(habitDateLabel).join(" · ") : "no recorded dates."}</p> : null}
       <Button data-habit-history="true" disabled={!history || start === null} onClick={() => {if (history && start !== null) open(item.ref, start, history);}}>habit history</Button>
     </>}}/>;

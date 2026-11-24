@@ -1,7 +1,7 @@
 "use client";
 
 import { useContext, useLayoutEffect, useRef, useState } from "react";
-import { WorkUnavailableError, type QueryResult } from "@nexus/authored/types";
+import { AUTHORED_INDEX_RANGE, WorkUnavailableError, type QueryResult } from "@nexus/authored/types";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import Button from "@/components/ui/Button";
 import { formatDay } from "@/lib/localDate";

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Ref } from "react";
-import type { QueryResult, WorkIndexItem } from "@nexus/authored/types";
+import { AUTHORED_INDEX_RANGE, type QueryResult, type WorkIndexItem } from "@nexus/authored/types";
 import { useOutcome } from "@/components/feedback/Feedback";
 import AccountCalendarUnavailable from "@/components/notes/AccountCalendarUnavailable";
 import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
@@ -60,7 +60,7 @@ const reached = (revision: string, commit: LocalCommit) => BigInt(revision) >= B
 
 export default function WorkSection({history}:{history:OutlineHistory}) {
   const today = useAccountToday();
-  const read = useAuthoredIndex(today === null ? null : {kind:"work_pending", local_date:today, start:0, limit:2048, expected_revision:null}, workIndex);
+  const read = useAuthoredIndex(today === null ? null : {kind:"work_pending", local_date:today, start:0, limit:AUTHORED_INDEX_RANGE, expected_revision:null}, workIndex);
   const {say} = useOutcome();
   const {value:open,set:setOpen} = useResourceDraft("Work.Open",()=>true);
   const [adding, setAdding] = useState(false);
