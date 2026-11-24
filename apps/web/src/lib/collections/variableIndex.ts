@@ -98,9 +98,18 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
   }, [getPort, count, list, windowed]);
 
   const getItemKey = useCallback((rank: number) => keyIds?.[rank] ?? rank, [keyIds]);
+  const mayAdjustCompanion = () => {
+    if (held) return false;
+    if (position === null) return true;
+    const pending = landing.current;
+    if (pending !== null && pending.input === position.current.input) return false;
+    const before = frame.current;
+    return before?.returnOrder === undefined || before.observation === companionRevision?.shown ||
+      before.observation === leftObservation.current && !wasHeld.current;
+  };
   const index = useVirtualizer<HTMLElement, HTMLLIElement>({
     count, enabled: windowed, getScrollElement: getPort,
-    anchorTo: origin?.companion && position === null ? "end" : "start",
+    anchorTo: origin?.companion ? "end" : "start",
     getItemKey, estimateSize: () => estimate, scrollMargin: margin, overscan: 4,
     rangeExtractor(range) {
       const ranks = new Set(defaultRangeExtractor(range));
@@ -120,14 +129,14 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
     },
     scrollToFn(offset, {adjustments = 0, behavior}, instance) {
       const port = instance.scrollElement;
-      if (!held && landing.current === null && port?.hasAttribute("data-companion-scrollport"))
+      if (mayAdjustCompanion() && port?.hasAttribute("data-companion-scrollport"))
         writeScrollPosition(port, offset + adjustments, behavior);
     },
   });
   // The pane memento reconciles its own port. A companion measures and corrects its own landing.
   index.shouldAdjustScrollPositionOnItemSizeChange = (slot, _delta, instance) => {
     const port = instance.scrollElement;
-    return !held && port?.hasAttribute("data-companion-scrollport") === true && slot.end <= port.scrollTop + 0.5;
+    return mayAdjustCompanion() && port?.hasAttribute("data-companion-scrollport") === true && slot.end <= port.scrollTop + 0.5;
   };
   const virtual = windowed ? index.getVirtualItems() : [];
   const slots = windowed ? virtual.flatMap(slot => {

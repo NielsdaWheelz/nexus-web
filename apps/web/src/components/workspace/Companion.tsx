@@ -319,6 +319,7 @@ export default function Companion(props: {
   const asideRef = useRef<HTMLElement>(null);
   const [motion, setMotion] = useState<ScrollMotion>("still");
   const position = useRef<{input: number; settledTop: number | null}>({input: 0, settledTop: null});
+  const scrollMotion = useMemo(() => ({motion, position}), [motion]);
   const observeBody = useCallback((port: HTMLDivElement | null) => {
     if (port === null) return;
     setMotion("still");
@@ -582,7 +583,7 @@ export default function Companion(props: {
       ref={id === activeId ? observeBody : undefined}
       hidden={id !== activeId}
     >
-      {id === activeId ? <CompanionScrollMotion value={{motion, position}}>
+      {id === activeId ? <CompanionScrollMotion value={scrollMotion}>
         <RulingRegion value={rulingRegion}>{body}</RulingRegion>
       </CompanionScrollMotion> : null}
     </div>
