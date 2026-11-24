@@ -45,6 +45,7 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
   const [viewport, setViewport] = useState({ origin: 0, from: 0, until: 0 });
   const [opening, setOpening] = useState<string | null>(null);
   const started = useRef(new Set<string>());
+  const nudge = useRef<(() => void) | null>(null);
   const current = useRef({ prefix, sizes });
   const geometryRevision = useRef(0);
 
@@ -86,6 +87,7 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
   const release = useCallback((date: string) => {
     started.current.delete(date);
     descendants.current.delete(date);
+    nudge.current?.();
   }, []);
   const descendant = useCallback((date: string, state: "pending" | "ready" | "failed") => {
     descendants.current.set(date, state);
@@ -209,17 +211,14 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
   const reading = viewport.from >= 0 ? visible[0] ?? null : null;
   const requested = useMemo(() => new Set([...demands.values()].map(({ date }) => date)), [demands]);
   const bodies = useMemo(() => new Set([...demands.values()].filter(request => request.descendant).map(({ date }) => date)), [demands]);
-  const mounted = new Set(dates.slice(Math.max(0, first - overscan), last + 1 + overscan));
-  for (const date of requested) if (prefix.ranks.has(date)) mounted.add(date);
+  const nearby = dates.slice(Math.max(0, first - overscan), last + 1 + overscan);
   const openingPresent = opening !== null && prefix.ranks.has(opening);
-  if (openingPresent) mounted.add(opening);
   useLayoutEffect(() => {
     if (opening !== null && !openingPresent) settle(opening);
   }, [opening, openingPresent, settle]);
 
   // Re-sample the live coordinates rather than chasing a queue of past dates.
   // The second frame runs even if no more scroll events arrive.
-  const nudge = useRef<(() => void) | null>(null);
   useLayoutEffect(() => {
     if (opening !== null) return;
     const candidate = () => {
@@ -259,5 +258,5 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
   }, [opening, dates, prefix, root]);
   useLayoutEffect(() => { nudge.current?.(); }, [viewport]);
 
-  return { ...prefix, sizes, viewport, visible, reading, mounted, requested, bodies, opening, geometry, article, measure, begin, release, settle, descendant };
+  return { ...prefix, sizes, viewport, visible, reading, nearby, requested, bodies, opening, geometry, article, measure, begin, release, settle, descendant };
 }

@@ -26,7 +26,9 @@ previously held outline row. workspace recents describe the arrival date.
 one passive cold day opens at a time per visit, selected at the reading edge
 across two frames. the completed-work read can start alongside binding and
 outline bootstrap. each portion appears with its own first result. a departed
-opening can finish issued reads. the next opening uses the live viewport.
+opening retains its article for issued reads and stops unissued stages. a still
+visible day can resume unfinished writing through the passive selector after
+its explicit demand ends. the next passive opening uses the live viewport.
 available prose stays visible during travel. passing shells show dates.
 a cold outline initially admits one row. standalone roots keep their 32-row
 bootstrap. compound results contain full root and selected raw rows. before,
@@ -39,7 +41,7 @@ heading stays in the leaf and the band lends its visible date line.
 date text yields while its heading is visible. the chooser freezes that date,
 marks known indexed days and accepts any civil date. a choice that moves
 reading creates one visit in this pane, even at an identical address. aligned
-choices leave history alone.
+choices focus the measured landing and leave its scroll offset and history alone.
 
 inline journal titles are italic and keep the content editor's six-line extent.
 empty titles hide after settled blur. trailing space holds a break between days.
