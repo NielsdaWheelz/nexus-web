@@ -290,7 +290,8 @@ presentation. inline
 markers and figures share source activation; annotation fields open their owning
 highlight. unavailable citations retain their ordinal. exact selection words never
 substitute a leading preview; invalid coordinates retain source navigation.
-drafts use the same projection after their committed authored prefix uploads.
+drafts use the same projection. references wait for their committed authored
+prefix to upload. raw reader selections resolve against canonical server text.
 preview admission writes nothing. selection refusals retain the draft, explain
 the reason and offer remove quote; transport failures also offer retry.
 
