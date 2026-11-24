@@ -1,5 +1,26 @@
 # current model catalog production cutover
 
+## remaining installed checks
+
+the paired `e3d835268` release on 2026-11-24 kept schema `0347` and wire 25.
+native sol, metered sol, fable and astra completed. sol and fable each used
+one web read and a second provider turn. the ordinary carbon send coincided
+with the [interactive worker kill](interactive-worker-startup-reaches-memory-cap.md).
+
+qualify carbon/medium, neon/high and hydrogen/xhigh on one warmed, measured
+installed worker epoch. use the dedicated account with synthetic history,
+capture off and `ChatReadAdditiveWrite`. hydrogen must complete one real note
+read and cite its independently known value. retain the incident issue until
+its cause is explained or repaired.
+
+the dedicated account must also cross a genuine installed catalog cut with
+a remembered tuple that the cut removes. verify explicit reselection, preserved
+history and recall revision in the installed browser. exact-image disposable
+rehearsal establishes functional retirement separately. native android recall
+remains [its own check](chat-selection-android-recall-unverified.md).
+
+## release contract
+
 the november 20 model refresh requires a coordinated host, api and worker
 release. the exact provider and kernel revisions are in `python/uv.lock` and
 stock codex `0.171.0` is in `node/codex/bun.lock`. [generation contract](../modules/llms.md)
