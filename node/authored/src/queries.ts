@@ -435,10 +435,10 @@ function compileCapturedIndex(at: CapturedIndexDemand["at"], {
       if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > AUTHORED_INDEX_RANGE)
         throw new RangeError("Invalid held index range");
       return {sql: `WITH slice AS (
-        SELECT o.group_name,r.ref,${details} FROM captured_index_orders o LEFT JOIN resources r
+        SELECT o.group_name,r.ref${details ? `,${details}` : ""} FROM captured_index_orders o LEFT JOIN resources r
           ON r.ref=o.ref AND ${visible}${matches}
-          WHERE o.token=?${first} AND o.rank>=?${first+1} AND o.rank<?${first+1}+?${first+2} ORDER BY o.rank)
-        SELECT json_object('kind','held','start',?${first+1},'items',json_group_array(
+          WHERE o.token=?${first} AND o.rank>=?${first + 1} AND o.rank<?${first + 1}+?${first + 2} ORDER BY o.rank)
+        SELECT json_object('kind','held','start',?${first + 1},'items',json_group_array(
           CASE WHEN ref IS NULL THEN NULL ELSE json_object(${item}) END)) AS register FROM slice`,
         params: [...params,token,start,limit]};
     }
@@ -703,6 +703,11 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
     case "mentions": {
       const admitted = `FROM reference_index i JOIN resources r INDEXED BY resources_visible_refs ON r.ref=i.owner_ref
         WHERE i.target_ref=?1 AND r.visible=1`;
+      if ("token" in query.at) return compileCapturedIndex(query.at, {
+        members: admitted, order: "i.owner_ref", group: "''", details: "", item: "'ref',ref", matches: "",
+        visible: "r.visible=1 AND EXISTS (SELECT 1 FROM reference_index i WHERE i.target_ref=?1 AND i.owner_ref=r.ref)",
+        params: [query.ref],
+      });
       switch (query.at.kind) {
         case "describe":
           return {sql: `WITH extent AS (SELECT count(*) AS total ${admitted}),

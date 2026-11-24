@@ -318,10 +318,22 @@ export default function Companion(props: {
   const closeRef = useRef<HTMLButtonElement>(null);
   const asideRef = useRef<HTMLElement>(null);
   const [motion, setMotion] = useState<ScrollMotion>("still");
+  const position = useRef<{input: number; settledTop: number | null}>({input: 0, settledTop: null});
   const observeBody = useCallback((port: HTMLDivElement | null) => {
     if (port === null) return;
     setMotion("still");
-    return observeScrollMotion(port, setMotion);
+    const stop = observeScrollMotion(port, next => {
+      position.current.settledTop = next === "still" ? port.scrollTop : null;
+      setMotion(next);
+    }, undefined, () => {
+      position.current.input++;
+      position.current.settledTop = null;
+    });
+    return () => {
+      stop();
+      position.current.input++;
+      position.current.settledTop = null;
+    };
   }, []);
   const [host] = useState(() => {
     if (typeof document === "undefined") return null;
@@ -570,7 +582,7 @@ export default function Companion(props: {
       ref={id === activeId ? observeBody : undefined}
       hidden={id !== activeId}
     >
-      {id === activeId ? <CompanionScrollMotion value={motion}>
+      {id === activeId ? <CompanionScrollMotion value={{motion, position}}>
         <RulingRegion value={rulingRegion}>{body}</RulingRegion>
       </CompanionScrollMotion> : null}
     </div>

@@ -1,4 +1,4 @@
-import { isEditableTarget } from "@/lib/ui/eventTarget";
+import { isEditableTarget, isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eventTarget";
 
 export type ScrollMotion = "still" | "travel" | "seek";
 
@@ -29,7 +29,7 @@ const SCROLL_KEYS = new Set(["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home
 
 /** The gesture owns presentation until it settles. This observer never moves the port. */
 export function observeScrollMotion(port: HTMLElement, onMotion: (motion: ScrollMotion) => void,
-  onForward?: (port: HTMLElement) => void): () => void {
+  onForward?: (port: HTMLElement) => void, onAttention?: () => void): () => void {
   const hasScrollEnd = "onscrollend" in port;
   let motion: ScrollMotion = "still";
   let wheelTravel = false;
@@ -161,7 +161,11 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
     writes.delete(port);
     if (press === null) settleSoon();
   };
+  const attention = (event: Event) => {
+    if (isNavigationAttention(event)) onAttention?.();
+  };
 
+  if (onAttention) for (const type of NAVIGATION_ATTENTION_EVENTS) port.addEventListener(type, attention, true);
   port.addEventListener("scroll", scroll, { passive: true });
   port.addEventListener("scrollend", end);
   port.addEventListener("wheel", wheel, { passive: true });
@@ -178,6 +182,7 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
   window.addEventListener("pagehide", release);
   document.addEventListener("visibilitychange", visibility);
   return () => {
+    if (onAttention) for (const type of NAVIGATION_ATTENTION_EVENTS) port.removeEventListener(type, attention, true);
     port.removeEventListener("scroll", scroll);
     port.removeEventListener("scrollend", end);
     port.removeEventListener("wheel", wheel);

@@ -79,11 +79,7 @@ export default defineConfig({
           habits: capturedSamples({kind: "habits"}),
           habit_days: [{kind: "habit_days", ref: "", year: 2026}],
           latest_habit_date: [{kind: "latest_habit_date"}],
-          mentions: [
-            {kind: "mentions", ref: "", at: {kind: "describe"}, expected_revision: null},
-            {kind: "mentions", ref: "", at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
-            {kind: "mentions", ref: "", at: {kind: "locate", refs: []}, expected_revision: "0"},
-          ],
+          mentions: capturedSamples({kind: "mentions", ref: ""}),
           outline_windows: [
             {kind: "outline_windows", ref: "", ranges: [{start_rank: null, cursor: null, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
             {kind: "outline_windows", ref: "", ranges: [{start_rank: null, cursor, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},

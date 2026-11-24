@@ -130,7 +130,8 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
     case "query": {
       if (!(await persistence.replica()).provisioning_complete) throw new Error("authored corpus is still preparing");
       const query = input.query as unknown as AuthoredQuery;
-      if ((query.kind !== "page_register" && query.kind !== "habits" && query.kind !== "work_pending" && query.kind !== "work_completed") ||
+      if ((query.kind !== "page_register" && query.kind !== "habits" && query.kind !== "mentions" &&
+        query.kind !== "work_pending" && query.kind !== "work_completed") ||
         !("token" in query.at)) return persistence.query(query);
       const {kind, token} = query.at;
       const orders = indexOrders.get(port) ?? new Set<string>();

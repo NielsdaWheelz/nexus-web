@@ -116,7 +116,11 @@ export type CapturedIndexResult<Row> =
   | {kind: "retained"}
   | {kind: "held"; start: number; items: (Row | null)[]}
   | {kind: "successor"; ref: ResourceRef | null};
-export type CapturedIndexSource = {kind: "page_register"; text: string} | {kind: "habits"} | WorkRegisterSource;
+export type CapturedIndexSource =
+  | {kind: "page_register"; text: string}
+  | {kind: "habits"}
+  | {kind: "mentions"; ref: ResourceRef}
+  | WorkRegisterSource;
 export type PageRegisterRequest = Extract<CapturedIndexSource, {kind: "page_register"}> & (RankedIndexRequest | CapturedIndexDemand);
 /** Groups are consecutive run lengths in register order. Each slice owns its labels. */
 export type PageRegisterResult = RankedIndexResult<RegisterItem, {source_total: number}> | CapturedIndexResult<RegisterItem>;
@@ -130,7 +134,8 @@ export type DailyIndexResult = RankedIndexResult<DailyIndexEntry, {
   attachments: (DailyIndexEntry & {rank: number})[];
 }>;
 export type HabitIndexRequest = Extract<CapturedIndexSource, {kind: "habits"}> & (RankedIndexRequest | CapturedIndexDemand);
-export type MentionIndexRequest = {kind: "mentions"; ref: ResourceRef} & RankedIndexRequest;
+export type MentionIndexRequest = Extract<CapturedIndexSource, {kind: "mentions"}> & (RankedIndexRequest | CapturedIndexDemand);
+export type MentionIndexResult = RankedIndexResult<{ref: ResourceRef}> | CapturedIndexResult<{ref: ResourceRef}>;
 export type WorkRegisterSource = {local_date: LocalDate} & ({kind: "work_pending"} | {kind: "work_completed"});
 export type WorkRegisterRequest = (WorkRegisterSource & (RankedIndexRequest | CapturedIndexDemand)) | {
   kind: "work_pending"; local_date: LocalDate; expected_revision: Counter;
@@ -172,7 +177,7 @@ export type AuthoredQuery =
   | { kind: "resolve"; refs: ResourceRef[] };
 export interface QueryRow { resource: ResourceProjection; link: LinkState | null; match_text: string | null; activation_ref: ResourceRef | null; matched_field: "quote" | "annotation" | null; activation_field: "annotation" | null }
 /** Only source_alias populates canonical_source_ref; provenance grants no reading permission. */
-export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; previous_cursor: string | null; binding_id: string | null; canonical_source_ref: ResourceRef | null; positions: LinkState[]; children: (boolean | null)[]; scope_available: boolean; daily_index: DailyIndexResult | null; outline_windows: OutlineWindowSlice[] | null; page_register: PageRegisterResult | null; register_label: {label: string | null; oversized: boolean} | null; outline_filter: OutlineFilterResult | null; work_index: WorkRegisterResult | null; habits: RankedIndexResult<HabitIndexItem> | CapturedIndexResult<HabitIndexItem> | null; mentions: RankedIndexResult<{ref: ResourceRef}> | null; habit_days: LocalDate[] | null; latest_habit_date: LocalDate | null }
+export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; previous_cursor: string | null; binding_id: string | null; canonical_source_ref: ResourceRef | null; positions: LinkState[]; children: (boolean | null)[]; scope_available: boolean; daily_index: DailyIndexResult | null; outline_windows: OutlineWindowSlice[] | null; page_register: PageRegisterResult | null; register_label: {label: string | null; oversized: boolean} | null; outline_filter: OutlineFilterResult | null; work_index: WorkRegisterResult | null; habits: RankedIndexResult<HabitIndexItem> | CapturedIndexResult<HabitIndexItem> | null; mentions: MentionIndexResult | null; habit_days: LocalDate[] | null; latest_habit_date: LocalDate | null }
 export interface CommitFrame { expected_store_revision: Counter; replica_id: string; change: Change; states: MergeResult }
 export type CommitResult = { kind: "committed"; command_seq: Counter; store_revision: Counter } | { kind: "stale"; store_revision: Counter; states: Corpus };
 export interface StateSelection { refs: string[]; link_ids: string[]; anchor_ids: string[]; source_refs: string[] }
