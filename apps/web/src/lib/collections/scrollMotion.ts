@@ -23,7 +23,7 @@ export function writeScrollPosition(port: HTMLElement, top: number, behavior?: S
   }
 }
 
-type ScrollClaim = "wheel" | "key-or-touch" | "incidental";
+type ScrollClaim = "wheel" | "key" | "touch" | "incidental";
 
 const SCROLL_KEYS = new Set(["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", " "]);
 
@@ -70,11 +70,12 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
     if (press !== null || kind === "incidental" && claim !== null && claim.kind !== "incidental") return;
     clearClaim();
     const expire = () => {claim = null;};
-    if (kind !== "incidental") {
-      writes.delete(port);
+    if (kind !== "incidental") writes.delete(port);
+    if (kind === "wheel" || kind === "touch") {
       let frame = requestAnimationFrame(() => {frame = requestAnimationFrame(expire);});
       claim = {kind, cancel: () => cancelAnimationFrame(frame)};
     } else {
+      // Gecko can begin a key’s default smooth scroll after two paint frames.
       const timer = setTimeout(expire, 150);
       claim = {kind, cancel: () => clearTimeout(timer)};
     }
@@ -85,13 +86,13 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
   const key = (event: KeyboardEvent) => {
     if (!event.isTrusted) return;
     arm(!event.defaultPrevented && !event.altKey && !event.ctrlKey && !event.metaKey &&
-      SCROLL_KEYS.has(event.key) && !isEditableTarget(event.target) ? "key-or-touch" : "incidental");
+      SCROLL_KEYS.has(event.key) && !isEditableTarget(event.target) ? "key" : "incidental");
   };
   const incidental = (event: Event) => {
     if (event.isTrusted) arm("incidental");
   };
   const touch = (event: TouchEvent) => {
-    if (event.isTrusted && !event.defaultPrevented && event.touches.length === 1) arm("key-or-touch");
+    if (event.isTrusted && !event.defaultPrevented && event.touches.length === 1) arm("touch");
   };
   const down = (event: PointerEvent) => {
     if (!isScrollportPress(event, port)) {
@@ -131,7 +132,7 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
     if (write?.kind === "smooth") return;
     writes.delete(port);
     if (!moved || clamped && press === null || write?.kind === "instant" && Math.abs(top - write.offset) <= 0.5) return;
-    const gesture = claim?.kind === "wheel" || claim?.kind === "key-or-touch";
+    const gesture = claim !== null && claim.kind !== "incidental";
     const demand = gesture || motion === "travel";
     const incidentalMovement = press === null && claim?.kind === "incidental" && !demand;
     if (gesture) wheelTravel = claim?.kind === "wheel";
