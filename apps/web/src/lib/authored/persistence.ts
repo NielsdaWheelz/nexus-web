@@ -137,7 +137,7 @@ export class Persistence {
       } else {
         const total = Number(record!.total), start = query.start;
         const raw: [string,string,number][] = JSON.parse(String(record!.items));
-        result.outline_filter = {kind: "range", start, total, source_total: total, items: raw.map(([link_id,other_ref,matched]) => ({link_id,other_ref,matched: matched === 1}))};
+        result.outline_filter = {kind: "range", start, total, items: raw.map(([link_id,other_ref,matched]) => ({link_id,other_ref,matched: matched === 1}))};
       }
       return result;
     }

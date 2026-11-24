@@ -65,7 +65,7 @@ export default defineConfig({
             {kind: "page_register", text, at: {kind: "locate", refs: []}, expected_revision: "0"},
           ]),
           register_label: [{kind: "register_label", ref: ""}],
-          outline_filter: ["","words"].map(text => ({kind: "outline_filter", parent_ref: "", text, start: 0, limit: 1, expected_revision: null})),
+          outline_filter: [{kind: "outline_filter", parent_ref: "", text: "words", start: 0, limit: 1, expected_revision: null}],
           daily_index: [{kind: "daily_index"}],
           work_pending: [...workSamples({kind:"work_pending", local_date:workDate}),
             {kind: "work_pending", local_date: workDate, at: {kind: "place", rows: []}, expected_revision: "0"}],

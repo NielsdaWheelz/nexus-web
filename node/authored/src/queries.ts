@@ -459,6 +459,7 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       if (!Number.isSafeInteger(query.start) || query.start < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 2048)
         throw new RangeError("Invalid index range");
       const needle = foldFilterText(query.text.trim());
+      if (needle.length === 0) throw new RangeError("Outline filter requires text");
       const incident = (["a","b"] as const).map(side => {
         const peer = side === "a" ? "b" : "a";
         return `SELECT l.link_id,l.endpoint_${peer} AS other_ref,l.position_${side} AS position FROM links l INDEXED BY links_${side}
@@ -466,8 +467,8 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       }).join(" UNION ALL ");
       return {sql: `WITH incident AS NOT MATERIALIZED (${incident}),slice AS (SELECT link_id,other_ref FROM incident ORDER BY position,link_id LIMIT ?2 OFFSET ?3)
         SELECT (SELECT count(*) FROM incident) AS total,json_group_array(json_array(link_id,other_ref,
-          ${needle ? "EXISTS(SELECT 1 FROM literal_fields f WHERE f.ref=slice.other_ref AND (instr(f.title,?4)>0 OR instr(f.body,?4)>0 OR instr(f.quote,?4)>0))" : "1"})) AS items FROM slice`,
-        params: [query.parent_ref,query.limit,query.start,...needle ? [needle] : []]};
+          EXISTS(SELECT 1 FROM literal_fields f WHERE f.ref=slice.other_ref AND (instr(f.title,?4)>0 OR instr(f.body,?4)>0 OR instr(f.quote,?4)>0)))) AS items FROM slice`,
+        params: [query.parent_ref,query.limit,query.start,needle]};
     }
     case "register_label": return {sql:`WITH entry(name) AS (SELECT CASE kind WHEN 'page' THEN ${PAGE_TITLE_SQL} ELSE ${WORK_LABEL_SQL} END
       FROM resources WHERE ref=? AND visible=1 AND ((kind='page' AND local_date IS NULL) OR kind='note')),
@@ -493,7 +494,7 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
           return {sql: `WITH extent AS (SELECT count(*) AS total ${selected}),
             slice AS (SELECT ${columns} ${selected} ORDER BY ${WORK_CAPTURE_ORDER}
               LIMIT (SELECT CASE WHEN total<=${COMPLETE_REGISTER_ROWS} THEN total ELSE 24 END FROM extent))
-            SELECT json_object('kind','description','total',total,
+            SELECT json_object('kind','description','total',total,'groups',json('[]'),
               'items',json((SELECT json_group_array(json_object(${item})) FROM slice))) AS register FROM extent`, params: []};
         case "range": {
           const {start,limit} = query.at;
@@ -569,8 +570,8 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
         case "describe":
           return {sql: `WITH extent AS (SELECT count(*) AS total ${admitted}),
             slice AS (SELECT i.owner_ref AS ref ${admitted} ORDER BY i.owner_ref
-              LIMIT (SELECT CASE WHEN total<=200 THEN total ELSE 24 END FROM extent))
-            SELECT json_object('kind','description','total',total,
+              LIMIT (SELECT CASE WHEN total<=${COMPLETE_REGISTER_ROWS} THEN total ELSE 24 END FROM extent))
+            SELECT json_object('kind','description','total',total,'groups',json('[]'),
               'items',json((SELECT json_group_array(json_object('ref',ref)) FROM slice))) AS register FROM extent`,
             params: [query.ref]};
         case "range": {

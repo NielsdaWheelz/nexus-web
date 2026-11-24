@@ -35,7 +35,6 @@ import type {OutlinePresentationAllowance} from "./outlinePresentationAllowance"
 import {continuationLink, mergeOutlineWindows, provesEmptyOutline, OutlineViewport, type BranchPart} from "./outlineViewport";
 import type {AnchorGeometry, AnchorGeometryFrame, AnchorPosition} from "@/lib/workspace/paneReturnMemento";
 import type {ScrollMotion} from "@/lib/collections/scrollMotion";
-import {readAuthoredIndex} from "./indexes";
 import {clipboardPlainText, readOutlineClipboard, writeOutlineClipboard, type ClipItem} from "./clipboard";
 
 interface ChildProof {descriptor: string; store_revision: string; available: boolean | null}
@@ -251,9 +250,22 @@ export class OutlineController {
           const cached = rows.get(ref);
           if (cached) return cached;
           const query = {...first, parent_ref: ref, expected_revision: revision};
-          const next = (ref === this.rootRef ? Promise.resolve(head) : store.query(query)).then(async result =>
-            result.store_revision !== revision ? null :
-              (await readAuthoredIndex(store, query, result => result.outline_filter, result, current))?.items ?? null);
+          const next = (ref === this.rootRef ? Promise.resolve(head) : store.query(query)).then(async result => {
+            const first = result.outline_filter;
+            if (result.store_revision !== revision || first?.kind === "changed") return null;
+            if (first?.kind !== "range" || first.start !== 0) throw new Error("Missing outline filter head");
+            const items = [...first.items];
+            while (items.length < first.total) {
+              const page = await store.query({...query, start: items.length});
+              const range = page.outline_filter;
+              if (!current() || page.store_revision !== revision || range?.kind === "changed") return null;
+              if (!range || range.start !== items.length || range.total !== first.total || range.items.length === 0)
+                throw new Error("Incomplete outline filter range");
+              items.push(...range.items);
+            }
+            if (items.length !== first.total) throw new Error("Outline filter exceeds its extent");
+            return current() ? items : null;
+          });
           rows.set(ref, next);
           return next;
         };

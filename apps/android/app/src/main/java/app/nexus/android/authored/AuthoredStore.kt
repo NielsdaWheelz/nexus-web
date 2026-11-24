@@ -491,7 +491,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
                 items.put(JSONObject().put("link_id", row.getString(0)).put("other_ref", row.getString(1)).put("matched", row.getInt(2) == 1))
             }
             val total = record.getInt("total")
-            return result.put(field, JSONObject().put("kind", "range").put("items", items).put("start", query.getInt("start")).put("total", total).put("source_total", record.optInt("source_total", total)))
+            return result.put(field, JSONObject().put("kind", "range").put("items", items).put("start", query.getInt("start")).put("total", total))
         }
         if (kind == "habit_days") {
             val dates = read(0)

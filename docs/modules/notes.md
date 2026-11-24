@@ -687,10 +687,12 @@ menus retain the same native control and focus target. retaining an open empty
 input does not establish child
 availability. they disclose authored local links, excluding relationships
 already traversed by that occurrence. a bounded batched local query proves child
-availability. `outline_filter` observes all adjacent link ids at one revision
-for each disclosed parent. the outline joins them by occurrence path, omits
-traversed links, and keeps matches and ancestors. it seeks by link id to the
-rich window at the selected rank. the local literal fields derive from canonical
+availability. unfiltered outline windows prove sibling count and starting rank
+after traversed-edge omission. the viewport sizes gaps from that count and
+requests rich windows directly at the measured rank. explicit `outline_filter`
+observes all adjacent link ids at one revision for each disclosed parent.
+the outline joins them by occurrence path, omits traversed links, and keeps
+matches and ancestors. the local literal fields derive from canonical
 title, text and quote. explicit filtering also checks disclosed server scopes
 through current admitted labels and quotes. failed scopes keep their paths and
 individual retries. one `outline_windows` query reads a coherent set of bounded raw

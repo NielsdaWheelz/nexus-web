@@ -2,29 +2,10 @@
 /** React reads subscribe to the local account database, including online. */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Intent } from "@nexus/authored/commands";
-import type { AuthoredQuery, IndexRange, QueryResult } from "@nexus/authored/types";
+import type { AuthoredQuery, QueryResult } from "@nexus/authored/types";
 import { useAuthoredStore, useAuthoredAccountId } from "@/lib/authored/provider";
 import { getWritingRuntime, type WritingDocument, type WritingRuntime } from "./runtime";
-import { subscribeAuthoredIndex, type AuthoredIndex, type StructuralQuery } from "./indexes";
 
-export function useAuthoredIndex<Row>(query: StructuralQuery | null, select: (result: QueryResult) => IndexRange<Row> | null) {
-  const store = useAuthoredStore(), account = useAuthoredAccountId();
-  const key = JSON.stringify([account, query]);
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<{key: string; data: AuthoredIndex<Row> | null; error: unknown | null; pending: boolean}>(
-    {key, data: null, error: null, pending: query !== null});
-  useEffect(() => {
-    if (query === null) return;
-    setState(old => ({key, data: old.key === key ? old.data : null, error: null, pending: true}));
-    return subscribeAuthoredIndex(store, query, select,
-      data => setState({key, data, error: null, pending: false}),
-      error => setState(old => ({key, data: old.key === key ? old.data : null, error, pending: false})));
-    // The serialized closed query is its content identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, attempt, store, select]);
-  const retry = useCallback(() => setAttempt(n => n + 1), []);
-  return query !== null && state.key === key ? {...state, retry} : {data: null, error: null, pending: query !== null, retry};
-}
 export function useWritingRuntime(): WritingRuntime {
   const accountId = useAuthoredAccountId();
   return useMemo(() => getWritingRuntime(accountId), [accountId]);
