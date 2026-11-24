@@ -25,6 +25,7 @@ export const WORK_TASK_HISTORY = `${WORK_REGISTER_MEMBERSHIP} AND ${WORK_TASK_DA
 export const WORK_ACTIVE_HABIT = `${WORK_REGISTER_MEMBERSHIP} AND ${WORK_ENABLED} AND ${WORK_KIND}='habit'`;
 export const WORK_DESIGNATED_HABIT = `${WORK_REGISTER_MEMBERSHIP} AND ${WORK_KIND}='habit'`;
 export const WORK_HABIT_HISTORY = `${WORK_REGISTER_MEMBERSHIP} AND ${WORK_HABIT_CHECKS}<>'{}'`;
+export const WORK_HABIT_HISTORY_ONLY = `${WORK_HABIT_HISTORY} AND ${WORK_KIND} IS NOT 'habit'`;
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
 const COMPLETE_REGISTER_ROWS = 200;
 const HIGHLIGHT_TEXT_FIELDS = ["prefix", "quote_exact", "suffix"] as const;
@@ -586,8 +587,8 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       const visible = `${WORK_REGISTER_MEMBERSHIP} AND (${WORK_KIND}='habit' OR ${checked})`;
       const keys = `ref,${WORK_CAPTURE_LAMPORT} AS lamport,${WORK_CAPTURE_REPLICA} AS replica`;
       const members = `FROM (SELECT ${keys} FROM resources INDEXED BY resources_designated_habits WHERE ${WORK_DESIGNATED_HABIT}
-        UNION ALL SELECT ${keys} FROM resources INDEXED BY resources_habit_history
-          WHERE ${WORK_HABIT_HISTORY} AND ${WORK_KIND} IS NOT 'habit' AND ${checked})`;
+        UNION ALL SELECT ${keys} FROM resources INDEXED BY resources_habit_history_only
+          WHERE ${WORK_HABIT_HISTORY_ONLY} AND ${checked})`;
       const order = "lamport,replica,ref";
       const details = `${WORK_LABEL_SQL} AS label,CASE WHEN ${enabled} THEN 'true' ELSE 'false' END AS enabled`;
       const item = "'ref',ref,'label',CASE WHEN length(CAST(json_quote(label) AS BLOB))<=512 THEN label END,'enabled',json(enabled)";
