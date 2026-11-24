@@ -47,7 +47,8 @@ export interface AnchorGeometry {
   layoutReady(): boolean;
   demand(id: string): () => void;
   element(id: string): HTMLElement | null;
-  refreshRange(): void;
+  /** Synchronous refresh for geometry which reads directly from the scrollport. */
+  refreshRange?(): void;
 }
 
 interface Anchor {
@@ -247,7 +248,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
   }
 
   function refreshRanges(port: Scrollport): void {
-    for (const entry of frames(port)) entry.geometry.refreshRange();
+    for (const entry of frames(port)) entry.geometry.refreshRange?.();
   }
 
   /** The memento is the sole pane scroll writer, including logical row positions. */

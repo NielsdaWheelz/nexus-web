@@ -119,8 +119,7 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
       return () => setDemands(previous => {const next = new Map(previous); next.delete(token); return next;});
     },
     element: id => list.current?.querySelector<HTMLElement>(`[data-collection-row-id="${CSS.escape(id)}"]`) ?? null,
-    refreshRange: () => index.getVirtualItems(),
-  }), [index, list]);
+  }), [list]);
   usePaneAnchorGeometry({scope, geometry: windowed ? geometry : null, ready: !windowed || slots.length > 0});
   const viewport = origin !== null && index.range !== null && index.scrollRect !== null
     ? {first: index.range.startIndex, height: index.scrollRect.height} : null;
