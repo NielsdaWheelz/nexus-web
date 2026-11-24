@@ -43,7 +43,7 @@ export interface OutlineRow {
   row_id: string; ref: string | null; link: LinkState | null; parent_id: string | null; parent_ref: string;
   depth: number; branch: OutlineBranch; resource: ResourceProjection | null; kind: "body" | "title" | "reference";
   children: ChildProof | null; open: boolean; terminal: boolean; root: boolean; seed: boolean;
-  gap?: "before" | "after"; gapHeight?: number;
+  gap?: "before" | "after"; gapHeight?: number; oversized?: boolean;
   origin: unknown;
 }
 export interface BranchRead {pending: boolean; error: unknown | null; occurrence: object | null; retry(): void}
@@ -1002,14 +1002,14 @@ export class OutlineController {
   private refs(windows?: ReadonlyMap<string, OutlineWindow>): Set<string> {
     const current = windows ?? this.reservedWindows ?? this.windows;
     return new Set([...this.binding.capturedDocuments().map(document => document.ref), ...[...this.documents].filter(([, held]) => held.captureBytes > 0).map(([ref]) => ref), ...(this.rootField ? [this.rootRef] : []), ...[...current.values()].flatMap(window => [...window.editableRefs]),
-      ...[...this.pending.retainedRefs()].filter(ref => /^(note_block|page):/u.test(ref)), ...[...this.protectedRows()].flatMap(id => {const ref = this.rows.get(id)?.ref; return ref && /^(note_block|page):/u.test(ref) ? [ref] : [];}),
+      ...[...this.pending.retainedRefs()].filter(ref => /^(note_block|page):/u.test(ref)), ...[...this.protectedRows()].flatMap(id => {const row = this.rows.get(id); return row?.ref && !row.oversized && /^(note_block|page):/u.test(row.ref) ? [row.ref] : [];}),
       ...[...this.annotations.values()].flatMap(value => value.attachment && value.document ? [value.document.ref] : []), ...(this.preparing ? [this.preparing.ref] : []),
       ...this.history.retainedHistoryDocuments().map(document => document.ref), ...(windows === undefined ? [...this.documents.keys(), ...this.settlingRefs] : [])]);
   }
   private baselineRefs(windows: ReadonlyMap<string, OutlineWindow>): Map<string, string> {
     const fields = new Map<string, string>();
     for (const [parent, window] of windows) for (const item of window.rows) {
-      if (!item.link || item.resource.kind !== "note" && item.resource.kind !== "page" ||
+      if (!item.link || window.oversizedRefs.has(item.resource.ref) || item.resource.kind !== "note" && item.resource.kind !== "page" ||
         classifyOutlineOccurrence({branch: window.branch, targetRef: item.resource.ref, edgeId: item.link.link_id}).kind !== "resource") continue;
       fields.set(this.id(parent, item.link.link_id), item.resource.ref);
     }
@@ -1293,7 +1293,7 @@ export class OutlineController {
     }
   }
   private editableReady(row: OutlineRow): boolean {return row.kind !== "reference" && (row.seed ? this.seedMembership === null : this.pending.fields.get(row.row_id)?.pending === true || row.ref !== null && this.documents.has(row.ref));}
-  private canEditReference(row: OutlineRow): boolean {return this.rootField !== undefined && !this.filter.trim() && row.kind === "reference" && !row.gap && row.ref !== null && row.link !== null && !this.pending.fields.get(row.row_id)?.hidden;}
+  private canEditReference(row: OutlineRow): boolean {return this.rootField !== undefined && !this.filter.trim() && row.kind === "reference" && !row.gap && !row.oversized && row.ref !== null && row.link !== null && !this.pending.fields.get(row.row_id)?.hidden;}
   private activateReference(row_id: string): void {
     const row = this.rows.get(row_id);
     if (!row || !this.canEditReference(row) || !this.activeInput()?.settleNativeInput() || !this.handle?.canArrange()) return;
@@ -1422,8 +1422,9 @@ export class OutlineController {
         const override = this.pending.fields.get(id);
         if (override && override.parent_id !== parent_id) {id = crypto.randomUUID(); this.identities.set(`${parent_id}/${link.link_id}`, {id, origin: this.history.typingOrigin()});}
         if (moving) this.identities.set(`${parent_id}/${link.link_id}`, {id, origin: moving.origin});
-        const row: OutlineRow = {row_id: id, ref: item.resource.ref, link, parent_id, parent_ref: ref, depth, branch, resource: item.resource,
-          kind: terminal || item.resource.kind !== "note" && item.resource.kind !== "page" ? "reference" : item.resource.kind === "page" ? "title" : "body",
+        const oversized = window!.oversizedRefs.has(item.resource.ref);
+        const row: OutlineRow = {row_id: id, ref: item.resource.ref, link, parent_id, parent_ref: ref, depth, branch, resource: item.resource, oversized,
+          kind: oversized || terminal || item.resource.kind !== "note" && item.resource.kind !== "page" ? "reference" : item.resource.kind === "page" ? "title" : "body",
           children: null, open: this.opened.has(id), terminal, root: false, seed: false, origin: this.origin(id)};
         row.children = this.childProof(row, window);
         return row;
@@ -1436,7 +1437,7 @@ export class OutlineController {
         const after = pending.after_id === null ? siblings.length - 1 : siblings.findIndex(row => row.row_id === pending.after_id);
         const before = pending.before_id ? siblings.findIndex(row => row.row_id === pending.before_id) : -1;
         siblings.splice(before >= 0 ? before : after >= 0 ? after + 1 : siblings.length, 0, {row_id: pending.row_id, ref: pending.ref, link: pending.link, parent_id, parent_ref: pending.parent_ref, depth, branch,
-          resource: pending.resource ?? existing?.resource ?? null, kind: pending.kind, children: existing?.children ?? null, open: this.opened.has(pending.row_id), terminal: existing?.terminal ?? false, root: false, seed: false, origin: pending.origin});
+          resource: pending.resource ?? existing?.resource ?? null, kind: existing?.oversized ? "reference" : pending.kind, oversized: existing?.oversized, children: existing?.children ?? null, open: this.opened.has(pending.row_id), terminal: existing?.terminal ?? false, root: false, seed: false, origin: pending.origin});
       }
       if ([...this.pending.fields.values()].some(row => row.parent_id === parent_id && row.relocating)) {
         const rank = new Map(this.pending.order.map((id, index) => [id, index]));
@@ -2202,10 +2203,10 @@ export class OutlineController {
   chrome(): ReadonlyMap<string, OutlineRowChrome> {
     return new Map([...this.rows.values()].filter(row => !row.root && !row.seed && !row.gap).map(row => [row.row_id, {row_id: row.row_id, ref: row.ref, resource: row.resource, kind: row.kind === "body" ? "note" : row.kind,
       depth: row.depth, parent_id: row.parent_id, label: this.label(row), href: this.href(row), mirrors: this.mirrors(row),
-      parentLabel: this.labelOf(row.parent_id), day: this.day(row),
+      parentLabel: this.labelOf(row.parent_id), day: this.day(row), oversized: row.oversized === true,
       childrenAvailable: !row.terminal && (row.children?.available === true || this.requests.has(row.row_id)), read: this.branchRead(row.row_id), open: row.open, terminal: row.terminal, selected: this.selected.has(row.row_id),
       workOwners: owners => this.workOwners.set(row.row_id, owners),
-      annotation: row.resource?.kind === "highlight" && !row.terminal && !this.filter.trim() ? this.annotation(row.row_id) : null,
+      annotation: row.resource?.kind === "highlight" && !row.oversized && !row.terminal && !this.filter.trim() ? this.annotation(row.row_id) : null,
       toggle: () => {this.toggle(row.row_id); this.focused = false; this.notify();}, select: () => this.select(row.row_id),
       extend: this.blockRange ? () => this.select(row.row_id, true) : null, unlink: () => this.unlink(row.row_id), reveal: () => {
         if (row.ref) {const ancestor = row.branch.ancestors.get(row.ref); if (ancestor?.kind === "root" && this.rootField) void this.focusRoot();
@@ -2236,6 +2237,7 @@ export class OutlineController {
   /** Visible links on the row's resource across the loaded windows and the pending fields; 1 when unknown. */
   private mirrors(row: OutlineRow): number {return row.ref ? Math.max(1, this.incidence.get(row.ref)?.size ?? 0) : 1;}
   private label(row: OutlineRow): string {
+    if (row.oversized) return "item too large to display";
     if (row.kind !== "reference" && (this.documents.has(row.ref ?? "") || this.pending.fields.get(row.row_id)?.pending)) {
       const text = clipboardPlainText(noteBodySchema.nodeFromJSON(this.body(row.row_id).body_pm_json).content).split("\n")[0]?.trim();
       if (text) return text;

@@ -19,21 +19,24 @@ import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFram
 import type { Database } from "./sqlite";
 import { SCOPE_SQL, type ScopeInputsPage, type ScopeProgress, type ScopeTextPage, type ScopeNormalizationInterval, type ScopeRawChunk, type ScopeNormalizationObservation, type NormalizedScopeChunk } from "@nexus/authored/scope";
 
-function decodeOutlineWindow(raw: Record<string, unknown>[]): OutlineWindowSlice {
+export function decodeOutlineWindow(raw: Record<string, unknown>[]): OutlineWindowSlice {
   const resources = new Map<string, ResourceProjection>();
+  const oversized_refs: string[] = [];
+  const value = <T,>(record: Record<string, unknown>) => (typeof record.value_json === "string" ? JSON.parse(record.value_json) : record.value_json) as T;
   for (const record of raw) if (record.part === "resource") {
-    const resource: ResourceProjection = JSON.parse(String(record.value_json));
+    const resource = value<ResourceProjection>(record);
     resources.set(resource.ref, resource);
+    if (record.oversized === true) oversized_refs.push(resource.ref);
   }
   const meta = raw.find(record => record.part === "meta");
   if (!meta) throw new Error("outline window metadata is missing");
   const rows: QueryResult["rows"] = [], children: QueryResult["children"] = [], rawRefs = new Set<string>();
-  const proof: OutlineWindowProof = {resources: [], before: null, after: null, tail: null};
+  const proof: OutlineWindowProof = {resources: [], oversized_refs, before: null, after: null, tail: null};
   for (const record of raw) {
     if (record.part === "resource" || record.part === "meta") continue;
     const resource = resources.get(String(record.ref));
     if (!resource) throw new Error("outline edge peer is missing from its proven revision");
-    const link: LinkState = JSON.parse(String(record.value_json));
+    const link = value<LinkState>(record);
     if (record.part === "raw") {
       rows.push({resource, link, match_text: null, activation_ref: null, matched_field: null, activation_field: null}); rawRefs.add(resource.ref);
       children.push(record.child_available === null ? null : Number(record.child_available) === 1);

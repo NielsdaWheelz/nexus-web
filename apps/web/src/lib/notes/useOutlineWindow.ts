@@ -20,6 +20,7 @@ export interface OutlineWindow {
   resources: ReadonlyMap<string, ResourceProjection>;
   rootResource: ResourceProjection | null;
   editableRefs: ReadonlySet<string>;
+  oversizedRefs: ReadonlySet<string>;
 }
 type OutlineQuery = Omit<Extract<AuthoredQuery, {kind: "outline_windows"}>, "kind">;
 export function useOutlineWindows(query: OutlineQuery, branch: OutlineBranch, runtime: WritingRuntime | null) {
@@ -42,6 +43,7 @@ export function projectOutlineWindow(result: QueryResult, ref: string, branch: O
   if (!slice) throw new Error("outline window slice is missing");
   const data = {store_revision: result.store_revision, scope_available: result.scope_available, ...slice};
   const proof = slice.proof;
+  const oversizedRefs = new Set(proof.oversized_refs);
   if (data.children.length !== data.rows.length) throw new Error("outline availability result length mismatch");
   const captured = branch;
   const resources = new Map(data.rows.map(row => [row.resource.ref, row.resource]));
@@ -60,7 +62,7 @@ export function projectOutlineWindow(result: QueryResult, ref: string, branch: O
   });
   const childAvailability = new Map(rows.map(row => [row.link!.link_id, rawChildren.get(row.link!.link_id)!]));
   const editableRefs = new Set([...rows.map(row => ({link: row.link!, resource: row.resource})), ...edges.filter((edge): edge is OutlineEdge => edge !== null)]
-    .filter(({link, resource}) => (resource.kind === "note" || resource.kind === "page") && classifyOutlineOccurrence({branch: captured, targetRef: resource.ref, edgeId: link.link_id}).kind === "resource").map(({resource}) => resource.ref));
+    .filter(({link, resource}) => !oversizedRefs.has(resource.ref) && (resource.kind === "note" || resource.kind === "page") && classifyOutlineOccurrence({branch: captured, targetRef: resource.ref, edgeId: link.link_id}).kind === "resource").map(({resource}) => resource.ref));
   return {ref, branch: captured, data, rows, beforeEdge: edges[0]!, afterEdge: edges[1]!, tailEdge: edges[2]!,
-    childAvailability, resources, rootResource: resources.get(ref) ?? null, editableRefs};
+    childAvailability, resources, rootResource: resources.get(ref) ?? null, editableRefs, oversizedRefs};
 }

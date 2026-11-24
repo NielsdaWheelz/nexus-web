@@ -4,9 +4,9 @@ import { bindingQueries, changesDailyIndex, excerptQuery, searchQuery, sourceAli
 import { decodeBytes } from "@nexus/authored/documents";
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
-import { FORMAT_REVISION, type AuthoredStore, type Change, type FeedChange, type MergeResult, type ReplicaState, type StateSelection, type QueryResult, type SyncFailure, type SyncStatus } from "@nexus/authored/types";
+import { FORMAT_REVISION, type AuthoredStore, type Corpus, type Change, type FeedChange, type MergeResult, type ReplicaState, type StateSelection, type QueryResult, type OutlineWindowSlice, type SyncFailure, type SyncStatus } from "@nexus/authored/types";
 import type { ScopeInputsPage, ScopeProgress, ScopeTextPage, ScopeNormalizationInterval, ScopeRawChunk, ScopeNormalizationObservation, NormalizedScopeChunk } from "@nexus/authored/scope";
-import { selectionFor } from "./persistence";
+import { decodeOutlineWindow, selectionFor } from "./persistence";
 import { nativeQueryPlans, nativeSearchPlan } from "./nativeQuery";
 import { Sync } from "./sync";
 import { scheduleReplication } from "./schedule";
@@ -157,6 +157,33 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   const statuses = new Set<(status: SyncStatus, detail: string | null, failure: SyncFailure) => void>();
   const changed = (corpusChanged = false, dailyIndexChanged = false) => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.detail, sync.facts.failure); for (const listener of queries) listener(corpusChanged, dailyIndexChanged); };
   const queryLocal = async (query: Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult> => {
+    if (query.kind === "outline_windows") {
+      const plans = await nativeQueryPlans(query);
+      for (;;) {
+        const windows: OutlineWindowSlice[] = [];
+        let revision: string | null = null;
+        for (const plan of plans) {
+          const records: Record<string, unknown>[] = [];
+          let start: number | null = 0;
+          while (start !== null) {
+            const part: {revision: string; records?: Record<string, unknown>[]; next: number | null} =
+              await call("outline_read", {plan, start, revision});
+            if (revision !== null && part.revision !== revision) break;
+            revision = part.revision;
+            records.push(...part.records!);
+            start = part.next;
+          }
+          if (start !== null) break;
+          windows.push(decodeOutlineWindow(records));
+        }
+        if (windows.length === plans.length && revision !== null) return {
+          store_revision: revision, rows: [], children: [], positions: [], binding_id: null, scope_available: true,
+          next_cursor: null, previous_cursor: null, canonical_source_ref: null, outline_windows: windows,
+          page_register: null, page_label: null, outline_filter: null, work_index: null, mentions: null,
+          habit_days: null, latest_habit_date: null, daily_index: null,
+        };
+      }
+    }
     if (query.kind !== "search" && query.kind !== "search_preview" && query.kind !== "search_admission" && query.kind !== "source_alias" && query.kind !== "excerpt") {
       const plans = await nativeQueryPlans(query);
       for (;;) {
@@ -294,7 +321,29 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       if (signal.aborted) { aborted(); return; }
       queries.add(check); closedWaiters.add(aborted); signal.addEventListener("abort", aborted, { once: true }); check();
     }),
-    readSnapshot: selection => serialize(() => call("read_snapshot", { selection })),
+    readSnapshot: selection => serialize(async () => {
+      type StateRecord = {[K in keyof Corpus]: {kind: K; value: Corpus[K][number]}}[keyof Corpus];
+      for (;;) {
+        const states: Corpus = {resources: [], links: [], passages: [], source_stubs: []};
+        let replica: ReplicaState | null = null, start: number | null = 0;
+        while (start !== null) {
+          const part: {replica: ReplicaState; records?: StateRecord[]; next: number | null} =
+            await call("read_snapshot", {selection, start, revision: replica?.store_revision ?? null});
+          if (replica !== null && replica.store_revision !== part.replica.store_revision) break;
+          replica = part.replica;
+          for (const record of part.records!) {
+            switch (record.kind) {
+              case "resources": states.resources.push(record.value); break;
+              case "links": states.links.push(record.value); break;
+              case "passages": states.passages.push(record.value); break;
+              case "source_stubs": states.source_stubs.push(record.value); break;
+            }
+          }
+          start = part.next;
+        }
+        if (start === null && replica !== null) return {replica, states};
+      }
+    }),
     readReplica: () => serialize(persistence.replica),
     readStates: selection => serialize(() => call("states", { selection })),
     query: query => serialize(() => queryLocal(query)),

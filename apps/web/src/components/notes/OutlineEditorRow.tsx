@@ -103,6 +103,7 @@ export interface OutlineRowChrome {
   read: BranchRead;
   open: boolean;
   terminal: boolean;
+  oversized: boolean;
   selected: boolean;
   /** visible links on the row's resource; 1 when unknown. */
   mirrors: number;
@@ -127,8 +128,8 @@ export default function OutlineEditorRows({mounts, rows, history}: {mounts: read
   // A node view can unmount while its row stays in the session. The admitted rows own the
   // source set, so scrolling past a citation does not by itself restart its subscription.
   const citations = new Map<string, Citation[]>();
-  for (const {resource} of rows.values()) {
-    if (resource?.kind === "highlight" && resource.source_ref !== null) citations.set(resource.source_ref, []);
+  for (const {resource, oversized} of rows.values()) {
+    if (!oversized && resource?.kind === "highlight" && resource.source_ref !== null) citations.set(resource.source_ref, []);
   }
   const portals = mounts.flatMap(mount => {
     const row = rows.get(mount.row_id);
@@ -196,16 +197,16 @@ export default function OutlineEditorRows({mounts, rows, history}: {mounts: read
       </span> : null}
       <AuthoredReadFailure {...row.read} noun="linked items"/>
     </>;
-    if (row.kind === "reference" && resource?.kind === "highlight" && resource.source_ref !== null) {
+    if (!row.oversized && row.kind === "reference" && resource?.kind === "highlight" && resource.source_ref !== null) {
       const locator = resource.selection?.locator;
       const citation = {mount, page: locator?.type === "pdf_page_geometry" ? locator.page_number : null};
       citations.get(resource.source_ref)!.push(citation);
     }
     return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(disclose, mount.disclose, `${row.row_id}:disclose`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),
       ...(row.kind === "reference" && row.ref !== null ? [createPortal(<>
-        {resource?.kind === "highlight" ? <div className={styles.excerpt}><FullResourceBody item={authoredItem(resource, null, row.href)}/></div> : resource?.excerpt ? <FullResourceBody item={authoredItem(resource, null, row.href)} /> : row.href ? <a href={row.href} data-workspace-rich-target="true" onClick={event => activateTargetLink({event, runtime, target: {href: row.href!, labelHint: row.label}})}>{row.label}</a> : row.label}
+        {!row.oversized && resource?.kind === "highlight" ? <div className={styles.excerpt}><FullResourceBody item={authoredItem(resource, null, row.href)}/></div> : resource?.excerpt ? <FullResourceBody item={authoredItem(resource, null, row.href)} /> : row.href ? <a href={row.href} data-workspace-rich-target="true" onClick={event => activateTargetLink({event, runtime, target: {href: row.href!, labelHint: row.label}})}>{row.label}</a> : row.label}
         {scheme === "media" ? <EpisodeBibliography mediaId={parsed!.id} returnFocus={() => mount.leading.querySelector<HTMLElement>("[data-row-focusable]")}/> : null}
-      </>, mount.presentation, `${row.row_id}:content`), ...(resource?.kind === "highlight" ? [createPortal(<HighlightAnnotation highlightRef={resource.ref} resource={resource} occurrenceKey={row.row_id} editable={row.annotation !== null} outline={row.annotation} onWorkOwners={row.workOwners}/>, mount.annotation, `${row.row_id}:annotation`)] : [])] : [])];
+      </>, mount.presentation, `${row.row_id}:content`), ...(!row.oversized && resource?.kind === "highlight" ? [createPortal(<HighlightAnnotation highlightRef={resource.ref} resource={resource} occurrenceKey={row.row_id} editable={row.annotation !== null} outline={row.annotation} onWorkOwners={row.workOwners}/>, mount.annotation, `${row.row_id}:annotation`)] : [])] : [])];
   });
   const sources = [...citations.keys()].sort();
   const batches = [];

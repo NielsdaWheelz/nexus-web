@@ -92,7 +92,7 @@ export type PositionQuery =
 export interface OutlineChildrenOccurrence { refs: ResourceRef[]; excluded_link_ids: string[] }
 /** Raw rows own their projections; this proof adds only the root and missing
  * boundary peers. Every field belongs to the same serialized SQL read. */
-export interface OutlineWindowProof { resources: ResourceProjection[]; before: LinkState | null; after: LinkState | null; tail: LinkState | null }
+export interface OutlineWindowProof { resources: ResourceProjection[]; oversized_refs: ResourceRef[]; before: LinkState | null; after: LinkState | null; tail: LinkState | null }
 export interface DailyIndexEntry { local_date: string; ref: ResourceRef | null }
 /** Structural rows contain occurrence identity and bounded presentation. A missing label is resolved only for a mounted row. */
 export interface WorkIndexItem {ref: ResourceRef; label: string | null; work: WorkView}

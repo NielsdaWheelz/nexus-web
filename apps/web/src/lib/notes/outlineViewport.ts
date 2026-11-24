@@ -36,6 +36,7 @@ export function mergeOutlineWindows(windows: readonly OutlineWindow[]): OutlineW
     throw new Error("outline windows must share one branch and revision");
   const resources = new Map(windows.flatMap(window => [...window.resources]));
   const childAvailability = new Map(windows.flatMap(window => [...window.childAvailability]));
+  const oversizedRefs = new Set(windows.flatMap(window => [...window.oversizedRefs]));
   const rows = [...new Map(windows.flatMap(window => window.rows.map(row => [row.link!.link_id, row] as const))).values()]
     .sort((a, b) => ordered({link: a.link!.link_id, position: position(a.link!, first.ref)}, {link: b.link!.link_id, position: position(b.link!, first.ref)}));
   const parts = [...windows].sort((a, b) => {
@@ -43,11 +44,11 @@ export function mergeOutlineWindows(windows: readonly OutlineWindow[]): OutlineW
     return left && right ? ordered({link: left.link_id, position: position(left, first.ref)}, {link: right.link_id, position: position(right, first.ref)}) : 0;
   });
   const head = parts[0]!, tail = parts.at(-1)!;
-  return {...first, rows, resources, childAvailability, editableRefs: new Set(windows.flatMap(window => [...window.editableRefs])),
+  return {...first, rows, resources, childAvailability, oversizedRefs, editableRefs: new Set(windows.flatMap(window => [...window.editableRefs])),
     beforeEdge: head.beforeEdge, afterEdge: tail.afterEdge, tailEdge: tail.tailEdge,
     data: {...first.data, rows, children: rows.map(row => childAvailability.get(row.link!.link_id) ?? null),
       previous_cursor: head.data.previous_cursor, next_cursor: tail.data.next_cursor,
-      proof: {...first.data.proof, before: head.beforeEdge?.link ?? null, after: tail.afterEdge?.link ?? null, tail: tail.tailEdge?.link ?? null, resources: [...resources.values()]}}};
+      proof: {...first.data.proof, before: head.beforeEdge?.link ?? null, after: tail.afterEdge?.link ?? null, tail: tail.tailEdge?.link ?? null, resources: [...resources.values()], oversized_refs: [...oversizedRefs]}}};
 }
 
 export class OutlineViewport {

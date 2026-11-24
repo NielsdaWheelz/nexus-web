@@ -698,14 +698,13 @@ it never materializes the complete incident graph. raw cursors and child proofs
 precede traversal omission; neighbors surround the first and last remaining
 rows, while the absolute tail excludes only the entering relationship. full
 resource projections retain literal rendering, filtering and copy behavior.
-the native bridge's existing 16 mib aggregate output cap also applies to this
-complete set. an extreme set may fail where separate reads previously
-fit; the existing read error and explicit retry retain writing without truncating,
-shrinking or partially publishing the proof. the root admits and retains all
-note/title documents together. its admission snapshot also supplies the actual
-initial note/page state for missing runtime documents. the existing per-ref
-reservation wins for live, loading and prepared documents; supplied state never
-replaces them. absent states retain ordinary loading and latent-page preludes.
+android partitions outline records and their document admission snapshot into
+byte-bounded native results at one store revision. a changed revision discards
+the incomplete observation. an individual projection too large for one transfer
+keeps its link, position and child proof and reports a failure on its row. the
+root admits the remaining note/title documents together from the admission
+snapshot. the existing per-ref reservation wins for live, loading and prepared
+documents. absent states retain ordinary loading and latent-page preludes.
 newer subscriptions merge through the existing initial-revision catch-up.
 graph proofs share a store revision; unknown data
 never means absent. first entry waits for
