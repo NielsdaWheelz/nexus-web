@@ -12,16 +12,16 @@ import type { OutlineHistory } from "@/lib/notes/structure";
 import { WorkHistoryContext, workCommand } from "@/lib/notes/work";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import {PaneRefreshAnchor, usePaneIndexRevision} from "@/lib/workspace/paneReturnMemento";
-import {useWorkRegister} from "./workRegister";
+import type { useWorkRegister } from "./workRegister";
 import styles from "./dailyWork.module.css";
 
 /** Ordinary batches remain a run-in line. Large days have seekable ranks in the journal's port. */
-export default function CompletedWork({date}:{date:string}) {
-  const work = useWorkRegister("work_completed", date);
+export default function CompletedWork({date,work}:{date:string; work:ReturnType<typeof useWorkRegister>}) {
   const history = useContext(WorkHistoryContext);
   const presentation = work.presentation;
-  usePaneIndexRevision(`completed:${date}`, presentation?.revision ?? null, presentation !== null);
-  if (!history || (presentation?.count ?? 0) === 0 && work.read.error === null && work.error === null) return null;
+  usePaneIndexRevision(`completed:${date}`, presentation?.revision ?? null,
+    presentation !== null || work.error !== null || work.read.error !== null);
+  if (!history || (presentation?.count ?? 0) === 0) return null;
   return <CompletedLine date={date} work={work} history={history} />;
 }
 
@@ -44,11 +44,9 @@ function CompletedLine({date,work,history}:{date:string; work:ReturnType<typeof 
   const layout = useMemo(() => ({read: work.read.data, windowed: index.windowed}), [work.read.data, index.windowed]);
   if (failure) throw failure.error;
   const day = formatDay(date, today);
-  const read = work.read.error !== null ? work.read : {error:work.error, retry:work.retry};
   return <PaneRefreshAnchor identity={scope} value={layout} ready={work.revision !== null}>
     <section ref={root} className={styles.completed} aria-label={`completed on ${day}`} data-pane-return-scope={scope}>
-      <AuthoredReadFailure {...read} noun="completed work" />
-      {(work.presentation?.count ?? 0) === 0 ? null : <div>
+      <div>
         <span className={styles.completedLabel}>completed</span>
         <ul ref={list} className={index.windowed ? styles.completedWindow : styles.completedList} aria-label={`completed work on ${day}`}
           style={index.windowed ? {height:index.height} : undefined}
@@ -66,7 +64,7 @@ function CompletedLine({date,work,history}:{date:string; work:ReturnType<typeof 
             </li>;
           })}
         </ul>
-      </div>}
+      </div>
     </section>
   </PaneRefreshAnchor>;
 }

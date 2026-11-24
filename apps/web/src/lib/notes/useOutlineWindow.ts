@@ -7,17 +7,15 @@ import {classifyOutlineOccurrence, type OutlineBranch} from "@/lib/resources/out
 import {useAuthoredQuery} from "./hooks";
 import type {WritingRuntime} from "./runtime";
 
-export interface OutlineEdge {link: LinkState; resource: ResourceProjection}
 export interface OutlineWindow {
   readonly ref: string;
   readonly branch: OutlineBranch;
-  data: Pick<QueryResult, "store_revision" | "scope_available"> & OutlineWindowSlice;
+  data: Pick<QueryResult, "store_revision" | "scope_available"> & Pick<OutlineWindowSlice, "total" | "start_rank" | "next_cursor" | "previous_cursor"> & {hasRawRows: boolean};
   rows: QueryRow[];
-  beforeEdge: OutlineEdge | null;
-  afterEdge: OutlineEdge | null;
-  tailEdge: OutlineEdge | null;
+  beforeEdge: LinkState | null;
+  afterEdge: LinkState | null;
+  tailEdge: LinkState | null;
   childAvailability: ReadonlyMap<string, boolean | null>;
-  resources: ReadonlyMap<string, ResourceProjection>;
   rootResource: ResourceProjection | null;
   editableRefs: ReadonlySet<string>;
   oversizedRefs: ReadonlySet<string>;
@@ -41,30 +39,25 @@ export function projectOutlineWindow(result: QueryResult, ref: string, branch: O
   // justify-service-invariant-check: the closed query owns slice completeness and raw-row alignment.
   const slice = result.outline_windows?.[index];
   if (!slice) throw new Error("outline window slice is missing");
-  const data = {store_revision: result.store_revision, scope_available: result.scope_available, ...slice};
-  const proof = slice.proof;
+  const {proof, total, start_rank, next_cursor, previous_cursor} = slice;
+  if (slice.children.length !== slice.rows.length) throw new Error("outline availability result length mismatch");
+  const rows: QueryRow[] = [];
+  const childAvailability = new Map<string, boolean | null>();
+  const editableRefs = new Set<string>();
   const oversizedRefs = new Set(proof.oversized_refs);
-  if (data.children.length !== data.rows.length) throw new Error("outline availability result length mismatch");
-  const captured = branch;
-  const resources = new Map(data.rows.map(row => [row.resource.ref, row.resource]));
-  for (const resource of proof.resources) resources.set(resource.ref, resource);
-  const rawChildren = new Map<string, boolean | null>();
-  for (const [index, row] of data.rows.entries()) {
+  for (const [index, row] of slice.rows.entries()) {
     if (row.link === null) throw new Error("outline row is missing its link");
-    rawChildren.set(row.link.link_id, data.children[index]!);
+    const kind = classifyOutlineOccurrence({branch, targetRef: row.resource.ref, edgeId: row.link.link_id}).kind;
+    if (kind === "omit") continue;
+    rows.push(row);
+    childAvailability.set(row.link.link_id, slice.children[index]!);
+    if (kind === "resource" && (row.resource.kind === "note" || row.resource.kind === "page") && !oversizedRefs.has(row.resource.ref))
+      editableRefs.add(row.resource.ref);
   }
-  const rows = data.rows.filter(row => classifyOutlineOccurrence({branch: captured, targetRef: row.resource.ref, edgeId: row.link!.link_id}).kind !== "omit");
-  if (data.start_rank === null ? rows.length !== 0 : rows.length === 0 || data.start_rank + rows.length > data.total)
+  if (start_rank === null ? rows.length !== 0 : rows.length === 0 || start_rank + rows.length > total)
     throw new Error("outline slice ranks disagree with admitted rows");
-  const edges = [proof.before, proof.after, proof.tail].map(link => {
-    if (!link) return null;
-    const resource = resources.get(link.endpoint_a === ref ? link.endpoint_b : link.endpoint_a);
-    if (!resource) throw new Error("outline neighbour is missing from its proven revision");
-    return {link, resource};
-  });
-  const childAvailability = new Map(rows.map(row => [row.link!.link_id, rawChildren.get(row.link!.link_id)!]));
-  const editableRefs = new Set([...rows.map(row => ({link: row.link!, resource: row.resource})), ...edges.filter((edge): edge is OutlineEdge => edge !== null)]
-    .filter(({link, resource}) => !oversizedRefs.has(resource.ref) && (resource.kind === "note" || resource.kind === "page") && classifyOutlineOccurrence({branch: captured, targetRef: resource.ref, edgeId: link.link_id}).kind === "resource").map(({resource}) => resource.ref));
-  return {ref, branch: captured, data, rows, beforeEdge: edges[0]!, afterEdge: edges[1]!, tailEdge: edges[2]!,
-    childAvailability, resources, rootResource: resources.get(ref) ?? null, editableRefs, oversizedRefs};
+  const data = {store_revision: result.store_revision, scope_available: result.scope_available, total, start_rank,
+    next_cursor, previous_cursor, hasRawRows: slice.rows.length > 0};
+  return {ref, branch, data, rows, beforeEdge: proof.before, afterEdge: proof.after, tailEdge: proof.tail,
+    childAvailability, rootResource: proof.root, editableRefs, oversizedRefs};
 }

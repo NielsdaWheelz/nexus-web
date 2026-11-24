@@ -4,7 +4,7 @@
  * return separate literal evidence without rewriting canonical resource content.
  * Adjacency uses the exact (position,link_id) tuple, including prefix/equal keys. */
 import { excerptTextParts, excerptView, scopeExcerpt, type ExcerptScope, type ExcerptNode } from "./excerpt.ts";
-import { AUTHORED_INDEX_RANGE, type AuthoredQuery, type CapturedIndexDemand, type LinkState, type OutlineRange, type PassageState, type QueryResult, type QueryRow, type ResourceProjection, type SelectionCapture, type ResourceState, type PassageCapture } from "./types.ts";
+import { AUTHORED_INDEX_RANGE, type AuthoredQuery, type CapturedIndexDemand, type Change, type LinkState, type OutlineRange, type PassageState, type QueryResult, type QueryRow, type ResourceProjection, type SelectionCapture, type ResourceState, type PassageCapture } from "./types.ts";
 import { normalizeQuote, validateLocalDate } from "./identity.ts";
 import { foldFilterText } from "./filter.ts";
 import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, SEARCH_FAMILIES, type ScopeInterval, type ScopeReading } from "./scope.ts";
@@ -402,7 +402,7 @@ function outlineWindow(query: Omit<Extract<AuthoredQuery, {kind: "outline_window
       UNION ALL SELECT 'before',link_id,position,position_json,other_ref,NULL FROM before_edge
       UNION ALL SELECT 'after',link_id,position,position_json,other_ref,NULL FROM after_edge
       UNION ALL SELECT 'tail',link_id,position,position_json,other_ref,NULL FROM tail_edge),
-    wanted(ref) AS(SELECT ?1 UNION SELECT other_ref FROM edges),
+    wanted(ref) AS(SELECT ?1 UNION SELECT other_ref FROM page_links),
     readable AS NOT MATERIALIZED(${BOUNDED_READABLE})
     SELECT 'resource' AS part,r.ref,r.projection_json AS value_json,NULL AS child_available,
       NULL AS next_cursor,NULL AS previous_cursor,NULL AS position,NULL AS link_id,NULL AS total,NULL AS start_rank FROM readable r
@@ -415,6 +415,23 @@ function outlineWindow(query: Omit<Extract<AuthoredQuery, {kind: "outline_window
     ORDER BY part,position,link_id,ref`,
     params: [query.ref, query.anchor_link_id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit, JSON.stringify(query.excluded_link_ids), query.entering_link_id,
       ...(query.start_rank === null ? [] : [query.start_rank])]};
+}
+
+/** A resource read depends only on its own row in the three readable families. */
+export function changedResourceRefs(changes: readonly Change[]): string[] {
+  const refs = new Set<string>();
+  for (const change of changes) {
+    for (const resource of change.resources) refs.add(resource.ref);
+    for (const source of change.source_stubs) refs.add(source.source_ref);
+    for (const passage of change.passages) refs.add(`passage_anchor:${passage.anchor_id}`);
+  }
+  return [...refs];
+}
+
+// Aggregate and rank observations share the store revision. Point reads can
+// skip mutations proved to concern other resources.
+export function invalidatesQuery(query: AuthoredQuery, corpusChanged: boolean, resourceRefs: readonly string[] | null): boolean {
+  return corpusChanged && (query.kind !== "resource" || resourceRefs === null || resourceRefs.includes(query.ref));
 }
 
 /** Every compiled slice is executed in one host store turn, under one revision. */

@@ -10,7 +10,7 @@ import { prepareChange, createNoteIntent, foldPageCredit, type Intent, type Comm
 import { decodeBytes, encodeBytes, hydrateNote, createTitle, noteEncodingBound, readBody } from "@nexus/authored/documents";
 import { emptyBody, noteBodySchema, rawBodyText, type NoteBody } from "@nexus/authored/body";
 import { advanceCoverage, mergeChanges, mergeVector } from "@nexus/authored/merge";
-import { MAX_COMMAND_BYTES, MAX_PAGE_WORK_AT_MS, CommandTooLargeError, WorkConversionError, WorkJoinError, WorkUnavailableError, type AuthoredStore, type Change, type CommitFrame, type Corpus, type HighlightPatch, type PageCredit, type PagePatch, type QueryResult, type MergeResult, type ResourceState, type StateSelection, type Vector, type NoteWork } from "@nexus/authored/types";
+import { MAX_COMMAND_BYTES, MAX_PAGE_WORK_AT_MS, CommandTooLargeError, WorkConversionError, WorkJoinError, WorkUnavailableError, type AuthoredStore, type Change, type CommitFrame, type Corpus, type HighlightPatch, type PageCredit, type PagePatch, type MergeResult, type ResourceState, type StateSelection, type Vector, type NoteWork } from "@nexus/authored/types";
 import { openAuthoredStore } from "@/lib/authored/client";
 import { linkId, sortedEndpoints } from "@nexus/authored/identity";
 /** A shared document receives the originating occurrence on each local Yjs transaction. */
@@ -23,6 +23,8 @@ export class PageWritingOrigin {
 export interface WritingSnapshot { body_state: string; observed_touch: Vector }
 export interface WritingDocument {
   ref: string; doc: Y.Doc; retain(): () => void; capture(): Promise<WritingSnapshot>;
+  /** Wait for currently pending edits without freezing a causal snapshot. */
+  editsSettled(): Promise<void>;
   readonly prelude: readonly Intent[];
   checkTextSize(bytes: number, credit: PageCredit, creating: boolean): void;
   checkFirstNoteSize(body: NoteBody, credit: PageCredit): void;
@@ -102,6 +104,8 @@ export class WritingRuntime {
   private readonly documents = new Map<string, {promise:Promise<CachedDocument>;value:CachedDocument|null}>();
   private readonly listeners = new Set<() => void>();
   private tail: Promise<unknown> = Promise.resolve();
+  // The tail's last title owner can collect edits until its preparation starts.
+  private queuedTitle: { owner: FailedCommit; origin: unknown } | null = null;
   private failed: FailedCommit | null = null;
   private retrying: Promise<void> | null = null;
   private retired = false;
@@ -117,6 +121,7 @@ export class WritingRuntime {
     for (const listener of this.listeners) listener();
   }
   async committedPrefix(): Promise<string> {
+    this.queuedTitle = null;
     const admitted = this.tail;
     // A successful retry can settle the command before its first attempt leaves this map.
     const required = [...this.pending_commands].flatMap(([result, owner]) => owner?.committed ? [] : [result]);
@@ -127,6 +132,11 @@ export class WritingRuntime {
   }
   whenUploaded(commandSeq: string, signal: AbortSignal): Promise<void> { return this.store.then(store => store.whenUploaded(commandSeq, signal)); }
   run(intent: Intent, selection: Partial<StateSelection> = {}, credit: PageCredit = null, highlight_registers: ReadonlyMap<string, HighlightRegisters> = new Map()): Promise<LocalCommit> {
+    return this.enqueue(intent, { selection, credit, highlight_registers, foldOrigin: null });
+  }
+  private enqueue(intent: Intent, { selection, credit, highlight_registers, foldOrigin }: {
+    selection: Partial<StateSelection>; credit: PageCredit; highlight_registers: ReadonlyMap<string, HighlightRegisters> | null; foldOrigin: unknown;
+  }): Promise<LocalCommit> {
     if (this.retired) return Promise.reject(new Error("Writing account is closed"));
     if (this.capture_scope) {
       const error = new Error("A compound mutation cannot submit another command");
@@ -138,12 +148,14 @@ export class WritingRuntime {
     const inferred = intentSelection(frozen, credit);
     const selected = selectStates(selection);
     for (const key of ["refs", "link_ids", "anchor_ids", "source_refs"] as const) inferred[key] = [...new Set([...inferred[key], ...selected[key]])];
+    const waiting = this.pending > 0;
     const owner = this.reserve(credit);
-    owner.highlight_registers = new Map(highlight_registers);
+    if (highlight_registers !== null) owner.highlight_registers = new Map(highlight_registers);
     const capturesExcerpt = (command: Intent): boolean => command.kind === "batch" ? command.intents.some(capturesExcerpt) : command.kind === "create_highlight" || command.kind === "update_highlight" && command.selection !== null || command.kind === "capture_passage";
     owner.reject_oversize = capturesExcerpt(frozen);
     owner.intent = frozen;
     owner.selection = inferred;
+    if (waiting && foldOrigin !== null && foldOrigin !== undefined && frozen.kind === "edit_title") this.queuedTitle = {owner, origin: foldOrigin};
     owner.release();
     this.publish({ saving: true });
     return owner.result;
@@ -156,6 +168,7 @@ export class WritingRuntime {
     active(): boolean; retired: R; changed: R; capacity: R | null;
   }): {result: Promise<{kind: "committed"; receipt: LocalGraphCommit} | {kind: "refusal"; reason: R}>; committed: Promise<LocalGraphCommit | null>} {
     if (this.capture_scope) throw new Error("A compound mutation cannot submit another command");
+    this.queuedTitle = null;
     let accept: (value: {kind: "committed"; receipt: LocalGraphCommit} | {kind: "refusal"; reason: R}) => void = () => {};
     let reject: (error: unknown) => void = () => {};
     const result = new Promise<{kind: "committed"; receipt: LocalGraphCommit} | {kind: "refusal"; reason: R}>((resolve, refuse) => {accept = resolve; reject = refuse;});
@@ -207,6 +220,7 @@ export class WritingRuntime {
    * The first write uses the witness's exact snapshot and account lease. */
   admitCheckedWriting<T>(credit: PageCredit, check: (store: AuthoredStore, admit: (args: WritingMutation, baseline: CheckedBaseline) => WritingAdmission) => Promise<T>): Promise<T> {
     if (this.capture_scope) throw new Error("A compound mutation cannot submit another command");
+    this.queuedTitle = null;
     let accept: (value: T) => void = () => {}, reject: (error: unknown) => void = () => {};
     const decision = new Promise<T>((resolve, refuse) => {accept = resolve; reject = refuse;});
     const operation: Promise<LocalCommit | null> = this.tail.then(async () => {
@@ -374,11 +388,13 @@ export class WritingRuntime {
     return owner;
   }
   private reserve(credit: PageCredit): FailedCommit {
+    this.queuedTitle = null;
     this.pending++;
     this.state = { ...this.state, saving: true };
     const owner = this.commandOwner(credit), {result, settled} = owner;
     this.pending_commands.set(result, owner);
     const operation = this.tail.then(async () => {
+      if (this.queuedTitle?.owner === owner) this.queuedTitle = null;
       if (this.retired) throw new Error("Writing account is closed");
       this.failed = owner;
       let receipt: LocalCommit;
@@ -639,6 +655,7 @@ export class WritingRuntime {
       },
       onCommitted: listener => { committed.add(listener); return () => committed.delete(listener); },
       hasPendingEdits: () => pending_edits.size > 0,
+      editsSettled: async () => { await Promise.all(pending_edits); },
       subscribePendingEdits: listener => {pendingListeners.add(listener); return () => pendingListeners.delete(listener);},
       track: (result, origin) => {
         pending_edits.add(result); cached.pending++;
@@ -647,6 +664,7 @@ export class WritingRuntime {
         void result.then(receipt => { try { for (const listener of committed) listener(receipt, origin); } finally { settled(); } },settled);
       },
       capture: () => {
+        this.queuedTitle = null;
         const body_state = encodeBytes(Y.encodeStateAsUpdate(doc));
         let observed: Vector = { ...observed_touch };
         const pending = [...pending_edits];
@@ -701,9 +719,20 @@ export class WritingRuntime {
       const intent: Intent = kind !== "page" ? { kind: "edit_body", ref, body_update: encodeBytes(update) } : { kind: "edit_title", ref, title_update: encodeBytes(update) };
       const prepared: Intent = cached.prelude.length ? {kind:"batch",intents:[...cached.prelude,intent]} : intent;
       cached.prelude = [];
+      const credit = origin instanceof PageWritingOrigin ? origin.credit(at_ms) : null;
+      // An undated page earns credit for each effective edit, even when a pair cancels out.
+      const foldOrigin = credit === null && resource.kind === "page" && resource.local_date !== null ? origin : null;
+      const queued = this.queuedTitle;
+      const previous = queued?.owner.intent;
+      // Keep generous room for the authored envelope before folding updates.
+      if (prepared.kind === "edit_title" && queued?.origin === foldOrigin && previous?.kind === "edit_title" && previous.ref === ref &&
+          previous.title_update.length + prepared.title_update.length <= MAX_COMMAND_BYTES / 2) {
+        const combined = encodeBytes(Y.mergeUpdates([decodeBytes(previous.title_update), update]));
+        if (combined.length <= MAX_COMMAND_BYTES / 2) { previous.title_update = combined; return; }
+      }
       const registers = cached.highlightRegisters();
-      const pending = this.run(prepared, { refs: [ref] }, origin instanceof PageWritingOrigin ? origin.credit(at_ms) : null,
-        registers ? new Map([[ref, registers]]) : undefined).catch(error => {
+      const pending = this.enqueue(prepared, { selection: { refs: [ref] }, credit,
+        highlight_registers: registers ? new Map([[ref, registers]]) : null, foldOrigin }).catch(error => {
         if (error instanceof LocalCommitError && this.failed) return this.failed.settled;
         throw error;
       });
@@ -723,18 +752,20 @@ export class WritingRuntime {
     cached.unsubscribe();
     const current = () => !this.retired && this.documents.get(ref) === entry && cached.read_subscription === subscription && (!entry?.value || entry.value === cached);
     const failed = (error: unknown) => {if (current() && !isAuthoredStorageFailure(error)) reportError(error);};
-    const refresh = (result: QueryResult) => {
+    const refresh = (initial: { revision: string; resource: ResourceState } | null) => {
       if (!current()) return;
       const attempt = ++cached.read_attempt;
-      const initial = loaded; loaded = null;
-      void (initial !== null && result.store_revision === initial.revision
-        ? Promise.resolve({resources: [initial.resource]}) : store.readStates(selectStates({refs: [ref]}))).then(states => {
+      const read = async () => {
+        if (initial && (await store.readReplica()).store_revision === initial.revision) return initial.resource;
+        return (await store.readStates(selectStates({refs: [ref]}))).resources.find(resource => resource.ref === ref);
+      };
+      void read().then(latest => {
         if (!current() || cached.read_attempt !== attempt) return;
-        const latest = states.resources.find(resource => resource.ref === ref);
         if (latest) cached.receive(latest);
       }).catch(error => {if (current() && cached.read_attempt === attempt) failed(error);});
     };
-    cached.unsubscribe = store.subscribe({kind: "resource", ref}, refresh, failed);
+    cached.unsubscribe = store.onResourceChange(ref, () => refresh(null));
+    refresh(loaded);
   }
   private async evict(): Promise<void> {
     const opened = await Promise.allSettled([...this.documents.values()].map(entry=>entry.promise));

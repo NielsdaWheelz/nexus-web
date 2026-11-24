@@ -25,33 +25,36 @@ completion-only and unwritten dates may have a null page ref. reading, focus
 and scrolling leave storage unchanged. canonical daily bindings, including
 historical refs, remain authoritative.
 
-one pane coordinates dates, one controller owns each day, and one memento owns
-programmatic scrolling. the journal's variable-height date geometry composes
-immutable outline row frames. resize, projection and binding reconciliation
-capture the prior eye line before publishing geometry; user input cancels stale
-restoration. a child frame refines only its enclosing logical date; placement
-waits for measured extents to reach the committed geometry. end on the
-focused pane scrollport reveals the oldest civil date. explicit date
-activation reveals; back/resume restore the saved visit. workspace labels and
-recents describe the arrival date without title
-reads or rewriting the destination to a standalone page.
+one pane coordinates date geometry and explicit placement through the common
+memento. one article and heading keep their identity while their local reads
+open, succeed or fail. the date window uses a measured extent or a 320 px
+reservation, refined by the date's admitted writing. idle changes retain the
+measured reading line. native holds keep their captured order and extent
+until release. end on the focused pane scrollport reveals the oldest civil
+date. explicit reveals need the band or date heading. back can also demand
+the previously held outline row; resume restores the saved visit. workspace
+labels and recents describe the arrival date without title reads or rewriting
+the destination to a standalone page.
 
-programmatic scroll positions reach the date virtualizer through its offset
-observer before range planning. geometry and admission use the same scroll
-position; ordinary scroll events keep the library's existing observer.
-day heights include their spacing, but trailing inter-day spacing is not readable
-content when choosing the eye line or visible date.
+one passive cold day opens at a time per visit, selected at the reading edge
+across two frames. the completed-work read can start alongside binding and
+outline bootstrap. each portion appears with its own first result. a departed
+opening retains its article for issued reads and stops unissued stages. a still
+visible day can resume unfinished writing through the passive selector after
+its explicit demand ends. the next passive opening uses the live viewport.
+available prose stays visible during travel. passing shells show dates.
+a cold outline initially admits one row. standalone roots keep their 32-row
+bootstrap. compound results contain full root and selected raw rows. before,
+after and tail carry links only. selected bodies keep their actual size.
 
-a cold journal day first admits one row and its existing boundary proof, then
-fills through ordinary viewport demand. standalone roots keep their 32-row
-bootstrap. boundary resources remain complete; the row limit is not a byte cap.
-
-the band above the agenda names the account's current date, when known. if
-today is the first day, its accessible heading stays in the leaf and its menu
-moves to the band. a later-dated first page leaves today's leaf heading in view.
-all day headings share metrics while their inner date names can change size. the
-navigation row names the day under the scroll edge and yields while its date is
-in the scrollport. pressing the name opens the calendar. `today` returns to the band. dates use weekday, day and month, adding the year outside this year.
+the band above the agenda names today when the account clock is available.
+every today action goes there. if today is the first day, its accessible
+heading stays in the leaf and the band lends its visible date line.
+`dates` stays in pane chrome beside the date at the reading edge. the duplicate
+date text yields while its heading is visible. the chooser freezes that date,
+marks known indexed days and accepts any civil date. a choice that moves
+reading creates one visit in this pane, even at an identical address. aligned
+choices focus the measured landing and leave its scroll offset and history alone.
 
 inline journal titles are italic and keep the content editor's six-line extent.
 empty titles hide after settled blur. trailing space holds a break between days.
@@ -86,9 +89,22 @@ or refine their estimate. the memento expands the captured order when it
 needs saved anchor keys. active selections and rich bodies have no hard
 total-memory bound.
 
-the ui, worker and packaged native plans share the same query contract and
-android's 16-mib result limit. a change to the account store revision
-invalidates descriptions and fences outstanding ranges.
+the ui, worker and packaged native plans share the same closed query contract
+and android's 16-mib result limit. ranked and compound reads observe each
+corpus revision so their ranges and admission proofs use one revision.
+
+direct resource subscriptions wake for the refs a commit or feed application
+can change. provisioning and bulk scope publication can invalidate the whole
+store. an outline admission reads causal state for newly held documents at the
+slice's store revision and retries when another commit advances that revision
+first. an open writing document installs its exact local receipt and reads
+causal state on a change from outside its own writer.
+
+the first daily title edit submits immediately. edits from the same occurrence
+can join the last queued daily title command while it waits for its turn.
+preparation, an intervening command, and causal capture seal those bytes. after
+preparation, retries use the same source sequence and payload. undo retains its
+own groups. undated page edits retain separate command admission for work credit.
 
 ## work
 
@@ -755,13 +771,12 @@ the outline joins them by occurrence path, omits traversed links, and keeps
 matches and ancestors. the local literal fields derive from canonical
 title, text and quote. explicit filtering also checks disclosed server scopes
 through current admitted labels and quotes. failed scopes keep their paths and
-individual retries. one `outline_windows` query reads a coherent set of bounded raw
-pages, root and
-boundary projections, adjacent and absolute tail relationships, and aligned child
-proofs through indexed sql statements in one serialized store operation. every
-slice has the same outer revision and scope availability; a failed slice fails
-the whole read. sql emits ordered graph records and each
-bounded resource projection once; host adapters assemble the closed response.
+individual retries. one `outline_windows` query reads a coherent set of bounded
+raw pages, a root projection, adjacent and absolute tail links, and aligned
+child proofs in one serialized store operation. every slice shares one outer
+revision and scope availability; a failed slice fails the whole read. sql
+emits ordered graph records and resource projections for the root and selected
+raw rows. host adapters assemble the closed response.
 projection construction never feeds back into graph or cursor derivation.
 each endpoint arm selects a bounded range;
 it never materializes the complete incident graph. raw cursors and child proofs
@@ -772,9 +787,9 @@ android partitions outline records and their document admission snapshot into
 byte-bounded native results at one store revision. a changed revision discards
 the incomplete observation. an individual projection too large for one transfer
 keeps its link, position and child proof and reports a failure on its row. the
-root admits the remaining note/title documents together from the admission
-snapshot. the existing per-ref reservation wins for live, loading and prepared
-documents. absent states retain ordinary loading and latent-page preludes.
+root reads the admission snapshot only for note and title documents it has
+yet to acquire. it retries a snapshot from a different store revision. the
+existing per-ref reservation wins for live, loading and prepared documents. absent states retain ordinary loading and latent-page preludes.
 newer subscriptions merge through the existing initial-revision catch-up.
 graph proofs share a store revision; unknown data
 never means absent. first entry waits for
@@ -900,9 +915,13 @@ rewrite committed bytes to fit. migration preflight reports existing oversize
 content. local queries return bounded rows; native transfer retains 24 kib raw
 chunks within 64 kib frames. the whole streamed corpus snapshot has no 3 mib cap.
 
-`GET /authored/changes?after=…&format_revision=7` returns a bounded ascending prefix through one
-captured head. applying each command and advancing its cursor is one device
-transaction. sending and receiving proceed independently.
+`GET /authored/changes?after=…&format_revision=7` returns a bounded prefix through one
+captured head. applying changes and advancing the cursor share one device
+transaction. an entry from this replica within its durable source prefix only
+advances the feed cursor. only incoming changes advance the corpus revision.
+native observers also receive feed invalidation for same-replica entries because
+separate webviews can write to the same sqlite store. sending and receiving
+proceed independently.
 
 the document schedules finite `Sync.step({refresh})` units while foregrounded.
 each unit admits at most one upload batch, feed page and scope unit. registration

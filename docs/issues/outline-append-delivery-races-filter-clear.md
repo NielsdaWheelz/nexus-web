@@ -1,7 +1,7 @@
 # append delivery can outrun the open outline filter
 
 in `PagePaneBody.tsx`, the `AppendNote` delivery is claimed, the filter is
-cleared, and `appendAtTail` runs in the same layout effect. the controller
+cleared, and `appendAtTail` runs in the same effect. the controller
 refuses append while its filter is nonempty. the next render clears the
 filter after the delivery has already been consumed.
 
