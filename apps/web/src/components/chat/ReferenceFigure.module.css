@@ -90,3 +90,12 @@ a.primary:hover,
   flex: 1;
   min-width: 0;
 }
+
+.citedPassages {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.citedPassages blockquote {
+  margin: 0;
+}

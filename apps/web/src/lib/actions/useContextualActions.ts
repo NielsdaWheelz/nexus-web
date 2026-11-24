@@ -5,6 +5,9 @@
 // snapshot and source label. An owned authored principal publishes its local verbs as soon as one
 // local read settles; the server's verbs settle in the trailing region (loading, ready or failed),
 // never gating, reordering or replacing the local snapshot. The menu and the verb rail both project it.
+import { useActionRuntime } from "./ResourceActionsProvider";
+import { directLinkSource, type ItemLinkSource } from "@/lib/resourceGraph/links";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { useCallback, useState } from "react";
 import type { FeedActionFocus } from "@/lib/actions/inlineActions";
 import { AUTHORED_ACTION_IDS, useAuthoredActions } from "@/lib/actions/useAuthoredActions";
@@ -27,6 +30,7 @@ export interface ContextualActionsInput {
   readonly title: string;
   readonly subjectKey: string;
   readonly sections: readonly ContextActionSection[];
+  readonly linkSource?: ItemLinkSource | null;
   readonly resourceRef?: CanonicalResourceRef;
   readonly navigation: DisplayedNavigation | null;
   readonly omitResourceActions?: readonly string[];
@@ -37,8 +41,9 @@ export interface ContextualActionsInput {
 }
 
 export function useContextualActions({
-  sections, resourceRef, title, subjectKey, onDefect, actionFocus, omitResourceActions = [], showSourceSubject = false, navigation,
+  sections, resourceRef, linkSource, title, subjectKey, onDefect, actionFocus, omitResourceActions = [], showSourceSubject = false, navigation,
 }: ContextualActionsInput): MenuSource {
+  const {ctx} = useActionRuntime();
   const paneSubject = usePaneSubject();
   const resource = useResourceActions(resourceRef ?? null, onDefect, actionFocus);
   const state = resource.state;
@@ -51,8 +56,16 @@ export function useContextualActions({
     prepareAuthored(signal);
     prepareRemote(signal);
   }, [prepareAuthored, prepareRemote]);
+  const source = linkSource === undefined ? directLinkSource(resourceRef ?? null, title) : linkSource;
   const initial: MenuContent = { sections: [
     ...sections.filter(section => section.actions.length > 0).map(section => ({ id: section.id, label: null, options: section.actions })),
+    ...(source && !(linkSource === undefined && state?.kind === "Ready" && state.facts.missing && !authored.read?.label)
+      ? [{id: "LinkItem", label: null, options: [{kind: "command" as const, id: "LinkItem", label: "link to…", icon: null,
+        hasPopup: "dialog" as const, restoreFocusOnClose: false, onSelect: ({triggerEl}: {triggerEl: HTMLElement | null}) => {
+          const paneId = triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ?? null;
+          ctx.overlays.open({kind: "LinkItem", source}, {anchor: () => triggerEl,
+            returnFocusFallback: actionFocus?.returnFocus ?? (() => findPaneLandmarkFocusTarget(paneId))});
+        }}]}] : []),
     ...(navigation?.fork ? [{ id: "Navigation", label: null, options: [navigation.fork] }] : []),
   ] };
   const groups: MenuContent["sections"][number][] = [];

@@ -29,10 +29,10 @@ from nexus.services.media import media_summaries
 from nexus.services.reader_excerpts import plain_excerpt
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.capabilities import capability
-from nexus.services.resource_items.evidence import canonical_source_quote
 from nexus.services.resource_items.items import source_attributions
 from nexus.services.resource_items.locations import (
     MediaPassageContext,
+    canonical_source_quote,
     captured_quote,
     media_passages,
     scoped_media_passages,

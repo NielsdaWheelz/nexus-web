@@ -10,8 +10,9 @@ import { Fact, Failed } from "@/components/feedback/Fact";
 import { useOutcome } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { MarkdownMessage, TextPreview } from "./MarkdownMessage";
-import { useResourceActions } from "@/lib/actions/useResourceActions";
-import ActionMenu from "@/components/ui/ActionMenu";
+import type { CitationPassages } from "@/lib/chat/markdownPassages";
+import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
+import {directLinkSource} from "@/lib/resourceGraph/links";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import { useFailedReadRepair } from "@/lib/api/serverState";
 import { cancelTurn, readTurn } from "@/lib/chat/commands";
@@ -19,7 +20,6 @@ import { emptyLive, foldLive, messageActions, openRunTail, type Live } from "@/l
 import { readFailureOf, type Turn } from "@/lib/chat/wire";
 import { truncateText } from "@/lib/display/format";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import AssistantTrust from "./AssistantTrust";
 import MessageDetails from "./MessageDetails";
 import ReferenceFigure from "./ReferenceFigure";
@@ -37,13 +37,14 @@ const FAILURE_REASON = {
 
 /** Tailing paints one pending turn. A terminal read alone adopts its final text,
  * citations, trust trail and capabilities; stream loss never implies failure. */
-export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, retryBlocked, day, time, inlineAttachments, onReadTurn, onRevealReferences }: {
+export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, retryBlocked, day, time, inlineAttachments, citationPassages, onReadTurn, onRevealReferences }: {
   turn: Turn;
   passage: { messageId: string; start: number; end: number } | null;
   day: { label: string; full: string } | null;
   time: string;
   retryBlocked: string | null;
   inlineAttachments: boolean;
+  citationPassages: CitationPassages;
   refresh(): void;
   onRetry(): void;
   onReadTurn(turn: Turn): void;
@@ -56,6 +57,7 @@ export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, r
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const message = saved.assistant_message;
   const pending = message.status === "pending";
+  const citationCount = message.citations.filter(citation => citationPassages.has(String(citation.ordinal))).length;
   useEffect(() => {
     if (!pending) { setLive(null); return; }
     let active = true;
@@ -130,14 +132,14 @@ export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, r
     </div>
     <div className={styles.message} data-message-id={message.id} data-role="assistant" role="group" aria-label="librarian answer">
       {text || pending ? <div className={styles.answer} data-message-content="true"><MarkdownMessage content={text} citations={message.citations} live={pending} citationPreview={inlineAttachments}
-        passage={passage?.messageId === message.id ? passage : null} /></div> : null}
+        citationPassages={citationPassages} passage={passage?.messageId === message.id ? passage : null} /></div> : null}
       {message.status === "cancelled" || message.status === "error" ? <Fact line={failedLine} verbs={saved.can_retry ? [{ label: "retry", commandKey: `retry ${saved.run_id}`, disabledReason: retryBlocked ?? undefined, run: onRetry }] : undefined} /> : null}
       {run?.publication_warning ? <Fact line={{ fact: "couldn’t attach citations.", reason: "the answer is complete." }} /> : null}
       {live?.link.kind === "Failed" ? <Failed error={live.link.error} noun="live updates" retry={{ run: check, busy: false }} /> : live?.link.kind === "Lost" ? <Fact line={{ fact: "live updates stopped." }} verbs={[{ label: "check", commandKey: `check ${saved.run_id}`, run: check }]} /> : null}
       <AssistantTrust messageId={message.id} actions={actions} undone={undone} onUndone={markUndone} />
       <div className={styles.foot} role="group" aria-label="answer actions">
         <div className={styles.footLeft}>
-          {message.citations.length > 0 ? <Button className={styles.referenceButton} aria-label={`references · ${message.citations.length} for this answer`} onClick={event => onRevealReferences(message.id, event.currentTarget, event.detail === 0)}>references · {message.citations.length}</Button> : null}
+          {citationCount > 0 ? <Button className={styles.referenceButton} aria-label={`references · ${citationCount} for this answer`} onClick={event => onRevealReferences(message.id, event.currentTarget, event.detail === 0)}>references · {citationCount}</Button> : null}
           {message.trust_trail ? <Button ref={trigger} className={styles.trailDisclosure} icon={<Icon.Disclose open={details} />} aria-expanded={details} aria-controls={detailsId}
             onClick={event => { onInspect(event.currentTarget); setDetails(!details); }}>
             {pending ? <><span className={styles.live} aria-hidden="true"><span className={styles.dot} data-running={phase === "Running" && !stopped || undefined} /><span className={styles.liveAct}>{activity}</span></span><span className="sr-only">{status}</span></>
@@ -146,7 +148,7 @@ export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, r
         </div>
         <div className={styles.footRight}>
           {saved.can_cancel ? <Button disabled={stopping || !!stopped} onClick={() => void stop()}>cancel</Button> : null}
-          <div className={styles.quiet}><MessageMenu messageId={message.id} content={text} question={saved.user_message} /></div>
+          <div className={styles.quiet}><MessageMenu pending={pending} messageId={message.id} content={text} question={saved.user_message} /></div>
         </div>
       </div>
       {message.trust_trail ? <MessageDetails id={detailsId} message={message} actions={actions} open={details} undone={undone} trigger={trigger} onInspect={onInspect} /> : null}
@@ -154,7 +156,7 @@ export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, r
   </article>;
 }
 
-function MessageMenu({ messageId, content, question }: { messageId: string; content: string; question: { id: string; content: string } }) {
+function MessageMenu({ pending, messageId, content, question }: { pending: boolean; messageId: string; content: string; question: { id: string; content: string } }) {
   const answerCopy = useCopyFeedback(content);
   const questionCopy = useCopyFeedback(question.content);
   const copyTrigger = useRef<HTMLButtonElement>(null);
@@ -169,22 +171,15 @@ function MessageMenu({ messageId, content, question }: { messageId: string; cont
     } }]);
     else setDefect({ error });
   });
-  const resource = useResourceActions(canonicalResourceRef({ scheme: "message", id: messageId }));
-  const runtime = usePaneRuntime();
-  const state = resource.state;
+  const ref = canonicalResourceRef({scheme: "message", id: messageId});
   if (defect) throw defect.error;
   return <><Button ref={copyTrigger} iconOnly icon={answerCopy.copied ? <Icon.Check /> : <Icon.Copy />} aria-label="copy answer" disabled={!content} onClick={() => void copyText({ id: messageId, content }, answerCopy.copy)} />
     {answerCopy.occurrence ? <Announcement text="copied" level="Polite" occurrence={answerCopy.occurrence} /> : null}
     {questionCopy.occurrence ? <Announcement text="copied" level="Polite" occurrence={questionCopy.occurrence} /> : null}
-    <ActionMenu label="turn actions" source={{
-      kind: "Prepared", subjectKey: `${runtime?.visitId}:message:${messageId}`, title: "turn actions",
-      initial: { sections: [{ id: "question", label: null, options: [{
+    <ContextualActionMenu label="turn actions" title="turn actions" subjectKey={ref} resourceRef={ref}
+      linkSource={pending ? null : directLinkSource(ref, truncateText(content, 120) || "librarian answer")} navigation={null}
+      omitResourceActions={["RetryTurn"]} sections={[{id: "Occurrence", actions: [{
         kind: "command", id: "CopyQuestion", label: "copy question", icon: null,
         onSelect: () => void copyText(question, questionCopy.copy),
-      }] }] },
-      prepare: resource.prepare,
-      state: state?.kind === "Ready" ? { kind: "Ready", request: state.request, content: { sections: [{
-        id: "message", label: null, options: state.options.filter(option => option.id !== "RetryTurn"),
-      }] } } : state,
-    }} renderTrigger={binding => <OverflowMenuButton {...binding} />} /></>;
+      }]}]} renderTrigger={binding => <OverflowMenuButton {...binding} />} /></>;
 }

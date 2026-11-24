@@ -1,5 +1,6 @@
 "use client";
 
+import {directLinkSource} from "@/lib/resourceGraph/links";
 import Artwork, { type ArtworkSource } from "@/components/ui/Artwork";
 import Tooltip from "@/components/ui/Tooltip";
 import type { ActionMenuContextAnchorProps } from "@/components/ui/ActionMenuHost";
@@ -9,8 +10,9 @@ import ContextualActionMenu from "./ContextualActionMenu";
 import styles from "./ResourceCover.module.css";
 
 /** A named cover link; an occurrence may offer one removal without taking over navigation. */
-export default function ResourceCover({ href, title, label, source, removal, subjectKey, className }: {
+export default function ResourceCover({ href, resourceRef, title, label, source, removal, subjectKey, className }: {
   readonly href: string;
+  readonly resourceRef: string;
   readonly title: string;
   readonly label: string;
   readonly source: ArtworkSource;
@@ -35,6 +37,6 @@ export default function ResourceCover({ href, title, label, source, removal, sub
       onPointerDown={event => { tooltip.onPointerDown(event); anchor.onPointerDown?.(event); }}
       onClickCapture={event => { anchor.onClickCapture?.(event); tooltip.onClickCapture(event); }}
     ><Artwork title={title} source={source} size="fill" /></a>} />;
-  return removal ? <ContextualActionMenu title={title} subjectKey={subjectKey} navigation={null}
+  return removal ? <ContextualActionMenu linkSource={directLinkSource(resourceRef, title)} title={title} subjectKey={subjectKey} navigation={null}
     sections={[{ id: "Occurrence", actions: [removal] }]} renderContextAnchor={cover} /> : cover({});
 }

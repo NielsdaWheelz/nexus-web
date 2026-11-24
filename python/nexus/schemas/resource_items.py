@@ -122,6 +122,7 @@ class PassageResourceBodyOut(_Out):
     kind: Literal["passage"] = "passage"
     excerpt: ExcerptView
     capture_revision: str | None
+    link_revision: str | None
     reading_ref: str | None
     color: HighlightColor | None
 

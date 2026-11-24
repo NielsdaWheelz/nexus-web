@@ -361,6 +361,7 @@ function DayEditing({ day, arrival, resolved, allowance, presentationAllowance, 
   // Focus ownership is the leaf's article and, while lent, the band's slot: a portal's React ancestry is not its place.
   const owns = (node: EventTarget | null) => node instanceof Node && (article.current?.contains(node) === true || lent && slot !== null && slot.contains(node));
   const menu = <ContextualActionMenu title={name} subjectKey={`journal:${day.local_date}`}
+    linkSource={{ref: resolved.ref, label: name, target: {kind: "resource", ref: resolved.ref}, journalDate: day.local_date}}
     onOpenChange={setMenuOpen}
     label={`actions for ${name}`} navigation={null} resourceRef={canonicalResourceRef({ scheme: "page", id: resolved.ref.slice(5) })}
     omitResourceActions={["EditPageTitle"]} sections={[{ id: "View", actions: [

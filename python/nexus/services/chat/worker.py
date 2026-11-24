@@ -27,6 +27,7 @@ from nexus.services.chat import context as chat_context
 from nexus.services.generation.contract import (
     Cancelled,
     Event,
+    GenerationIntent,
     Owner,
     Succeeded,
     Terminal,
@@ -110,7 +111,8 @@ async def _execute(
     run.status = "running"
     run.started_at = run.started_at or func.now()
     spec = reads.spec(run)
-    assert spec.context_budget_tokens is not None, "chat admission requires a context budget"
+    budget = spec.context_budget_tokens
+    assert budget is not None, "chat admission requires a context budget"
     owner = Owner("chat_run", run_id, run.owner_user_id, context)
     db.commit()
 
@@ -133,30 +135,15 @@ async def _execute(
         ):
             orientation = await read_orientation(config)
 
-    # Preparation holds no locks; cancellation and claim replacement can commit during I/O.
-    run = events.lock_run(db, run_id)
-    if run is None or run.status in events.TERMINAL:
-        finish_job(db, context=context, result=None)
-        db.commit()
+    # Permission, current publication, source words and the attached retrieval rows share
+    # one snapshot. The provider call below begins only after this transaction commits.
+    intent = retry_serializable(
+        db,
+        "prepare_chat_run",
+        lambda: _prepare(db, run_id, context, budget, orientation),
+    )
+    if intent is None:
         return
-    events.fence(db, context)
-    if run.cancel_requested_at is not None:
-        events.finalize(db, run, status="cancelled", content="")
-        finish_job(db, context=context, result=None)
-        db.commit()
-        return
-    try:
-        assembly = chat_context.assemble(
-            db, run=run, context_budget=spec.context_budget_tokens, orientation=orientation
-        )
-    except chat_context.ContextTooLarge:
-        events.finalize(db, run, status="error", content="", error_code="context_too_large")
-        finish_job(db, context=context, result=None)
-        db.commit()
-        return
-    citations.persist_attached(db, run, assembly.attached)
-    intent = assembly.intent
-    db.commit()
 
     def write(chunk: str) -> None:
         frame = ChatRunAssistantTextDeltaEventPayload(text=chunk)
@@ -200,6 +187,34 @@ async def _execute(
             support_id=support_id,
             detail=detail,
         )
+
+
+def _prepare(
+    db: Session,
+    run_id: UUID,
+    context: JobExecutionContext,
+    budget: int,
+    orientation: str | None,
+) -> GenerationIntent | None:
+    run = events.lock_run(db, run_id)
+    if run is None or run.status in events.TERMINAL:
+        finish_job(db, context=context, result=None)
+        return None
+    events.fence(db, context)
+    if run.cancel_requested_at is not None:
+        events.finalize(db, run, status="cancelled", content="")
+        finish_job(db, context=context, result=None)
+        return None
+    try:
+        assembly = chat_context.assemble(
+            db, run=run, context_budget=budget, orientation=orientation
+        )
+    except chat_context.ContextTooLarge:
+        events.finalize(db, run, status="error", content="", error_code="context_too_large")
+        finish_job(db, context=context, result=None)
+        return None
+    citations.persist_attached(db, run, assembly.attached)
+    return assembly.intent
 
 
 def _publish(

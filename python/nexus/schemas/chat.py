@@ -53,6 +53,7 @@ class ChatCitationOut(ReferencePresentationOut):
     id: UUID
     ordinal: int = Field(ge=1)
     target: SavedRetrievalTarget
+    cited_edge_id: UUID | None
 
 
 class ReferenceAttachmentIn(Wire):

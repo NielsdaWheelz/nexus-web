@@ -26,6 +26,7 @@ export function useLinkTargets(
   enabled: boolean,
   active: boolean,
   excludeRef: string | null = sourceRef,
+  remoteSource: string | null = sourceRef,
 ) {
   const host = useOptionalNoteEditorHost();
   const query = raw.slice(1).trim().normalize("NFC");
@@ -34,11 +35,11 @@ export function useLinkTargets(
   const minimum = Array.from(query).length < 2;
   const admitted = enabled && !minimum && query === settled;
   const remote = host?.references !== "local";
-  const exclude_refs = excludeRef === null ? [] : [excludeRef];
+  const exclusions = [...new Set([excludeRef, sourceRef].filter((ref): ref is string => ref !== null))];
   const isRemoteTarget = (target: LinkTargetResult) => !/^(note_block|page|highlight):/u.test(target.item.ref);
   const list = usePaneFreeServerList<LinkTargetResult>({
     key: admitted && remote
-      ? JSON.stringify(["reference", query, sourceRef, exclude_refs])
+      ? JSON.stringify(["reference", query, remoteSource, exclusions])
       : null,
     stale,
     // The endpoint fixes its page size; no limit parameter is supported.
@@ -54,20 +55,28 @@ export function useLinkTargets(
       >("/api/resource-items/targets/search", {
         method: "POST",
         signal,
-        body: JSON.stringify({ q: query, source_ref: sourceRef, exclude_refs, cursor }),
+        body: JSON.stringify({
+          q: query,
+          reading_media_id: null,
+          source_ref: remoteSource,
+          exclude_refs: exclusions,
+          cursor,
+        }),
       });
       return { items: data.targets, next_cursor: data.next_cursor };
     },
   });
   const remoteTargets = list.current ? list.items.filter(isRemoteTarget) : [];
   const remoteKeys = new Set(remoteTargets.map(targetKey));
-  const local = useLocalDiscovery(admitted ? { kind: "search", text: query, cursor: null, limit: 100,
+  const localTarget = ({ resource }: { resource: { ref: string; kind: string } }) =>
+    !exclusions.includes(resource.ref) && resource.kind !== "highlight";
+  const local = useLocalDiscovery(admitted ? { kind: "search", text: query, link_from: sourceRef, cursor: null, limit: 100,
     scopes: [{ kind: "all", id: null }], families: null } : null, active,
-  ({ resource }) => resource.ref !== excludeRef && resource.kind !== "highlight" && !remoteKeys.has(resource.ref));
+  row => localTarget(row) && !remoteKeys.has(row.resource.ref));
   const localTargets: LinkTargetResult[] = (local.data?.rows ?? [])
-    .filter(({ resource }) => resource.ref !== excludeRef && resource.kind !== "highlight")
-    .map(({ resource, activation_ref }) => ({ kind: "resource", item: authoredItem(resource, activation_ref,
-      localResourceHref(resource, { activationRef: activation_ref })), existing_link_id: null }));
+    .filter(localTarget)
+    .map(({ resource, activation_ref, link }) => ({ kind: "resource", item: authoredItem(resource, activation_ref,
+      localResourceHref(resource, { activationRef: activation_ref })), existing_link_id: link?.link_id ?? null }));
   const localKeys = new Set(localTargets.map(targetKey));
   const seen = new Set<string>();
   const items = [...localTargets, ...remoteTargets].filter(target => {

@@ -231,14 +231,15 @@ function AuthorPane({ handle }: { readonly handle: string }) {
       ? parseResourceRef(detail.data.action_ref)
       : null;
   const contributorId = ref?.scheme === "contributor" ? ref.id : null;
+  const contributorName = detail.status === "ready" ? detail.data.display_name : null;
   const linkedItems = useMemo(
     () =>
       contributorId !== null ? (
         <ConnectionsSurface
-          resourceRef={{ scheme: "contributor", id: contributorId }}
+          resourceRef={{ scheme: "contributor", id: contributorId }} resourceLabel={contributorName}
         />
       ) : null,
-    [contributorId],
+    [contributorId, contributorName],
   );
   useResourceInspector({
     scheme: "contributor",

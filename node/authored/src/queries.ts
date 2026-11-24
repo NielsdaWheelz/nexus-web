@@ -4,7 +4,7 @@
  * return separate literal evidence without rewriting canonical resource content.
  * Adjacency uses the exact (position,link_id) tuple, including prefix/equal keys. */
 import { excerptTextParts, excerptView, scopeExcerpt, type ExcerptScope, type ExcerptNode } from "./excerpt.ts";
-import { AUTHORED_INDEX_RANGE, type AuthoredQuery, type CapturedIndexDemand, type OutlineRange, type PassageState, type QueryResult, type QueryRow, type ResourceProjection, type SelectionCapture, type ResourceState, type PassageCapture } from "./types.ts";
+import { AUTHORED_INDEX_RANGE, type AuthoredQuery, type CapturedIndexDemand, type LinkState, type OutlineRange, type PassageState, type QueryResult, type QueryRow, type ResourceProjection, type SelectionCapture, type ResourceState, type PassageCapture } from "./types.ts";
 import { normalizeQuote, validateLocalDate } from "./identity.ts";
 import { foldFilterText } from "./filter.ts";
 import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, SEARCH_FAMILIES, type ScopeInterval, type ScopeReading } from "./scope.ts";
@@ -201,6 +201,10 @@ const SEARCH_SCOPED_SQL = `WITH ${SEARCH_SCOPE_CTES},
   ),readable AS NOT MATERIALIZED(${BOUNDED_READABLE})
   SELECT r.projection_json,NULL AS link_json,p.state_json AS passage_json FROM readable r
   LEFT JOIN passages p ON r.ref='passage_anchor:'||p.anchor_id ORDER BY r.ref`;
+// The picker asks about this batch alone. Permanent pair identity includes old
+// bindings, so the indexed endpoint pair supplies the visible existing link.
+const SEARCH_EXISTING_LINKS_SQL = `SELECT r.value AS ref,l.state_json FROM json_each(?2) r
+  JOIN links l ON l.endpoint_a=min(?1,r.value) AND l.endpoint_b=max(?1,r.value) WHERE l.visible=1`;
 const SEARCH_LINKS_SQL = `WITH ${SEARCH_SCOPE_CTES},wanted(ref) AS (SELECT value FROM json_each(?2)),peers AS (
   SELECT w.ref AS owner_ref,CASE WHEN l.endpoint_a=w.ref THEN l.endpoint_b ELSE l.endpoint_a END AS ref
   FROM wanted w JOIN links l ON l.endpoint_a=w.ref OR l.endpoint_b=w.ref
@@ -319,7 +323,7 @@ const EXCERPT_INCOMPLETE_TABLE_SQL = `SELECT 1 AS incomplete FROM scope_facts
       OR json_extract(state_json,'$.start_offset')=json_extract(state_json,'$.end_offset') AND ?3<=json_extract(state_json,'$.start_offset') AND json_extract(state_json,'$.start_offset')<=?4)
   LIMIT 1`;
 /** Every read shape is finite and packaged by content identity for the native host. */
-export const SEARCH_READ_SQL = [SEARCH_SQL, SEARCH_NAMES_SQL, SEARCH_ADMISSION_SQL, SEARCH_SCOPE_AVAILABLE_SQL, SEARCH_SCOPED_SQL, SEARCH_LINKS_SQL,
+export const SEARCH_READ_SQL = [SEARCH_SQL, SEARCH_NAMES_SQL, SEARCH_ADMISSION_SQL, SEARCH_SCOPE_AVAILABLE_SQL, SEARCH_SCOPED_SQL, SEARCH_LINKS_SQL, SEARCH_EXISTING_LINKS_SQL,
   SEARCH_READINGS_SQL, SEARCH_WORKSPACE_READINGS_SQL, SEARCH_INTERVALS_SQL, SEARCH_ALIASES_SQL, SEARCH_ANNOTATION_OWNERS_SQL, SEARCH_RESOURCES_SQL, SEARCH_QUOTE_WINDOWS_SQL, SCOPE_SQL.scope_source_alias, EXCERPT_ROW_SQL, EXCERPT_READING_SQL, EXCERPT_INCOMPLETE_TABLE_SQL] as const;
 /** Each endpoint arm is an ordered index range with its own bound. The outer
  * merge sees at most twice the requested rows, including sparse live endpoints. */
@@ -1054,6 +1058,13 @@ export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery,
       if (resource.kind === "note") sourceNotes.set(resource.ref, resource.visible);
       return [{resource, passage}];
     });
+    const existingLinks = new Map<string, LinkState>();
+    if (query.kind === "search" && query.link_from && candidates.length) {
+      for (const row of await read({sql: SEARCH_EXISTING_LINKS_SQL, params: [query.link_from,
+        JSON.stringify(candidates.map(candidate => candidate.resource.ref))]})) {
+        existingLinks.set(String(row.ref), JSON.parse(String(row.state_json)));
+      }
+    }
     const annotationRefs = [...new Set(candidates.flatMap(({passage}) => passage?.source_ref.startsWith("highlight:") ? [passage.source_ref] : []))];
     if (annotationRefs.length) for (const row of await read({sql:SEARCH_ANNOTATION_OWNERS_SQL,params:[JSON.stringify(annotationRefs)]})) {
       const owner:ResourceProjection=JSON.parse(String(row.projection_json));
@@ -1120,6 +1131,7 @@ export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery,
         match = {...match,resource:{...resolved,excerpt:excerptView({...view.body,source_extent:null,truncated_before:view.omitted_before,truncated_after:view.omitted_after},"compact",{kind:"capture"})},match_text:passage === null && match.matched_field==="annotation" ? match.match_text : passage === null ? parts.prefix + parts.exact + parts.suffix : parts.exact};
       }
       if (match) {
+        match.link = existingLinks.get(resource.ref) ?? null;
         if (names) {
           result.rows.push(match);
           result.rows.sort(nameOrder);

@@ -50,7 +50,7 @@ from nexus.jobs.queue import (
     lock_running_job_claim,
     running_job_claim_is_current,
 )
-from nexus.schemas.live_reference import SavedReference, SavedRetrievalTarget
+from nexus.schemas.live_reference import QuestionAttachment, SavedRetrievalTarget
 from nexus.services.chat.deletion import lock_revision
 from nexus.services.tools.memory import (
     BEARER_PATTERN,
@@ -155,7 +155,9 @@ def append_turn(db: Session, run: ChatRun) -> None:
                     {
                         "ordinal": index + 1,
                         "snapshot_json": canonical_json(
-                            SavedReference.model_validate(value).model_dump(mode="json")
+                            QuestionAttachment.model_validate(value).reference.model_dump(
+                                mode="json"
+                            )
                         ),
                     }
                     for index, value in enumerate(question["attachments"])

@@ -35,7 +35,8 @@ import { useAuthoredQuery } from "@/lib/notes/hooks";
 import { useCapturedIndex } from "@/lib/notes/capturedIndex";
 import { useRankedAuthoredWindow } from "@/lib/notes/rankedAuthoredWindow";
 import { isAuthoredStorageFailure } from "@/lib/notes/runtime";
-import { formatResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { directLinkSource } from "@/lib/resourceGraph/links";
+import { formatResourceRef, resourceTypeLabel, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { CONNECTION_DISCOVERY_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
@@ -53,8 +54,9 @@ const mentionWindow = (result: QueryResult) => {
 };
 type MentionDescription = Extract<NonNullable<QueryResult["mentions"]>, {kind: "description"}>;
 
-export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
+export default function ConnectionsSurface({ resourceRef, resourceLabel, refreshKey = 0 }: {
   resourceRef: ResourceRef;
+  resourceLabel: string | null;
   refreshKey?: number;
 }) {
   const selfRef = formatResourceRef(resourceRef);
@@ -94,7 +96,8 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       <div className={styles.header}>
         <h2 className={styles.title}>Connections</h2>
         <div className={styles.headerActions}>
-          <ContextualActionMenu navigation={null} resourceRef={assumeCanonicalResourceRef(selfRef)} title="connections" subjectKey={`connections:${selfRef}`} label="more actions for connections" sections={[]} />
+          <ContextualActionMenu navigation={null} resourceRef={assumeCanonicalResourceRef(selfRef)}
+            linkSource={directLinkSource(selfRef, resourceLabel ?? resourceTypeLabel(resourceRef.scheme))} title="connections" subjectKey={`connections:${selfRef}`} label="more actions for connections" sections={[]} />
           {attachments.control}
           {scannable ? <Button type="button" iconOnly aria-label="Find connections" onClick={scan.start} aria-disabled={scan.blocked || undefined} aria-busy={scan.busy || undefined} aria-describedby={scan.reason ? scanReasonId : undefined} icon={<Icon.Search size={14} aria-hidden="true" />} /> : null}
         </div>

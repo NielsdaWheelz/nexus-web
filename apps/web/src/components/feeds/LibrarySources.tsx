@@ -111,7 +111,7 @@ function SourceCover({ show, library, source, blocked, section, afterRemoval }: 
     },
   }) : undefined;
   const noun = feed.kind === "podcast" ? "podcast" : "feed";
-  return <li ref={root}><ResourceCover href={`/${feed.kind === "podcast" ? "podcasts" : "feeds"}/${feed.id}`}
+  return <li ref={root}><ResourceCover resourceRef={`${feed.kind === "podcast" ? "podcast" : "feed"}:${feed.id}`} href={`/${feed.kind === "podcast" ? "podcasts" : "feeds"}/${feed.id}`}
     title={feed.title} label={`${noun}: ${feed.title}`} source={remoteArtwork(feed.image_url)} removal={removal}
     subjectKey={`library:${library.id}:${feed.id}`} className={styles.cover} /></li>;
 }

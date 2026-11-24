@@ -22,7 +22,7 @@ import {isAuthoredStorageFailure} from "@/lib/notes/runtime";
 import {usePaneChrome} from "@/lib/panes/paneChrome";
 import {usePaneEntryDelivery, usePaneParam} from "@/lib/panes/paneRuntime";
 import {useSourceArrival, type SourceArrivalContext} from "@/lib/reader/sourceArrival";
-import {highlightSourceHref} from "@/lib/resources/localResource";
+import {highlightSourceHref, localResourceLabel} from "@/lib/resources/localResource";
 import {canonicalResourceRef} from "@/lib/sharing/targets";
 import {usePaneReturnReady} from "@/lib/workspace/paneReturnMemento";
 import styles from "./HighlightPaneBody.module.css";
@@ -94,7 +94,8 @@ export default function HighlightPaneBody() {
     return "Applied";
   }});
   usePaneReturnReady(read.data !== null || read.error !== null);
-  const connections = useMemo(() => <ConnectionsSurface resourceRef={{scheme: "highlight", id}}/>, [id]);
+  const label = resource?.excerpt ? localResourceLabel(resource) : null;
+  const connections = useMemo(() => <ConnectionsSurface resourceRef={{scheme: "highlight", id}} resourceLabel={label}/>, [id, label]);
   useResourceInspector({scheme: "highlight", handle: resource ? id : null, bodies: {linkedItems: connections}});
   const resourceRef = resource ? canonicalResourceRef({scheme: "highlight", id}) : undefined;
   usePaneChrome(useMemo(() => ({resourceRef}), [resourceRef]));

@@ -35,7 +35,7 @@ from nexus.schemas.chat import (
     RejectedChatAdmission,
     RejectionCode,
 )
-from nexus.schemas.live_reference import SavedReference
+from nexus.schemas.live_reference import QuestionAttachment
 from nexus.schemas.llm import (
     GenerationSelection,
     GenerationSelectionUnavailable,
@@ -78,7 +78,7 @@ async def create_chat_run(
         return await run_in_threadpool(_receipt, viewer_id, existing)
     row = await _catalog_row(catalog, request.selection)
 
-    def admit() -> list[SavedReference]:
+    def admit() -> list[QuestionAttachment]:
         with get_session_factory()() as db:
             get_repeatable_read_db(db)
             return references.admit_attachments(db, viewer_id, request.attachments)
@@ -131,7 +131,7 @@ async def retry(
             viewer_id,
             run_id,
             question.content,
-            [SavedReference.model_validate(value) for value in question.attachments],
+            [QuestionAttachment.model_validate(value) for value in question.attachments],
             resolved,
             tools,
             source.id,
@@ -281,7 +281,7 @@ def _insert(
     viewer_id: UUID,
     run_id: UUID,
     content: str,
-    attachments: list[SavedReference],
+    attachments: list[QuestionAttachment],
     row: Row,
     tools: Toolbox,
     retry_of_run_id: UUID | None,
@@ -335,8 +335,8 @@ def _insert(
     db.add_all([user, assistant])
     db.flush()
     citations = []
-    for index, reference in enumerate(attachments):
-        ref = require_ref(reference.resource_ref)
+    for index, attachment in enumerate(attachments):
+        ref = require_ref(attachment.reference.resource_ref)
         if ref_visible(db, viewer_id=viewer_id, ref=ref):
             citations.append(CitationInput(ref, index + 1, None))
     replace_citations_for_source(db, source=ResourceRef("message", user.id), citations=citations)

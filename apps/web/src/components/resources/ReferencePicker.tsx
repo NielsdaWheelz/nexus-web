@@ -16,10 +16,14 @@ import type { ReferenceInput } from "@/lib/resourceGraph/useReferenceInput";
 import { cx } from "@/lib/ui/cx";
 import collection from "@/components/ui/Collection.module.css";
 import styles from "./ReferencePicker.module.css";
-export default function ReferencePicker({ input, onReviewPosition, returnFocus }: { input: ReferenceInput; onReviewPosition(): void; returnFocus: () => HTMLElement | null }) {
+export default function ReferencePicker({ input, onReviewPosition, returnFocus }: {
+  input: Pick<ReferenceInput, "search" | "selected" | "bindings" | "slots" | "holding"> & { state?: ReferenceInput["state"] };
+  onReviewPosition?(): void;
+  returnFocus: () => HTMLElement | null;
+}) {
   const { state, search, bindings, slots, holding } = input;
   const remoteError = holding && search.list.failure?.withdrawn ? null : search.error;
-  if (!state) return null;
+  if (state === null) return null;
   return <div className={cx(collection.surface, styles.picker)}>
     {search.minimum ? <Fact line={{ fact: "type 2 or more characters." }} speak />
       : search.items.length ? null
@@ -46,7 +50,7 @@ export default function ReferencePicker({ input, onReviewPosition, returnFocus }
       busy={search.localPending} show={search.items.length === 0 || search.localNeedsAction} />
     <DiscoveryTail label="continue searching library matches" action={search.remoteCanContinue ? search.list.more : null}
       busy={search.list.running !== null} show={search.items.length === 0 || search.list.continuationNeedsAction} />
-    {state.message ? <Fact line={{ fact: state.message, reason: "your search is kept." }} speak
-      verbs={state.context.replacement === null ? [{ label: "use new destination", commandKey: "Reference.reviewDestination", run: onReviewPosition }] : undefined} /> : null}
+    {state?.message ? <Fact line={{ fact: state.message, reason: "your search is kept." }} speak
+      verbs={state.context.replacement === null && onReviewPosition ? [{ label: "use new destination", commandKey: "Reference.reviewDestination", run: onReviewPosition }] : undefined} /> : null}
   </div>;
 }

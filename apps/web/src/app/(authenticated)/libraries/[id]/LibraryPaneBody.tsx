@@ -196,7 +196,8 @@ function LibraryPane({ id, view }: { readonly id: string; readonly view: NonNull
   const library = !missing && detail.status === "ready" ? detail.data : null;
   const source = list.status === "ready" ? list.source : detail.status === "ready" ? detail.source : LIVE_SOURCE;
   const live = source.kind === "live";
-  const suggestionDestination = { kind: "Library" as const, id, name: library ? libraryDisplayName(library) : "library" };
+  const name = library === null ? "" : libraryDisplayName(library);
+  const suggestionDestination = { kind: "Library" as const, id, name: library ? name : "library" };
   const suggestions = useSuggestions(suggestionDestination, admitted && library !== null && live);
   const { refresh: refreshSuggestionFeed } = suggestions;
   const order = useLibraryOrder(id, raw.status === "ready" && raw.source.kind === "live" && raw.fresh && raw.error === null ? raw.data.data.order_revision : null);
@@ -261,8 +262,8 @@ function LibraryPane({ id, view }: { readonly id: string; readonly view: NonNull
     bodies: {
       members: members.shown ? <LibraryMembers state={members.shown} /> : undefined,
       linkedItems: useMemo(
-        () => <ConnectionsSurface resourceRef={{ scheme: "library", id }} />,
-        [id],
+        () => <ConnectionsSurface resourceRef={{ scheme: "library", id }} resourceLabel={name || null} />,
+        [id, name],
       ),
     },
   });
@@ -301,7 +302,7 @@ function LibraryPane({ id, view }: { readonly id: string; readonly view: NonNull
   const readFeedback = useIndexReadFeedback({ value: list, requestedKey: descriptor.key, active: active && admitted, waiting: admitted && list.status === "loading", outcome: ordered.length > 0 ? null : emptyLine.fact });
   const menuActions: ActionDescriptor[] = [...(importHere ? [importHere] : []), feedBrowseAction("podcast"), feedBrowseAction("article")];
   usePaneChrome({
-    displayTitle: library === null ? undefined : libraryDisplayName(library),
+    displayTitle: library === null ? undefined : name,
     primaryAction: admitted ? importHere : undefined,
     views: !admitted || library === null ? undefined : {
       label: "library view", value: projection ?? "", items: views,
@@ -335,7 +336,6 @@ function LibraryPane({ id, view }: { readonly id: string; readonly view: NonNull
     header: { kind: "Section", meta: headerMeta },
   });
 
-  const name = library === null ? "" : libraryDisplayName(library);
   const captureReady = live && list.status === "ready" && list.fresh && list.error === null && !list.refreshing && order.state.pending === null;
   const capture = useCallback<PlaybackSource>(async selected_media_id => {
     if (source.kind === "catalog")

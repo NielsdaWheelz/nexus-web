@@ -17,7 +17,7 @@ import * as Icon from "@/lib/ui/icons";
 import { focusableElements } from "@/lib/ui/overlay";
 import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
 import ChatTurn from "./ChatTurn";
-import { useLibrarianReferences } from "./LibrarianReferences";
+import { EMPTY_CITATION_PASSAGES, useLibrarianReferences } from "./LibrarianReferences";
 import { useTranscriptBodies } from "./transcriptBodies";
 import { useTranscriptWindow } from "./transcriptWindow";
 import { inspectChatMessage, useChatScroll, type ChatReadingPosition, type ChatScrollHandle } from "./useChatScroll";
@@ -135,6 +135,9 @@ export default function LibrarianTranscript({ history, adopted, messageId, query
     setKeyboard(null);
   }, [hasKeyboardBody, keyboard, order, scroll.handle]);
   const arrival = useSourceArrival({ ready: history.status === "ready" && restoreReady && timeZone !== null, sourceIdentity: accountId, apply: async (target, context) => {
+    if (target.kind === "message_citation") {
+      return references.revealEdge(target.message_id, target.edge_id, context) ? "Applied" : "Unavailable";
+    }
     if (target.kind !== "source") return "Unavailable";
     const location = target.source.location;
     const resource = target.source.source_activation?.resource_ref;
@@ -195,6 +198,7 @@ export default function LibrarianTranscript({ history, adopted, messageId, query
                   day={newDay ? { label: newYear ? `${label} ${year}` : label, full: formats.full.format(date) } : null}
                   time={formats.time.format(date)} refresh={history.revalidate} onInspect={scroll.handle.inspectDisclosure}
                   onRetry={() => onRetry(turn.run_id)} retryBlocked={retryBlocked} inlineAttachments={references.inlineAttachments}
+                  citationPassages={references.passagesByMessage.get(turn.assistant_message.id) ?? EMPTY_CITATION_PASSAGES}
                   onReadTurn={bodies.adopt} onRevealReferences={references.reveal} />
               : error ? <Failed error={error} noun="messages" retry={{ run: bodies.retry, busy: false }} />
               : key.run_id === firstFailure && bodies.unavailable(key.run_id) ? <Fact line={{ fact: "this turn is unavailable." }} /> : null}

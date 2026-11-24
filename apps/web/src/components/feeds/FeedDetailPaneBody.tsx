@@ -226,11 +226,12 @@ function FeedDetailPane({ feedId, kind, paneId }: { readonly feedId: string; rea
     () => feedRefresh({ kind: "Feed", feed_id: feedId }, kind),
     [feedId, kind],
   );
+  const feedTitle = ready?.data.feed.title ?? null;
   const connections = useMemo(
     () => (
-      <ConnectionsSurface resourceRef={{ scheme, id: feedId }} />
+      <ConnectionsSurface resourceRef={{ scheme, id: feedId }} resourceLabel={feedTitle} />
     ),
-    [feedId, scheme],
+    [feedId, scheme, feedTitle],
   );
   useResourceInspector({
     scheme,

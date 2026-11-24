@@ -1159,15 +1159,23 @@ the frame determines shown endpoint extent,
 while computed visibility determines current obstruction. the one border-box
 resize observer and coalesced viewport/transition pass own invalidation.
 
-one ordered pass measures the header, places controls and nexus, publishes
-`--mobile-feedback-top` at the stationary header/control endpoint plus 12px,
-and publishes local content clearance,
-then publishes reader endpoint extent and current occlusion. overlapping
-rectangles form a conservative full-width envelope; their heights are never
-summed. nexus placement uses
-shown frames and stays fixed on tap; `--mobile-content-bottom-clearance` and its
-subscribers report current visible obstruction. the chrome controller refreshes
-geometry synchronously after visibility writes and before holds/focus return.
+one ordered pass measures the header, places controls, then measures the
+stationary player. the active touch outline shows its commands in the third
+grid track when no overlay owns interaction. the viewport aligns the row to
+the bottom edge available after the player, safe area and residual
+visual-viewport keyboard inset. on mobile, nexus sits 12px above the row, or
+above the player or safe area when the row is absent. wide touch panes use
+only the row placement.
+
+the grid reserves the row. content, reader and stage clearance use the final
+nexus frame. local clearance projects the shell envelope into each content
+rect, so a player outside that rect contributes no extra space. stage anchors
+use the shown bottom envelope and the residual keyboard inset. overlapping
+rectangles form a conservative full-width envelope.
+nexus placement uses shown frames and stays fixed during chrome retreat and
+reveal. `--mobile-content-bottom-clearance` and its subscribers report current
+visible obstruction. the chrome controller refreshes geometry synchronously
+after visibility writes and before holds and focus return.
 fade-out retains conservative bounds until computed visibility is hidden;
 reduced motion needs no transition event.
 
@@ -1189,18 +1197,9 @@ pane scrollports consume their nearest content clearance; readers consume their
 explicit endpoint/occlusion contract. consumers never recalculate shell or
 platform geometry independently.
 
-The Android shell remains edge-to-edge. `MainActivity` enables the platform
-edge-to-edge policy before creation, keeps the WebView at full window bounds,
-and returns the original `WindowInsets` unconsumed so System WebView M144+ can
-publish `systemBars | displayCutout` to CSS. A black,
-accessibility-hidden native overlay covers exactly the combined top inset;
-system-bar icons remain light, and Android owns three-button navigation
-contrast. Android instrumentation owns the real-WebView native-to-CSS inset,
-top-protection, icon, full-window-bound, safe-control, and stale-value-clearing
-contracts. For native inset `N`, CSS inset `C`, and positive device-pixel ratio
-`D`, the permanent quantization contract is exact zero after native clearing;
-otherwise `N <= C * D < N + D`. CSS never under-covers native system UI and
-adds less than one CSS pixel of safe clearance.
+the [android device contract](device-startup.md) owns native window
+insets. the shell receives the usable web viewport and a separate keyboard
+visibility signal.
 
 ## Reader Layout
 

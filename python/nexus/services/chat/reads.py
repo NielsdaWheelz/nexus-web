@@ -19,7 +19,7 @@ from pydantic import TypeAdapter
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun, Message, MessageRetrieval, ToolCall
+from nexus.db.models import ChatRun, Message, MessageRetrieval, ResourceEdge, ToolCall
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.jobs.queue import DurableExecutionPhase, project_execution_phase
@@ -40,14 +40,16 @@ from nexus.schemas.chat import (
 )
 from nexus.schemas.live_reference import (
     LiveReference,
+    QuestionAttachment,
     ResourceRetrievalTarget,
-    SavedReference,
     SavedResourceTarget,
     SavedRetrievalTarget,
 )
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.chat import events, references
 from nexus.services.generation.contract import GenerationSpec
+from nexus.services.resource_graph.citations import generated_citation_source_visible_sql
+from nexus.services.resource_graph.liveness import edge_live_sql
 from nexus.services.resource_graph.refs import assert_resource_ref
 from nexus.services.resource_items.items import resource_items_out
 from nexus.services.tools import assistant_writes, presentation
@@ -132,7 +134,9 @@ def turns(db: Session, viewer_id: UUID, runs: list[ChatRun]) -> list[ChatRunResp
         )
     )
     message_references = {
-        message.id: [SavedReference.model_validate(raw) for raw in message.attachments]
+        message.id: [
+            QuestionAttachment.model_validate(raw).reference for raw in message.attachments
+        ]
         for message in messages
     }
     targets = _targets(retrieval_rows)
@@ -210,11 +214,32 @@ def turns(db: Session, viewer_id: UUID, runs: list[ChatRun]) -> list[ChatRunResp
         )
         for run in runs
     }
-    citations: dict[UUID, list[ChatCitationOut]] = defaultdict(list)
-    for row in sorted(
+    published = sorted(
         (row for row in retrieval_rows if row.citation_ordinal is not None),
         key=lambda row: cast(int, row.citation_ordinal),
-    ):
+    )
+    edge_ids = [row.cited_edge_id for row in published if row.cited_edge_id is not None]
+    edges = (
+        {
+            edge.id: edge
+            for edge in db.scalars(
+                select(ResourceEdge).where(
+                    ResourceEdge.id.in_(edge_ids),
+                    ResourceEdge.origin == "citation",
+                    ResourceEdge.source_scheme == "message",
+                    ResourceEdge.user_id.is_(None),
+                    text(edge_live_sql("resource_edges")),
+                    text(generated_citation_source_visible_sql("resource_edges")).bindparams(
+                        viewer_id=viewer_id
+                    ),
+                )
+            )
+        }
+        if edge_ids
+        else {}
+    )
+    citations: dict[UUID, list[ChatCitationOut]] = defaultdict(list)
+    for row in published:
         target = targets[row.id]
         item, available = _target_item(target, attachments)
         attached = (
@@ -222,11 +247,24 @@ def turns(db: Session, viewer_id: UUID, runs: list[ChatRun]) -> list[ChatRunResp
             if isinstance(target, SavedResourceTarget)
             else None
         )
+        edge = edges.get(row.cited_edge_id) if row.cited_edge_id is not None else None
+        cited_edge_id = None
+        if (
+            edge is not None
+            and edge.source_id == row.assistant_message_id
+            and edge.ordinal == row.citation_ordinal
+            and isinstance(target, SavedResourceTarget)
+            and item is not None
+            and not item.missing
+            and target.reference.resource_ref == f"{edge.target_scheme}:{edge.target_id}"
+        ):
+            cited_edge_id = edge.id
         citations[row.assistant_message_id].append(
             ChatCitationOut(
                 id=row.id,
                 ordinal=cast(int, row.citation_ordinal),
                 target=target,
+                cited_edge_id=cited_edge_id,
                 item=item,
                 location_available=available,
                 annotation=attached.annotation if attached is not None else None,

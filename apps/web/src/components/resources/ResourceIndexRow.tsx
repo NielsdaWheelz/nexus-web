@@ -1,4 +1,5 @@
 "use client";
+import {itemLinkSource} from "@/lib/resourceGraph/links";
 import { excerptTextParts } from "@nexus/authored/excerpt";
 
 import { useCallback, useRef, type ComponentProps, type ReactNode, type Ref } from "react";
@@ -160,7 +161,7 @@ export default function ResourceIndexRow({
       {presentation.kind === "Search" && subject ? <ResourceActions subject={subject} density="Row" returnFocus={returnFocus} afterRemoval={actionFocus.afterRemoval} /> : null}
       <ContextualActionMenu title={currentLabel} subjectKey={occurrenceKey} sections={[]}
         triggerRef={setMore} actionFocus={actionFocus} triggerAttributes={{ "data-row-actions-control": "" }}
-        resourceRef={assumeCanonicalResourceRef(item.action_ref)} navigation={status !== null ? null : {
+        linkSource={itemLinkSource(item)} resourceRef={assumeCanonicalResourceRef(item.action_ref)} navigation={status !== null ? null : {
           key: `${occurrenceKey}:${JSON.stringify(item.activation)}`,
           fork: touch && pane && item.activation.kind === "route" && item.activation.href !== null
             ? paneForkLink({ runtime: pane, target: { href: item.activation.href, labelHint: currentLabel }, disabledReason: null }) : null,

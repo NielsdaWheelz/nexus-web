@@ -8,6 +8,7 @@
 // removal); structure keys, selection and ordering belong to the outline's rootProps.
 // Rows also disclose server facts.
 // Local occurrence actions never wait for a remote resource menu.
+import {directLinkSource, itemLinkSource, type ItemLinkSource} from "@/lib/resourceGraph/links";
 import {useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type HTMLAttributes, type ReactNode, type Ref} from "react";
 import * as Icon from "@/lib/ui/icons";
 import MachineText from "@/components/ui/MachineText";
@@ -88,6 +89,7 @@ type Shared = {
   authoredByViewer?: boolean;
   historical?: boolean;
   readingRef?: string | null;
+  linkSource?: ItemLinkSource | null;
   /** Local note editing; terminal and historical occurrences never edit. */
   editable?: boolean;
   /** The owning flat editor settles or refuses removal of its disclosed fields. */
@@ -106,6 +108,7 @@ type Props = Shared & (
 );
 /** What the shared occurrence chrome shows for one resource. */
 interface Presentation {
+  localLinkSource?: ItemLinkSource | null;
   ref: string;
   /** null: nothing names it yet, so the row names its type, never its raw ref. */
   label: string | null;
@@ -127,7 +130,7 @@ function factRemoval(incoming: Extract<Incoming, {kind: "edge"}>): {id: string; 
 }
 
 export default function ResourceOutlineRow({item, resourceRef, resource, ...shared}: Props) {
-  shared.readingRef = item?.preview.body.kind === "passage" ? item.preview.body.reading_ref : shared.readingRef ?? null;
+  shared.readingRef = item?.preview.body.kind === "passage" ? shared.readingRef ?? item.preview.body.reading_ref : shared.readingRef ?? null;
   if(item!==undefined&&shared.historical)return <RemoteRow {...shared} item={item}/>;
   if(item!==undefined)return item.authored_by_viewer&&hasAuthoredContent(item.ref)?<LocalRow {...shared} authoredByViewer subject={item.ref}/>:<RemoteRow {...shared} item={item}/>;
   // a link's projection can be a source stub.
@@ -248,6 +251,7 @@ function AuthoredRow({resource, answered, status, ...props}: Shared & {subject: 
     : <span data-resource-primary className={factualStyles.named}>{label}</span>;
   return <Occurrence {...props} presentation={{
     ref: props.subject, label, href, item: null, primary,
+    localLinkSource: resource?.visible ? directLinkSource(resource.ref, label) : null,
     highlightId: resource?.kind === "highlight" ? parsed.id : null,
     ...(resource?.kind === "highlight" ? {annotation: {resource, editable}} : {}),
     status,
@@ -423,6 +427,9 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
 
         </div>
         <div className={styles.actions}><ContextualActionMenu omitResourceActions={props.omitResourceActions}
+          linkSource={props.linkSource === undefined
+            ? item ? itemLinkSource(item, props.readingRef) : presentation.localLinkSource ?? null
+            : props.linkSource}
           title={label} subjectKey={occurrenceKey} resourceRef={assumeCanonicalResourceRef(item?.action_ref ?? ref)}
           navigation={item === null ? null : {
             key: `${occurrenceKey}:${JSON.stringify(item.activation)}`,

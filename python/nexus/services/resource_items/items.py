@@ -16,6 +16,8 @@ identities, including hidden ones; readable peer highlights remain remotely owne
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections import deque
 from collections.abc import Mapping, Sequence
 from typing import Any, assert_never, cast
@@ -39,6 +41,7 @@ from nexus.schemas.reader_excerpts import (
     ExcerptPreview,
     ExcerptProjection,
 )
+from nexus.schemas.resource_evidence import LocationQuote
 from nexus.schemas.resource_items import (
     ExcerptOut,
     ImagesResourceBodyOut,
@@ -54,6 +57,7 @@ from nexus.schemas.resource_items import (
     ResourcePreviewOut,
     SourceAttributionOut,
 )
+from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_media,
     load_contributor_credits_for_podcasts,
@@ -68,12 +72,15 @@ from nexus.services.reader_excerpts import (
 )
 from nexus.services.resource_graph.liveness import ref_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
+from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.locations import (
     ScopedMediaPassage,
+    canonical_source_quote,
+    current_passages,
     media_passages,
 )
 from nexus.services.resource_items.routing import (
-    _activations_from_resolved_passages,
+    activations_from_resolved_passages,
 )
 
 _VISIBLE = f"({requested_media_ids_cte_sql()})"
@@ -158,17 +165,39 @@ def _trim_excerpt(clipped: str, *, tail: bool) -> str:
     return clipped
 
 
+def passage_link_revision(
+    owner: ResourceRef, quote: LocationQuote, locator: dict[str, Any] | None
+) -> str | None:
+    """Seal full link evidence even when the visible excerpt is truncated."""
+    canonical = canonical_source_quote(quote, locator) if locator is not None else None
+    if canonical is None:
+        return None
+    quote, locator = canonical
+    proof = [
+        owner.uri,
+        quote.exact,
+        quote.prefix or "",
+        quote.suffix or "",
+        retrieval_locator_json(locator),
+    ]
+    return hashlib.sha256(
+        json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 def passage_body(
     projection: ExcerptProjection,
     color: HighlightColor | None = None,
     *,
     reading_ref: str | None = None,
     captured: bool = True,
+    link_revision: str | None = None,
 ) -> PassageResourceBodyOut:
     return PassageResourceBodyOut(
         excerpt=projection.view,
         capture_revision=projection.capture_revision if captured else None,
         reading_ref=reading_ref,
+        link_revision=link_revision,
         color=color,
     )
 
@@ -220,7 +249,7 @@ def resource_items_out(
         if ref.scheme == "media" and ref.id not in summaries:
             rows.pop(ref.uri, None)
     missing = {ref.uri for ref in refs if ref.uri not in rows}
-    activations = _activations_from_resolved_passages(
+    activations = activations_from_resolved_passages(
         db, viewer_id=viewer_id, refs=refs, missing_ref_uris=missing, scoped=passages
     )
     owner_refs = [
@@ -237,7 +266,7 @@ def resource_items_out(
     )
     named_refs = [ref for ref in refs if ref.scheme == "podcast" and ref.uri not in missing]
     credits = _credits(db, [*named_refs, *(ref for ref in owner_refs if ref.uri in source_rows)])
-    source_activations = _activations_from_resolved_passages(
+    source_activations = activations_from_resolved_passages(
         db,
         viewer_id=viewer_id,
         refs=owner_refs,
@@ -413,7 +442,7 @@ def source_attributions(
     """Known current source metadata, only after the same viewer gate as resource rows."""
     rows, passages = _rows(db, viewer_id, refs)
     credits = _credits(db, [r for r in refs if r.uri in rows])
-    activations = _activations_from_resolved_passages(
+    activations = activations_from_resolved_passages(
         db,
         viewer_id=viewer_id,
         refs=refs,
@@ -468,6 +497,7 @@ def _body(
             row["excerpt_projection"],
             cast(HighlightColor | None, row.get("color")),
             reading_ref=row.get("reading_ref"),
+            link_revision=row.get("link_revision"),
             captured=row.get("captured", False),
         )
     if kind == "note":
@@ -543,12 +573,16 @@ def _rows(
         query = _query(scheme)
         for row in db.execute(text(query), {"ids": ids, "viewer_id": viewer_id}).mappings():
             out[f"{scheme}:{row['id']}"] = dict(row)
+    current = current_passages(
+        db, viewer_id=viewer_id, refs=refs, reading_media_ids=reading_media_ids
+    )
     passages = media_passages(
         db,
         viewer_id=viewer_id,
         refs=refs,
         reading_media_ids=reading_media_ids,
         include_excerpts=excerpt_mode == "full",
+        current_passage_reads=current,
     )
     canonical_schemes = {
         "highlight",
@@ -635,6 +669,20 @@ def _rows(
         if row is None or row.get("body_kind") != "passage":
             continue
         passage = passages.get(ref.uri)
+        # The compact preview can omit the changed words. Bind the actual scoped
+        # owner, quote and locator that this displayed occurrence can materialize.
+        proof = passage or current.get(ref.uri)
+        if proof is not None and capability(ref.scheme).link_mode == "materialize_passage":
+            row["link_revision"] = passage_link_revision(proof.owner, proof.quote, proof.locator)
+        if passage is not None:
+            supplied = (reading_media_ids or {}).get(ref.uri)
+            row["reading_ref"] = (
+                passage.owner.uri
+                if passage.owner.scheme == "media"
+                else f"media:{supplied}"
+                if supplied is not None
+                else None
+            )
         captured = captures.get(ref.uri)
         if (
             excerpt_mode == "compact"
@@ -646,11 +694,6 @@ def _rows(
                 view=preview.excerpt, text_parts=None, capture_revision=preview.capture_revision
             )
             row["captured"] = True
-            row["reading_ref"] = (
-                passage.owner.uri
-                if passage is not None and passage.owner.scheme == "media"
-                else None
-            )
             continue
         if captured is None:
             if ref.scheme in ("highlight", "passage_anchor"):
@@ -676,9 +719,6 @@ def _rows(
                 },
             }
         row["captured"] = ref.uri in captures
-        row["reading_ref"] = (
-            passage.owner.uri if passage is not None and passage.owner.scheme == "media" else None
-        )
         scope = (
             passage.excerpt_scope
             if passage is not None and passage.excerpt_scope is not None
