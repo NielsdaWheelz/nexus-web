@@ -6,7 +6,7 @@ import { Fragment, Slice } from "prosemirror-model";
 import { TextSelection, type Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { docFromBody, noteBodySchema, sameBody, type InlineNode, type NoteBody } from "@nexus/authored/body";
-import { applyBodyEdits, bodyInline, readBody, encodeBytes, LOCAL_EDIT, type BodyEdit } from "@nexus/authored/documents";
+import { applyBodyEdits, bodyInline, readBody, encodeBytes, type BodyEdit } from "@nexus/authored/documents";
 import type { WritingDocument } from "./runtime";
 /** One editing engine can bind a standalone body or an outline's selected field.
  * Selection positions in the view are global; authored edits stay field-local. */
@@ -28,7 +28,7 @@ export class InlineBinding implements EditorBinding {
   private deferred: () => boolean = () => false;
   private updating = false;
   private readonly receive = () => this.refresh();
-  constructor(private readonly writing: WritingDocument, private readonly origin: unknown = LOCAL_EDIT) { Y.applyUpdate(this.baseline, Y.encodeStateAsUpdate(writing.doc)); }
+  constructor(private readonly writing: WritingDocument, private readonly admitText: (baseline: Y.Doc, write: (doc: Y.Doc) => void) => void) { Y.applyUpdate(this.baseline, Y.encodeStateAsUpdate(writing.doc)); }
   document(): WritingDocument { return this.writing; }
   bodyState():string {return encodeBytes(Y.encodeStateAsUpdate(this.baseline));}
   body(): NoteBody { return readBody(this.baseline); }
@@ -41,8 +41,8 @@ export class InlineBinding implements EditorBinding {
   apply(transaction: Transaction): void {
     this.updating = true;
     try {
-      applyBodyEdits(this.baseline, transactionEdits(transaction));
-      Y.applyUpdate(this.writing.doc, Y.encodeStateAsUpdate(this.baseline, Y.encodeStateVector(this.writing.doc)), this.origin);
+      const edits = transactionEdits(transaction);
+      this.admitText(this.baseline, doc => applyBodyEdits(doc, edits));
     } finally { this.updating = false; }
   }
   /** Explicit attachment/literal handoff must match its displayed baseline. */
@@ -53,8 +53,7 @@ export class InlineBinding implements EditorBinding {
     const edits = bodyEdits(before, after);
     this.updating = true;
     try {
-      applyBodyEdits(this.baseline, edits);
-      Y.applyUpdate(this.writing.doc, Y.encodeStateAsUpdate(this.baseline, Y.encodeStateVector(this.writing.doc)), this.origin);
+      this.admitText(this.baseline, doc => applyBodyEdits(doc, edits));
     } finally { this.updating = false; }
     this.refresh();
   }

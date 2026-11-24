@@ -4,11 +4,13 @@
  * allocating another touch. An owned identity is not recreated; revival is an
  * explicit restore. */
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
-import type { Change, Corpus, HighlightColor, PassageCapture, SourceCapture, LinkState, ResourcePatch, ResourceState, SelectionCapture, Stamp, Vector } from "./types.ts";
+import type { Change, Corpus, HighlightColor, PassageCapture, SourceCapture, LinkState, PageCredit, ResourcePatch, ResourceState, SelectionCapture, Stamp, Vector } from "./types.ts";
 import { WorkJoinError, WorkUnavailableError } from "./types.ts";
 import { createNote, createTitle } from "./documents.ts";
 import { canonicalSelection } from "./geometry.ts";
-import { mergeChanges, counter, isVisible } from "./merge.ts";
+import { mergeChanges, counter, isVisible, projectResource } from "./merge.ts";
+import { canonicalSerialization } from "./canonical.ts";
+import { validatePageWorkTime } from "./validate.ts";
 import { sortedEndpoints } from "./identity.ts";
 import type { NoteBody } from "./body.ts";
 import { prepareWorkPatch, type WorkIntent } from "./work.ts";
@@ -47,7 +49,7 @@ function newSelection(selection:SelectionCapture):SelectionCapture {
 function patchOf(r:ResourceState):ResourcePatch {
   switch(r.kind) {
     case "note": return {ref:r.ref,kind:"note",touch_vv:{},delete_vv:{},body_update:null,work:null};
-    case "page": return {ref:r.ref,kind:"page",touch_vv:{},delete_vv:{},local_date:r.local_date,title_update:null};
+    case "page": return {ref:r.ref,kind:"page",touch_vv:{},delete_vv:{},local_date:r.local_date,title_update:null,last_work_at_ms:null};
     case "highlight": return {ref:r.ref,kind:"highlight",source_ref:r.source_ref,selection:r.selection,color:r.color,touch_vv:{},delete_vv:{},body_update:null};
   }
 }
@@ -73,7 +75,7 @@ export function prepareChange(context:CommandContext,intent:Intent,states:Corpus
       case "create_page": {
         const known=knownResource(action.ref);
         if(known){if(known.kind!=="page"||known.local_date!==action.local_date)throw new TypeError("Resource kind and daily binding are immutable");return;}
-        change.resources.push({kind:"page",ref:action.ref,touch_vv:dot,delete_vv:{},local_date:action.local_date,title_update:createTitle(action.title)});return;
+        change.resources.push({kind:"page",ref:action.ref,touch_vv:dot,delete_vv:{},local_date:action.local_date,title_update:createTitle(action.title),last_work_at_ms:null});return;
       }
       case "edit_body": {
         const old=resource(action.ref);
@@ -84,7 +86,7 @@ export function prepareChange(context:CommandContext,intent:Intent,states:Corpus
       }
       case "edit_title": {
         const old=resource(action.ref);if(old.kind!=="page")throw new TypeError("Title edit addresses a page");
-        change.resources.push({kind:"page",ref:old.ref,local_date:old.local_date,title_update:action.title_update,touch_vv:dot,delete_vv:{}});return;
+        change.resources.push({kind:"page",ref:old.ref,local_date:old.local_date,title_update:action.title_update,touch_vv:dot,delete_vv:{},last_work_at_ms:null});return;
       }
       case "delete_resource":change.resources.push({...patchOf(resource(action.ref)),delete_vv:action.observed_touch});return;
       case "delete_joined_note": {
@@ -144,6 +146,52 @@ export function prepareChange(context:CommandContext,intent:Intent,states:Corpus
   };
   add(intent);return change;
 }
+
+function isPageWorkMarker(patch: ResourcePatch): boolean {
+  return patch.kind === "page" && patch.last_work_at_ms !== null && patch.local_date === null &&
+    patch.title_update === null && Object.keys(patch.touch_vv).length === 0 && Object.keys(patch.delete_vv).length === 0;
+}
+
+/** Credit one effective gesture after lowering. Receipt coverage still reads the
+ * first substantive same-page patch. The caller seals and budgets the result. */
+export function foldPageCredit(change: Change, states: Corpus, credit: PageCredit): Change {
+  if (credit === null) return change;
+  const refs = new Set(change.resources.filter(patch => !isPageWorkMarker(patch) &&
+    !(patch.kind === "note" && patch.body_update === null && patch.work !== null)).map(patch => patch.ref));
+  const links = new Set(change.links.map(link => link.link_id));
+  if (!refs.size && !links.size) return change;
+  const beforeResources = new Map(states.resources.map(resource => [resource.ref, resource]));
+  const beforeLinks = new Map(states.links.map(link => [link.link_id, link]));
+  const after = mergeChanges(states, [change]);
+  const page = after.resources.find(resource => resource.ref === credit.ref);
+  if (page?.kind === "page" && page.local_date !== null) return change;
+  const contentChanged = after.projections.some(projection => {
+    if (!refs.has(projection.ref)) return false;
+    const before = beforeResources.get(projection.ref);
+    if (projection.visible !== (before !== undefined && isVisible(before.touch_vv, before.delete_vv))) return true;
+    if (!projection.visible || before === undefined) return false;
+    const prior = projectResource(before);
+    return projection.title !== prior.title ||
+      canonicalSerialization(projection.body_pm_json) !== canonicalSerialization(prior.body_pm_json);
+  });
+  const placementChanged = after.links.some(link => {
+    if (!links.has(link.link_id)) return false;
+    const before = beforeLinks.get(link.link_id);
+    const visible = isVisible(link.add_vv, link.remove_vv);
+    return visible !== (before !== undefined && isVisible(before.add_vv, before.remove_vv)) ||
+      (visible && (before?.position_a?.value !== link.position_a?.value || before?.position_b?.value !== link.position_b?.value));
+  });
+  if (!contentChanged && !placementChanged) return change;
+  if (page?.kind !== "page") throw new TypeError("Page work requires an existing page or a creation");
+  validatePageWorkTime(credit.at_ms, page.local_date);
+  const resources = [...change.resources];
+  const index = resources.findIndex(patch => patch.ref === page.ref && patch.kind === "page" && !isPageWorkMarker(patch));
+  const substantive = resources[index];
+  if (substantive?.kind === "page") resources[index] = {...substantive, last_work_at_ms: credit.at_ms};
+  else resources.push({kind:"page", ref:page.ref, touch_vv:{}, delete_vv:{}, local_date:null, title_update:null, last_work_at_ms:credit.at_ms});
+  return {...change, resources};
+}
+
 export interface OrderedLink {link_id:string;position:string}
 /** Re-key only an observed equal-position run and the insertion, atomically. */
 export function insertionPositions(siblings:readonly OrderedLink[],index:number,new_link_id:string):OrderedLink[] {

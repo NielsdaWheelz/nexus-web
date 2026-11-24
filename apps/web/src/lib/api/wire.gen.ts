@@ -9855,6 +9855,8 @@ export interface components {
              * @enum {string}
              */
             kind: "page";
+            /** Last Work At Ms */
+            last_work_at_ms: number | null;
             /** Local Date */
             local_date: string | null;
             /** Ref */
@@ -9877,6 +9879,8 @@ export interface components {
              * @enum {string}
              */
             kind: "page";
+            /** Last Work At Ms */
+            last_work_at_ms: number | null;
             /** Local Date */
             local_date: string | null;
             /** Ref */
@@ -13264,7 +13268,7 @@ export interface components {
              * Format Revision
              * @constant
              */
-            format_revision: 6;
+            format_revision: 7;
             /** Head Cursor */
             head_cursor: string;
             /** Lamport */
@@ -13281,7 +13285,7 @@ export interface components {
              * Format Revision
              * @constant
              */
-            format_revision: 6;
+            format_revision: 7;
             /** Head Cursor */
             head_cursor: string;
             /** Lamport */
@@ -14279,7 +14283,7 @@ export interface components {
              * Format Revision
              * @constant
              */
-            format_revision: 6;
+            format_revision: 7;
             /**
              * Replica Id
              * Format: uuid
@@ -15385,8 +15389,9 @@ export interface operations {
     };
     download_authored_changes_get: {
         parameters: {
-            query?: {
+            query: {
                 after?: number;
+                format_revision: string;
             };
             header: {
                 "X-Nexus-Account": string;
