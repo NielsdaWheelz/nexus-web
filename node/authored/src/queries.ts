@@ -481,10 +481,16 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       for (const date of query.retained) validateLocalDate(date);
       const params = [query.arrival, JSON.stringify(query.retained)];
       const pages = `FROM resources INDEXED BY resources_daily_pages WHERE kind='page' AND visible=1 AND local_date IS NOT NULL`;
-      const calendar = `WITH added(local_date) AS (SELECT ?1 UNION SELECT value FROM json_each(?2)),
-        recorded(local_date) AS MATERIALIZED (
+      const taskDates = `SELECT ${WORK_TASK_DAY} FROM resources INDEXED BY resources_task_days WHERE ${WORK_TASK_HISTORY}`;
+      // Seek the next distinct day; a single date can cover thousands of tasks.
+      const calendar = `WITH RECURSIVE added(local_date) AS (SELECT ?1 UNION SELECT value FROM json_each(?2)),
+        task_dates(local_date) AS (
+          SELECT (${taskDates} ORDER BY ${WORK_TASK_DAY} DESC LIMIT 1)
+          UNION ALL SELECT (${taskDates} AND ${WORK_TASK_DAY}<task_dates.local_date ORDER BY ${WORK_TASK_DAY} DESC LIMIT 1)
+            FROM task_dates WHERE local_date IS NOT NULL
+        ), recorded(local_date) AS MATERIALIZED (
           SELECT local_date ${pages}
-          UNION SELECT ${WORK_TASK_DAY} FROM resources INDEXED BY resources_task_days WHERE ${WORK_TASK_HISTORY}
+          UNION SELECT local_date FROM task_dates WHERE local_date IS NOT NULL
           UNION SELECT day.key FROM resources INDEXED BY resources_habit_history
             CROSS JOIN json_each(state_json,'$.work.habit_checks') day
             WHERE ${WORK_HABIT_HISTORY} AND json_extract(day.value,'$.value')=1
