@@ -30,3 +30,8 @@
   font-weight: var(--weight-medium);
   margin: var(--space-2) 0 var(--space-1);
 }
+
+.windowedMention {
+  --ruling-lines: 1;
+  --ruling-pitch: calc(var(--outline-control-block-size) - var(--outline-content-top));
+}

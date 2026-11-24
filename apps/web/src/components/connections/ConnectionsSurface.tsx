@@ -155,7 +155,8 @@ function MentionedIn({selfRef, description, revision, liveRevision, returnOrder,
         const style = top === undefined ? undefined : {position: "absolute", insetInline: 0, top, blockSize: size, overflow: size === undefined ? undefined : "clip"} as const;
         return members.has(id)
           ? <ResourceOutlineRow key={id} resourceRef={id} occurrenceKey={`connections:${selfRef}/mention:${id}`} incoming={null}
-              rowRef={index.measure} rootProps={{style, "data-index": rank, "data-collection-row-id": id, "aria-posinset": rank + 1, "aria-setsize": index.count,
+              rowRef={index.measure} rootProps={{className: index.windowed ? styles.windowedMention : undefined,
+                style, "data-index": rank, "data-collection-row-id": id, "aria-posinset": rank + 1, "aria-setsize": index.count,
                 onFocus: () => setFocused(id), onBlur: event => {if (!event.currentTarget.contains(event.relatedTarget)) setFocused(null);}}}/>
           : <li key={id} data-collection-row-id={id} aria-hidden="true" role="presentation" style={style}/>;
       })}
