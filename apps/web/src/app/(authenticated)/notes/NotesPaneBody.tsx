@@ -21,12 +21,12 @@ import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
 import { readerType } from "@/lib/reader/typography";
 import { useRecent } from "@/lib/recent/store";
-import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
+import { usePaneReturnReady, usePaneScrollMotion } from "@/lib/workspace/paneReturnMemento";
 import styles from "./NotesPaneBody.module.css";
 
 const register = (result: QueryResult) => {
   const value = result.page_register;
-  return value?.kind === "retained" || value?.kind === "successor" ? null : value;
+  return value?.kind === "retained" || value?.kind === "held" || value?.kind === "successor" ? null : value;
 };
 const UNIT = {singular: "page", plural: "pages"};
 
@@ -51,29 +51,49 @@ export default function NotesPaneBody() {
   const needsOrder = raw?.kind === "description" && raw.total > raw.items.length;
   const order = usePageOrder(text, needsOrder ? read.data!.store_revision : null);
   const admittedRead = needsOrder && order.data === null ? null : read.data;
+  const motion = usePaneScrollMotion();
   const [last, setLast] = useState<{account: typeof account; text: string; data: NonNullable<typeof read.data>; order: typeof order.data} | null>(null);
-  if (admittedRead && (last?.account !== account || last.text !== text || last.data !== admittedRead || last.order !== order.data))
-    setLast({account, text, data: admittedRead, order: order.data});
-  const observation = admittedRead ?? (last?.account === account ? last.data : null);
-  const shownText = admittedRead || last?.account !== account ? text : last.text;
-  const shownOrder = admittedRead || last?.account !== account ? order.data : last.order;
+  const frozen = motion !== "still" && last?.account === account && last.text === text && last.order !== null;
+  const current = frozen ? null : admittedRead;
+  if (current && (last?.account !== account || last.text !== text || last.data !== current || last.order !== order.data))
+    setLast({account, text, data: current, order: order.data});
+  const observation = current ?? (last?.account === account ? last.data : null);
+  const shownText = current || last?.account !== account ? text : last.text;
+  const shownOrder = current || last?.account !== account ? order.data : last.order;
   const shown = observation?.page_register;
   const description = shown?.kind === "description" ? shown : null;
   const revision = observation?.store_revision ?? null;
+  const liveRevision = read.data?.store_revision ?? revision;
   const sparse = description !== null && description.total > description.items.length;
-  const {items, positions, request, error: rangeError, retry: retryRange} = useRankedAuthoredWindow({kind: "page_register", text: shownText}, revision, description, register);
+  const held = useMemo(() => shownOrder === null || liveRevision === null || liveRevision === revision ? undefined
+    : {revision: liveRevision, range: (start: number, limit: number) => shownOrder.range(start, limit, liveRevision)},
+    [shownOrder, revision, liveRevision]);
+  const {items, positions, request, error: rangeError, retry: retryRange} = useRankedAuthoredWindow(
+    {kind: "page_register", text: shownText}, revision, description, register, held);
   const recent = useRecent();
-  const refs = useMemo(() => shownText ? [] : (recent.snapshot?.entries ?? []).flatMap(({target}) =>
-    target.kind === "resource_ref" && target.ref.startsWith("page:") ? [target.ref] : []), [shownText, recent.snapshot]);
-  const recentRead = useAuthoredQuery(sparse && revision !== null && refs.length > 0
-    ? {kind: "page_register", text: shownText, at: {kind: "locate", refs}, expected_revision: revision} : null);
+  const [prefix, setPrefix] = useState<{account: typeof account; refs: readonly string[]} | null>(null);
+  const keepPrefix = frozen || held !== undefined;
+  const refs = useMemo(() => shownText ? [] : keepPrefix ? prefix?.account === account ? prefix.refs : []
+    : (recent.snapshot?.entries ?? []).flatMap(({target}) =>
+      target.kind === "resource_ref" && target.ref.startsWith("page:") ? [target.ref] : []),
+    [shownText, keepPrefix, prefix, account, recent.snapshot]);
+  const recentRead = useAuthoredQuery(sparse && liveRevision !== null && refs.length > 0
+    ? {kind: "page_register", text: shownText, at: {kind: "locate", refs: [...refs]}, expected_revision: liveRevision} : null);
   const locations = recentRead.data?.page_register;
   const opened = useMemo(() => {
     if (description === null || refs.length === 0) return [];
     const choices = sparse ? (locations?.kind === "locations" ? locations.items : []) : description.items;
     const byRef = new Map(choices.map(item => [item.ref, item]));
-    return refs.flatMap(ref => byRef.has(ref) ? [byRef.get(ref)!] : []).slice(0, 8);
-  }, [description, locations, refs, sparse]);
+    return refs.flatMap(ref => {
+      const item = byRef.get(ref) ?? null;
+      return keepPrefix || item !== null ? [{ref, item}] : [];
+    }).slice(0, 8);
+  }, [description, locations, refs, sparse, keepPrefix]);
+  const openedRefs = useMemo(() => opened.map(item => item.ref), [opened]);
+  if (!keepPrefix && (prefix?.account !== account || prefix.refs.length !== openedRefs.length ||
+    prefix.refs.some((ref, index) => ref !== openedRefs[index]))) {
+    setPrefix({account, refs: openedRefs});
+  }
   const shift = opened.length;
   const groups = useMemo(() => {
     const heads = new Map<number, string>();
@@ -96,7 +116,8 @@ export default function NotesPaneBody() {
       rows.push({...row, id: occurrence});
       return occurrence;
     };
-    for (const [rank, item] of opened.entries()) {
+    for (const [rank, {item}] of opened.entries()) {
+      if (item === null) continue;
       const id = add(item, rank, true);
       if (rank === 0) heads.set(id, "opened here");
     }
@@ -110,12 +131,12 @@ export default function NotesPaneBody() {
     return {rows, heads, long, ids, ranks};
   }, [description?.items, items, opened, shift, sparse]);
   const returnOrder = useMemo(() => shownOrder === null ? undefined
-    : {...shownOrder, prefix: opened.map(item => `recent:${item.ref.slice(5)}`)}, [shownOrder, opened]);
+    : {...shownOrder, prefix: openedRefs.map(ref => `recent:${ref.slice(5)}`)}, [shownOrder, openedRefs]);
   const ranked = useMemo(() => {
     if (!sparse || description === null || revision === null) return undefined;
     const source: RankedIndex = {
       count: description.total + shift,
-      revision: JSON.stringify([revision, opened.map(item => item.ref)]),
+      revision: JSON.stringify([revision, openedRefs]),
       heads: groups.heads,
       returnOrder,
       failed: rangeError !== null,
@@ -136,7 +157,7 @@ export default function NotesPaneBody() {
       const label = items.get(rank - shift)?.group;
       return <h3 className={styles.letter} aria-hidden={label === undefined || undefined}>{label ?? "\u00a0"}</h3>;
     }};
-  }, [description, groups, items, list, opened, positions, rangeError, request, revision, shift, returnOrder, sparse]);
+  }, [description, groups, items, list, openedRefs, positions, rangeError, request, revision, shift, returnOrder, sparse]);
   const error = read.error ?? order.error;
   const ready = (admittedRead !== null || error !== null) && (text !== "" || recent.snapshot !== null || recent.readFailure) &&
     (!sparse || refs.length === 0 || recentRead.data !== null || recentRead.error !== null);

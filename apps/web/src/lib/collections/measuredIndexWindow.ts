@@ -318,9 +318,9 @@ export function useMeasuredIndexWindow({ scopeKey, ids, headIds, ranked, hold, g
     }
     work.current = (measuredHeight, measureHeads = false) => {
       const current = committed.current;
-      if (!enabled || current?.list !== list || list === null || port === null || sample.current === null) return;
+      if (!enabled || current?.list !== list || list === null || port === null) return;
       const rowHeight = hold && current.view !== null ? current.view.height :
-        measuredHeight ?? current.view?.height ?? sample.current.getBoundingClientRect().height;
+        measuredHeight ?? current.view?.height ?? sample.current?.getBoundingClientRect().height ?? 0;
       if (rowHeight <= 0 || port.clientHeight === 0) return;
       const previousHeads = current.view?.headHeights ?? null;
       let measured = previousHeads ?? new Map<string, number>();

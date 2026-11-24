@@ -19,13 +19,14 @@ export function useRankedAuthoredWindow<Row extends RankedRow>(
   revision: string | null,
   description: Description<Row> | null,
   select: (result: QueryResult) => RankedIndexResult<Row> | null,
+  held?: {revision: string; range(start: number, limit: number): Promise<(Row | null)[] | null>},
 ) {
   const store = useAuthoredStore(), account = useAuthoredAccountId();
-  const key = JSON.stringify([account, source, revision]);
+  const key = JSON.stringify([account, source, held?.revision ?? null, revision]);
   const [wanted, setWanted] = useState<{key: string; signature: string; starts: number[]; refs: string[]} | null>(null);
   const [cache, setCache] = useState<{
     key: string;
-    blocks: ReadonlyMap<number, Row[]>;
+    blocks: ReadonlyMap<number, (Row | null)[]>;
     positions: ReadonlyMap<string, number | null>;
     pinned: Locations<Row>;
     error: unknown | null;
@@ -33,7 +34,7 @@ export function useRankedAuthoredWindow<Row extends RankedRow>(
   const [attempt, setAttempt] = useState(0);
   const retry = useCallback(() => setAttempt(value => value + 1), []);
   const count = description?.total ?? 0;
-  const sampled = description?.items.length ?? 0;
+  const sampled = held === undefined ? description?.items.length ?? 0 : 0;
   const request = useCallback((ranks: readonly number[], refs: readonly string[]) => {
     const starts = [...new Set(ranks.filter(rank => rank >= sampled && rank < count).map(rank => rank - rank % BLOCK))]
       .sort((left, right) => left - right);
@@ -51,6 +52,10 @@ export function useRankedAuthoredWindow<Row extends RankedRow>(
         const known = previous?.blocks.get(start);
         if (known !== undefined) return [start, known] as const;
         const limit = Math.min(BLOCK, count - start);
+        if (held !== undefined) {
+          const items = await held.range(start, limit);
+          return items === null ? null : [start, items] as const;
+        }
         const result = await store.query({...source, at: {kind: "range", start, limit}, expected_revision: revision});
         if (result.store_revision !== revision) return null;
         const range = select(result);
@@ -63,16 +68,16 @@ export function useRankedAuthoredWindow<Row extends RankedRow>(
       const blocks = new Map(results.filter(result => result !== null));
       const positions = new Map<string, number | null>();
       const pinned: Locations<Row> = [];
-      const knownItems = new Map(description.items.map((item, rank) => [identity(item), {...item, rank}]));
+      const knownItems = new Map((held === undefined ? description.items : []).map((item, rank) => [identity(item), {...item, rank}]));
       for (const item of previous?.pinned ?? []) knownItems.set(identity(item), item);
       for (const [start, items] of blocks)
-        for (const [offset, item] of items.entries()) knownItems.set(identity(item), {...item, rank: start + offset});
+        for (const [offset, item] of items.entries()) if (item !== null) knownItems.set(identity(item), {...item, rank: start + offset});
       const unresolved: string[] = [];
       for (const ref of wanted.refs) {
         const item = knownItems.get(ref);
         if (item !== undefined) { positions.set(ref, item.rank); pinned.push(item); }
         else if (previous?.positions.get(ref) === null) positions.set(ref, null);
-        else unresolved.push(ref);
+        else if (held === undefined) unresolved.push(ref);
       }
       for (let start = 0; start < unresolved.length; start += 100) {
         const refs = unresolved.slice(start, start + 100);
@@ -94,17 +99,17 @@ export function useRankedAuthoredWindow<Row extends RankedRow>(
     return () => { retired = true; };
     // The currently admitted cache is read once per demand, then replaced.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wanted, key, count, revision, description, sampled, store, select, attempt]);
+  }, [wanted, key, count, revision, description, sampled, store, select, attempt, held]);
 
   const resolved = cache?.key === key ? cache : null;
   const items = useMemo<ReadonlyMap<number, Row>>(() => {
     if (description === null || description.total <= description.items.length) return EMPTY;
-    const rows = new Map(description.items.map((item, rank) => [rank, item]));
+    const rows = new Map((held === undefined ? description.items : []).map((item, rank) => [rank, item]));
     if (resolved !== null) {
-      for (const [start, block] of resolved.blocks) for (const [offset, item] of block.entries()) rows.set(start + offset, item);
+      for (const [start, block] of resolved.blocks) for (const [offset, item] of block.entries()) if (item !== null) rows.set(start + offset, item);
       for (const item of resolved.pinned) rows.set(item.rank, item);
     }
     return rows;
-  }, [description, resolved]);
+  }, [description, held, resolved]);
   return {items, positions: resolved?.positions ?? null, error: resolved?.error ?? null, request, retry};
 }

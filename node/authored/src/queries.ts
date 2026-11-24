@@ -436,6 +436,18 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
           return {sql: `INSERT INTO page_register_orders(token,rank,ref)
             SELECT ?${first},row_number() OVER (ORDER BY ${PAGE_TITLE_SQL} COLLATE NOCASE,r.ref)-1,r.ref ${filtered}`,
             params: [...params,query.at.token]};
+        case "held": {
+          const {start, limit, token} = query.at;
+          if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > AUTHORED_INDEX_RANGE)
+            throw new RangeError("Invalid held page range");
+          return {sql: `WITH slice AS (
+            SELECT o.rank,r.ref,${PAGE_TITLE_SQL} AS name FROM page_register_orders o LEFT JOIN resources r
+              ON r.ref=o.ref AND ${visible}
+              WHERE o.token=?1 AND o.rank>=?2 AND o.rank<?2+?3 ORDER BY o.rank)
+            SELECT json_object('kind','held','start',?2,'items',json_group_array(
+              CASE WHEN ref IS NULL THEN NULL ELSE json_object(${item}) END)) AS register FROM slice`,
+            params:[token,start,limit]};
+        }
         case "successor": {
           const token = `?${first}`, ref = `?${first + 1}`;
           const live = `FROM page_register_orders o CROSS JOIN resources r ON r.ref=o.ref

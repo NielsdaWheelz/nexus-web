@@ -1,10 +1,13 @@
 "use client";
 
 import {useCallback, useEffect, useState} from "react";
+import type {RegisterItem} from "@nexus/authored/types";
 import {useAuthoredAccountId, useAuthoredStore} from "@/lib/authored/provider";
 import type {ReturnOrder} from "@/lib/workspace/paneReturnMemento";
 
-type PageOrder = Omit<ReturnOrder, "prefix">;
+type PageOrder = Omit<ReturnOrder, "prefix"> & {
+  range(start: number, limit: number, revision: string): Promise<(RegisterItem | null)[] | null>;
+};
 
 export function usePageOrder(text: string, revision: string | null) {
   const store = useAuthoredStore();
@@ -23,6 +26,14 @@ export function usePageOrder(text: string, revision: string | null) {
       retain() {
         references++;
         return release;
+      },
+      async range(start, limit, expectedRevision) {
+        const result = await store.query({kind: "page_register", text: "", at: {kind: "held", token, start, limit}, expected_revision: expectedRevision});
+        const range = result.page_register;
+        if (range?.kind === "changed") return null;
+        if (range?.kind !== "held" || range.start !== start || range.items.length !== limit)
+          throw new Error("incomplete held page range");
+        return range.items;
       },
       async successor(id, expectedRevision) {
         const result = await store.query({kind: "page_register", text, at: {kind: "successor", token, ref: id === null ? null : `page:${id}`}, expected_revision: expectedRevision});

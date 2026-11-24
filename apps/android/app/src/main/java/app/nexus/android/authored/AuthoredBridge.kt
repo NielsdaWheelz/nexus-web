@@ -160,7 +160,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                         val orderOperation = order?.optString("kind")
                         if (token != null) when (orderOperation) {
                             "retain" -> pageOrders.add(token)
-                            "successor", "release" -> require(token in pageOrders)
+                            "held", "successor", "release" -> require(token in pageOrders)
                         }
                         remoteOperation = operation in setOf("register", "push", "pull", "snapshot", "scope_inputs", "scope_text_remote")
                         if (remoteOperation && foreground && session.remoteAdmission == "Unavailable") {
