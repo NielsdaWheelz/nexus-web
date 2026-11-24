@@ -45,7 +45,7 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
     ids: index.slots.filter(slot => current.has(slot.id)).slice(0, 100).map(slot => slot.id),
     generation: list.status === "ready" ? String(list.generation) : "",
   } : admitted.current;
-  useLayoutEffect(() => {admitted.current = demand;}, [demand]);
+  useLayoutEffect(() => {admitted.current = demand;});
   const key = JSON.stringify([ownerRef, demand.ids]);
   const load = (signal: AbortSignal) => resolveConnections({...remoteConnectionScope(ownerRef), edge_ids: demand.ids}, signal);
   const details = usePaneFreeServerValue({key: demand.ids.length ? key : null, stale: demand.generation, load});
