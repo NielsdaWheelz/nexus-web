@@ -76,8 +76,33 @@ _CTE = f"""
 WITH visible_media AS (
     {visible_media_ids_cte_sql()}
 ), metadata_jobs AS (
-    SELECT operations.* FROM ({metadata_operations_sql()}) operations
+    SELECT DISTINCT ON (operations.media_id) operations.*,
+        min(created_at) OVER by_media AS first_created_at,
+        count(*) FILTER (WHERE is_unfinished) OVER by_media AS unfinished_count,
+        max(lifecycle_updated_at) OVER by_media AS latest_updated_at
+    FROM ({metadata_operations_sql()}) operations
     JOIN visible_media vm ON vm.media_id = operations.media_id
+    WINDOW by_media AS (PARTITION BY operations.media_id)
+    ORDER BY operations.media_id, created_at DESC, job_id DESC
+), acquisitions AS (
+    SELECT media_id, min(COALESCE(finished_at, created_at)) AS arrived_at
+    FROM media_source_attempts
+    WHERE created_by_user_id = :viewer_id AND status = 'succeeded'
+      AND source_type <> :transcript_source_type
+    GROUP BY media_id
+), index_jobs AS (
+    SELECT DISTINCT ON (payload->>'media_id', payload->'revision') job.*
+    FROM background_jobs job JOIN visible_media vm ON vm.media_id::text = payload->>'media_id'
+    WHERE kind = 'media_content_reindex_job'
+    ORDER BY payload->>'media_id', payload->'revision', created_at DESC, id DESC
+), live_jobs AS (
+    SELECT payload->>'media_id' AS media_id,
+        count(*) FILTER (WHERE status IN {_LIVE}) AS active_count,
+        max(updated_at) AS updated_at
+    FROM background_jobs job JOIN visible_media vm ON vm.media_id::text = payload->>'media_id'
+    WHERE kind IN ('ingest_media_source', 'media_content_reindex_job', 'enrich_metadata')
+      AND status IN ('pending', 'failed', 'running', 'held')
+    GROUP BY payload->>'media_id'
 ), media_work AS (
     SELECT m.id AS media_id, m.kind AS media_kind, m.title, m.requested_url,
         m.processing_status::text AS processing_status, m.updated_at AS media_updated_at,
@@ -109,10 +134,10 @@ WITH visible_media AS (
         metadata_latest.status AS metadata_job_status,
         metadata_latest.available_at AS metadata_job_available_at,
         COALESCE(metadata_latest.completed_at, metadata_latest.updated_at) AS metadata_failed_at,
-        metadata_summary.first_created_at AS metadata_accepted_at,
-        metadata_summary.unfinished_count AS metadata_unfinished_count,
-        metadata_summary.updated_at AS metadata_updated_at,
-        live_jobs.active_count AS active_job_count,
+        metadata_latest.first_created_at AS metadata_accepted_at,
+        COALESCE(metadata_latest.unfinished_count, 0) AS metadata_unfinished_count,
+        metadata_latest.latest_updated_at AS metadata_updated_at,
+        COALESCE(live_jobs.active_count, 0) AS active_job_count,
         live_jobs.updated_at AS live_jobs_updated_at,
         capacity.job_id AS capacity_job_id
     FROM media m
@@ -122,37 +147,13 @@ WITH visible_media AS (
         SELECT * FROM media_source_attempts WHERE media_id = m.id
         ORDER BY {LATEST_ORDER_SQL} LIMIT 1
     ) msa ON TRUE
-    LEFT JOIN LATERAL (
-        SELECT min(COALESCE(finished_at, created_at)) AS arrived_at
-        FROM media_source_attempts
-        WHERE media_id = m.id AND created_by_user_id = :viewer_id
-          AND status = 'succeeded' AND source_type <> :transcript_source_type
-    ) acquisition ON TRUE
+    LEFT JOIN acquisitions acquisition ON acquisition.media_id = m.id
     LEFT JOIN background_jobs source_job ON source_job.id = msa.job_id
     LEFT JOIN content_index_states cis ON cis.owner_kind = 'media' AND cis.owner_id = m.id
-    LEFT JOIN LATERAL (
-        SELECT * FROM background_jobs
-        WHERE kind = 'media_content_reindex_job'
-          AND payload @> jsonb_build_object('media_id', m.id::text, 'revision', cis.revision)
-        ORDER BY created_at DESC, id DESC LIMIT 1
-    ) index_job ON TRUE
-    LEFT JOIN LATERAL (
-        SELECT * FROM metadata_jobs WHERE media_id = m.id
-        ORDER BY created_at DESC, job_id DESC LIMIT 1
-    ) metadata_latest ON TRUE
-    LEFT JOIN LATERAL (
-        SELECT min(created_at) AS first_created_at,
-            count(*) FILTER (WHERE is_unfinished) AS unfinished_count,
-            max(lifecycle_updated_at) AS updated_at
-        FROM metadata_jobs WHERE media_id = m.id
-    ) metadata_summary ON TRUE
-    LEFT JOIN LATERAL (
-        SELECT count(*) FILTER (WHERE status IN {_LIVE}) AS active_count,
-            max(updated_at) AS updated_at
-        FROM background_jobs
-        WHERE kind IN ('ingest_media_source', 'media_content_reindex_job', 'enrich_metadata')
-          AND status IN ('pending', 'failed', 'running', 'held') AND payload @> jsonb_build_object('media_id', m.id::text)
-    ) live_jobs ON TRUE
+    LEFT JOIN index_jobs index_job ON index_job.payload->>'media_id' = m.id::text
+        AND index_job.payload->'revision' = COALESCE(to_jsonb(cis.revision), 'null'::jsonb)
+    LEFT JOIN metadata_jobs metadata_latest ON metadata_latest.media_id = m.id
+    LEFT JOIN live_jobs ON live_jobs.media_id = m.id::text
     LEFT JOIN background_job_capacity_leases capacity ON capacity.resource_class = 'Heavy'
 ), media_classified AS (
     SELECT media_work.*,
@@ -191,6 +192,9 @@ WITH visible_media AS (
     JOIN media m ON m.id::text = s.target_media_id
     JOIN media_work w ON w.media_id = m.id AND w.attempt_id::text = s.target_attempt_id
     WHERE s.target_media_id IS NOT NULL AND s.derived_state <> 'Published'
+), latest_targeted_sessions AS (
+    SELECT DISTINCT ON (target_media_id) * FROM targeted_sessions
+    ORDER BY target_media_id, session_created_at DESC, session_id DESC
 ), import_refs AS (
     SELECT 'upload:' || session_id::text AS ref_key, session_id,
         published_media_id AS media_id, upload_kind, filename, origin_kind, capture_url,
@@ -259,10 +263,7 @@ WITH visible_media AS (
     FROM import_refs r LEFT JOIN import_media w ON w.media_id = r.media_id
     LEFT JOIN import_dismissals dismissal
         ON dismissal.user_id = :viewer_id AND dismissal.media_id = r.media_id
-    LEFT JOIN LATERAL (
-        SELECT * FROM targeted_sessions s WHERE s.target_media_id = r.media_id::text
-        ORDER BY s.session_created_at DESC, s.session_id DESC LIMIT 1
-    ) pending ON TRUE
+    LEFT JOIN latest_targeted_sessions pending ON pending.target_media_id = r.media_id::text
     WHERE r.derived_state IS DISTINCT FROM 'Published' OR w.media_id IS NOT NULL
 ), obligations AS (
     SELECT ref_key, 'source' AS key, source_classification AS classification,
@@ -278,32 +279,18 @@ WITH visible_media AS (
     SELECT ref_key, 'metadata', metadata_classification, 'Metadata', metadata_failure_code,
         metadata_failed_at, accepted_at, TRUE, FALSE
     FROM import_work WHERE metadata_classification IN ('Active', 'NeedsAttention')
-), raised AS (
-    SELECT o.* FROM obligations o JOIN import_work i ON i.ref_key = o.ref_key
-    WHERE o.classification = 'NeedsAttention'
-      AND (i.dismissed_through IS NULL OR o.failed_at > i.dismissed_through)
+), speaking AS (
+    SELECT DISTINCT ON (o.ref_key) o.ref_key, o.key, o.classification,
+        max(o.failed_at) FILTER (WHERE o.classification = 'NeedsAttention') OVER (PARTITION BY o.ref_key)
+            AS raised_failed_at
+    FROM obligations o JOIN import_work i ON i.ref_key = o.ref_key
+    WHERE o.classification = 'Active' OR i.dismissed_through IS NULL OR o.failed_at > i.dismissed_through
+    ORDER BY o.ref_key, (o.classification = 'NeedsAttention') DESC, array_position(ARRAY{list(STAGES)!r}::text[], o.stage),
+        COALESCE(o.failed_at, o.accepted_at), o.key
 ), imports AS (
-    SELECT i.*, speaking.key AS primary_key,
-        raised_newest.failed_at AS raised_failed_at
-    FROM (
-        SELECT import_work.*, CASE
-            WHEN EXISTS (SELECT 1 FROM raised o WHERE o.ref_key = import_work.ref_key)
-                THEN 'NeedsAttention'
-            WHEN 'Active' IN (source_classification, search_classification,
-                metadata_classification) THEN 'Active'
-            ELSE 'Complete' END AS classification
-        FROM import_work
-    ) i
-    LEFT JOIN LATERAL (
-        SELECT * FROM obligations o
-        WHERE o.ref_key = i.ref_key AND o.classification = i.classification
-          AND (o.classification = 'Active' OR EXISTS (
-              SELECT 1 FROM raised r WHERE r.ref_key = o.ref_key AND r.key = o.key))
-        ORDER BY array_position(ARRAY{list(STAGES)!r}::text[], o.stage), COALESCE(o.failed_at, o.accepted_at), o.key LIMIT 1
-    ) speaking ON TRUE
-    LEFT JOIN LATERAL (
-        SELECT max(failed_at) AS failed_at FROM raised WHERE ref_key = i.ref_key
-    ) raised_newest ON TRUE
+    SELECT i.*, COALESCE(speaking.classification, 'Complete') AS classification,
+        speaking.key AS primary_key, speaking.raised_failed_at
+    FROM import_work i LEFT JOIN speaking ON speaking.ref_key = i.ref_key
 )"""
 
 
