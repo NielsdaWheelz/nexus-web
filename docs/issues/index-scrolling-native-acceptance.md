@@ -9,12 +9,12 @@ css pixels after touchend while the port remained 7,147 pixels high. the
 headless stock firefox drag separately
 preserved its landing line after a prepend.
 
-the paired api-34 run `20261124-045319-1abcdd0548f4` released an acknowledged
+the paired api-34 run `20261124-050010-04c2f82cc9f6` released an acknowledged
 prepend into a trusted WebView fling. the scrollport held 7,179 css pixels
 through continued motion after lift. its last old-extent sample and first
 settled sample had the same occurrence within 0.27 css px. the browser emitted
-no observed `scrollend`. the separate outline keyboard stage failed later in
-that run.
+no observed `scrollend`. the same installed app reached the durable last of
+258 outline siblings through touch travel.
 
 physical touch and assistive-input boundaries remain unrun.
 
