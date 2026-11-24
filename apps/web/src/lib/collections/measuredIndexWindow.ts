@@ -72,14 +72,16 @@ interface Committed {
   readonly list: HTMLUListElement | null;
   readonly port: HTMLElement | null;
   readonly view: View | null;
+  readonly headIds: readonly string[];
   readonly extent: Extent | null;
 }
 
-function indexExtent(ids: readonly string[], height: number, headHeights: ReadonlyMap<string, number>): Extent {
+function indexExtent(ids: readonly string[], height: number, heads: ReadonlySet<string>,
+  headHeights: ReadonlyMap<string, number>): Extent {
   const tops: number[] = [];
   let headHeight = 0;
-  if (headHeights.size > 0) for (const [index, id] of ids.entries()) {
-    headHeight += headHeights.get(id) ?? 0;
+  if (heads.size > 0) for (const [index, id] of ids.entries()) {
+    if (heads.has(id)) headHeight += headHeights.get(id) ?? 0;
     tops.push(index * height + headHeight);
   }
   return {
@@ -129,12 +131,13 @@ export function useMeasuredIndexWindow({ scopeKey, ids, headIds, geometry, listR
   const work = useRef<((height: number | null, measureHeads?: boolean) => void) | null>(null);
   const sample = useRef<HTMLElement | null>(null);
   const observer = useRef<ResizeObserver | null>(null);
-  const headSamples = useRef<Element[]>([]);
-  const activeView = enabled && view?.scopeKey === scopeKey && view.headHeights.size === headIds.length && headIds.every(id => view.headHeights.has(id)) ? view : null;
+  const headSamples = useRef<HTMLElement[]>([]);
+  const activeView = enabled && view?.scopeKey === scopeKey ? view : null;
+  const headSet = useMemo(() => new Set(headIds), [headIds]);
   const height = activeView?.height ?? null;
   const headHeights = activeView?.headHeights ?? null;
   const extent = useMemo(() => height === null || headHeights === null ? null :
-    indexExtent(ids, height, headHeights), [ids, height, headHeights]);
+    indexExtent(ids, height, headSet, headHeights), [ids, height, headSet, headHeights]);
   const previous = committed.current;
   const pinnedRanks: number[] = [];
   const retainedRanks: number[] = [];
@@ -163,7 +166,7 @@ export function useMeasuredIndexWindow({ scopeKey, ids, headIds, geometry, listR
     const slots = ranks.rows.map(({ index }) => {
       const id = ids[index];
       const top = extent.rowTop(index);
-      const gapBeforePx = Math.max(0, top - (activeView.headHeights.get(id) ?? 0) - paintedEnd);
+      const gapBeforePx = Math.max(0, top - (headSet.has(id) ? activeView.headHeights.get(id) ?? 0 : 0) - paintedEnd);
       paintedEnd = top + activeView.height;
       return { id, index, gapBeforePx };
     });
@@ -240,7 +243,7 @@ export function useMeasuredIndexWindow({ scopeKey, ids, headIds, geometry, listR
       }
       return changed ? { scopeKey, sticky, pins } : before;
     });
-    committed.current = { geometry, scopeKey, ids, byId, list, port, view: activeView, extent };
+    committed.current = { geometry, scopeKey, ids, byId, list, port, view: activeView, headIds, extent };
     if (previous?.list !== list) {
       if (previous?.list) observer.current?.unobserve(previous.list);
       if (list !== null) observer.current?.observe(list);
@@ -251,11 +254,13 @@ export function useMeasuredIndexWindow({ scopeKey, ids, headIds, geometry, listR
       sample.current = nextSample;
       if (nextSample !== null) observer.current?.observe(nextSample);
     }
-    const samples = enabled && list !== null
-      ? [...list.querySelectorAll<HTMLElement>("[data-index-head-sample]")] : [];
-    for (const element of headSamples.current) if (!samples.includes(element)) observer.current?.unobserve(element);
-    for (const element of samples) if (!headSamples.current.includes(element)) observer.current?.observe(element);
-    headSamples.current = samples;
+    if (previous?.list !== list || previous.headIds !== headIds || (previous.port === null) !== (port === null)) {
+      const samples = enabled && list !== null
+        ? [...list.querySelectorAll<HTMLElement>("[data-index-head-sample]")] : [];
+      for (const element of headSamples.current) if (!samples.includes(element)) observer.current?.unobserve(element);
+      for (const element of samples) if (!headSamples.current.includes(element)) observer.current?.observe(element);
+      headSamples.current = samples;
+    }
     work.current = (measuredHeight, measureHeads = false) => {
       const current = committed.current;
       if (!enabled || current?.list !== list || list === null || port === null || sample.current === null) return;
@@ -264,14 +269,14 @@ export function useMeasuredIndexWindow({ scopeKey, ids, headIds, geometry, listR
       const previousHeads = current.view?.headHeights ?? null;
       let measured = previousHeads ?? new Map<string, number>();
       if (measureHeads || measured.size !== headIds.length || headIds.some(id => !measured.has(id))) {
-        const next = new Map(samples.map(element => [element.dataset.indexHeadSample!, element.getBoundingClientRect().height]));
+        const next = new Map(headSamples.current.map(element => [element.dataset.indexHeadSample!, element.getBoundingClientRect().height]));
         if (next.size !== headIds.length || headIds.some(id => !next.has(id))) return;
         if (previousHeads === null || next.size !== previousHeads.size || [...next].some(([id, size]) => previousHeads.get(id) !== size)) {
           measured = next;
         }
       }
       const currentExtent = current.extent !== null && previousHeads === measured && rowHeight === current.view?.height
-        ? current.extent : indexExtent(ids, rowHeight, measured);
+        ? current.extent : indexExtent(ids, rowHeight, headSet, measured);
       const listTop = list.getBoundingClientRect().top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop;
       const top = port.scrollTop - listTop;
       const viewport = port.clientHeight;

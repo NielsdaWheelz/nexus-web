@@ -3,7 +3,7 @@ import styles from "./ResourceList.module.css";
 
 /** Nonsticky headings share the list's measure without becoming selectable rows. */
 export function ResourceListHead({ children, sampleFor }: { readonly children: ReactNode; readonly sampleFor?: string }) {
-  return <li role="presentation" data-index-head-sample={sampleFor} aria-hidden={sampleFor !== undefined || undefined}
+  return <li role="presentation" data-index-head-sample={sampleFor} inert={sampleFor !== undefined || undefined} aria-hidden={sampleFor !== undefined || undefined}
     className={sampleFor === undefined ? styles.head : `${styles.head} ${styles.headSample}`}>{children}</li>;
 }
 

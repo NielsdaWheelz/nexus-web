@@ -104,6 +104,8 @@ export default function CollectionView({
     return result;
   }, [rows, headBefore]);
   const headIds = useMemo(() => [...heads.keys()], [heads]);
+  const headSamples = useMemo(() => [...heads].map(([id, head]) =>
+    <ResourceListHead key={id} sampleFor={id}>{head}</ResourceListHead>), [heads]);
   const scopeKey = `${returnScope}:${anchorKey ?? ""}`;
   const scrollport = useCallback(() => listRef.current?.closest<HTMLElement>('[data-pane-content][data-body-mode="standard"]') ?? null, []);
   const window = useMeasuredIndexWindow({ scopeKey, ids: orderedIds, headIds, geometry: status === "ready" ? geometry : null, listRef, scrollport });
@@ -223,8 +225,7 @@ export default function CollectionView({
       </ul>
     ) : (
       <ResourceList ref={listRef} ariaLabel={ariaLabel} busy={collectionBusy || !ready} windowed={windowed} measuring={window.plan.kind === "Measure"}>
-        {windowed ? [...heads].map(([id, head]) =>
-          <ResourceListHead key={id} sampleFor={id}>{head}</ResourceListHead>) : null}
+        {windowed ? headSamples : null}
         {slots.map(slot => {
           const row = rows[slot.index];
           const head = heads.get(slot.id);

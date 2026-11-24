@@ -1,5 +1,4 @@
 .list {
-  position: relative;
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -7,6 +6,8 @@
   padding: 0;
   list-style: none;
 }
+
+.list[data-index-window] { position: relative; }
 
 .head {
   display: flex;
