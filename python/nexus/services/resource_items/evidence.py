@@ -1614,6 +1614,27 @@ def admit_citation_snapshot(
     )
 
 
+def publisher_prompt_evidence(
+    db: Session, *, viewer_id: UUID, edge_id: UUID, snapshot: dict
+) -> str | None:
+    """One authorized native occurrence contributes its retained words or declared url."""
+    evidence = CitationSnapshot.model_validate(snapshot).evidence
+    if evidence is not None:
+        admission = _admitted_evidence(
+            db, viewer_id=viewer_id, evidence=evidence, project_completion=True
+        )
+        if admission is not None and admission.projected.quote is not None:
+            quote = admission.projected.quote
+            if quote.exact:
+                return (
+                    ("[…] " if quote.excerpt.truncated_before else "")
+                    + quote.exact[:2000]
+                    + (" […]" if len(quote.exact) > 2000 or quote.excerpt.truncated_after else "")
+                )
+    declared = _citation_reference(db, edge_id=edge_id)
+    return declared[0] if declared else None
+
+
 def _citation_reference(db: Session, *, edge_id: UUID) -> tuple[str, str | None] | None:
     """Only source-bound declared references survive denied target evidence."""
     row = db.execute(

@@ -8,7 +8,7 @@ import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 export type { ContextActionSection, DisplayedNavigation } from "@/lib/actions/useContextualActions";
 
 type ContextualMenuProps = Pick<ActionMenuProps,
-  "label" | "placement" | "align" | "onOpenChange" | "renderTrigger" | "triggerAttributes" | "triggerRef" | "returnFocusTo" | "renderContextAnchor" | "hold"
+  "triggerDisabled" | "triggerDisabledReason" | "className" | "label" | "placement" | "align" | "onOpenChange" | "renderTrigger" | "triggerAttributes" | "triggerRef" | "returnFocusTo" | "renderContextAnchor" | "hold"
 > & ContextualActionsInput;
 
 export default function ContextualActionMenu(props: ContextualMenuProps) {

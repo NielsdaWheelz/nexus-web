@@ -9,7 +9,8 @@ import Button from "@/components/ui/Button";
 import Artwork, { remoteArtwork } from "@/components/ui/Artwork";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceRow from "@/components/ui/ResourceRow";
-import ActionMenu from "@/components/ui/ActionMenu";
+import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
+import {directLinkSource} from "@/lib/resourceGraph/links";
 import { MediaTitle } from "@/components/media/MediaIdentity";
 import IndexBibliography from "@/components/resources/IndexBibliography";
 import { Fact, Failed } from "@/components/feedback/Fact";
@@ -87,13 +88,13 @@ const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, 
       <Button iconOnly icon={playing ? <Icon.Pause /> : <Icon.Play />} aria-label={`${failed ? "retry" : playing ? "pause" : "play"} “${title}”`}
         data-queue-entry={entry.id} data-queue-action="play" aria-disabled={blocked !== null || undefined}
         onClick={() => { void dispatch({ kind: "select", entry_id: entry.id, play: !playing, position_ms: null }, null); }} />
-      {options.length > 0 ? <ActionMenu returnFocusTo={returnFocus} label={`more actions for “${title}”`}
+      {options.length > 0 ? <ContextualActionMenu navigation={null} title="queue actions" returnFocusTo={returnFocus} label={`more actions for “${title}”`}
         triggerAttributes={{ "data-queue-entry": entry.id, "data-queue-action": "more" }}
-        triggerDisabled={blocked !== null} triggerDisabledReason={blocked?.reason}
+        triggerDisabled={blocked !== null && !summary} triggerDisabledReason={blocked?.reason}
         onOpenChange={open => menuChanged(entry.id, open)}
         renderTrigger={props => <Button {...props} iconOnly icon={<Icon.More />} />}
-        source={{ kind: "Immediate", subjectKey: `queue:${manifest.queue_id}:${manifest.revision}:${entry.id}:${blocked?.reason}`, title: "queue actions",
-          content: { sections: [{ id: "Queue", label: null, options }] } }} /> : null}
+        linkSource={summary ? directLinkSource(`media:${entry.media_id}`, title) : null}
+        subjectKey={`queue:${manifest.queue_id}:${manifest.revision}:${entry.id}:${blocked?.reason}`} sections={[{id: "Occurrence", actions: options}]} /> : null}
     </>} />;
 });
 

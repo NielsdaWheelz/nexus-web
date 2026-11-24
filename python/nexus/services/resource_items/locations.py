@@ -1462,21 +1462,28 @@ def current_locator(
             return None
         # Historical geometry has no publication proof: a unique current quote can recover
         # its page, never the old boxes.
-        candidates = text_quote.find_quote_candidates(
-            text_quote.normalize_for_match(media.plain_text or ""),
-            exact=_normal(exact),
+        words = media.plain_text or ""
+        normalized = _normal(exact)
+        hit = text_quote.match_quote_in_sources(
+            [
+                text_quote.NormalizedOwnerSource(
+                    None, None, None, text_quote.normalize_for_match(words)
+                )
+            ],
+            exact=normalized,
             prefix=_normal(prefix),
             suffix=_normal(suffix),
         )
-        if len(candidates) != 1:
+        hit = text_quote.project_note_match(words, hit, exact=normalized)
+        start, end = hit.raw_start, hit.raw_end
+        if start is None or end is None:
             return None
-        hit = candidates[0]
         pages = [
             page
             for page in reads.pages
             if page["media_id"] == owner.id
-            and page["start_offset"] <= hit.raw_start < page["end_offset"]
-            and hit.raw_end <= page["end_offset"]
+            and page["start_offset"] <= start < page["end_offset"]
+            and end <= page["end_offset"]
         ]
         if len(pages) != 1:
             return None

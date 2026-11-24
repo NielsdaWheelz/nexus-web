@@ -588,7 +588,7 @@ def ask_page_context(
         return result
     normalized = text_quote.normalize_for_match(exact).text.strip()
     match = text_quote.match_quote_in_sources(
-        [text_quote.NormalizedOwnerSource(None, None, text_quote.normalize_for_match(words))],
+        [text_quote.NormalizedOwnerSource(None, None, None, text_quote.normalize_for_match(words))],
         exact=normalized,
     )
     match = text_quote.project_note_match(words, match, exact=normalized)

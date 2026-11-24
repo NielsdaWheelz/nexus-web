@@ -2,7 +2,7 @@
 // parser supplies spans and fenced-code origins; syntax highlighting keeps its
 // text and nested spans when the selected content lines are framed afterward.
 import type { Element, ElementContent, Root as HtmlRoot } from "hast";
-import type { Nodes, Root } from "mdast";
+import type { Data, Nodes, Root } from "mdast";
 import type { Extension } from "mdast-util-from-markdown";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
@@ -18,7 +18,7 @@ export interface CitedPassage extends MarkdownPassage {
 }
 export type CitationPassages = ReadonlyMap<string, readonly CitedPassage[]>;
 
-function renderedBlock(node: Nodes): boolean {
+function renderedBlock(node: { type: string }): boolean {
   return node.type === "paragraph" || node.type === "heading" || node.type === "tableCell" || node.type === "code";
 }
 
@@ -27,6 +27,8 @@ type ReadableNode = {
   value?: string;
   alt?: string | null;
   children?: readonly ReadableNode[];
+  data?: Data;
+  position?: { start: { offset?: number }; end: { offset?: number } };
 };
 
 export function markdownReadingText(node: ReadableNode): string {
@@ -44,7 +46,7 @@ export function citedPassages(markdown: string): CitationPassages {
   const parser = unified().use(remarkParse).use(remarkGfm).use(remarkCitations);
   const tree = parser.runSync(parser.parse(markdown), { value: markdown });
   const citations = new Map<string, Map<string, MarkdownPassage & { text: string; markers: number[] }>>();
-  const visit = (node: Nodes, owner: Nodes | null) => {
+  const visit = (node: ReadableNode, owner: ReadableNode | null) => {
     if (renderedBlock(node)) owner = node;
     const marker = node.data?.nexusCitationMarker;
     const start = owner?.position?.start.offset;
@@ -60,7 +62,7 @@ export function citedPassages(markdown: string): CitationPassages {
       }
       block.markers.push(marker.start);
     }
-    if ("children" in node) node.children.forEach(child => visit(child, owner));
+    node.children?.forEach(child => visit(child, owner));
   };
   visit(tree, null);
   return new Map([...citations].map(([ordinal, blocks]) => [ordinal, [...blocks.values()]]));

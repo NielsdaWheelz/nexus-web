@@ -42,7 +42,6 @@ from nexus.schemas.live_reference import (
     LiveReference,
     QuestionAttachment,
     ResourceRetrievalTarget,
-    SavedReference,
     SavedResourceTarget,
     SavedRetrievalTarget,
 )

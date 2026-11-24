@@ -59,7 +59,7 @@ export function useContextualActions({
   const source = linkSource === undefined ? directLinkSource(resourceRef ?? null, title) : linkSource;
   const initial: MenuContent = { sections: [
     ...sections.filter(section => section.actions.length > 0).map(section => ({ id: section.id, label: null, options: section.actions })),
-    ...(source && !(resourceRef === source.ref && state?.kind === "Ready" && state.facts.missing && !source.prelude?.length)
+    ...(source && !(linkSource === undefined && state?.kind === "Ready" && state.facts.missing && !authored.read?.label)
       ? [{id: "LinkItem", label: null, options: [{kind: "command" as const, id: "LinkItem", label: "link to…", icon: null,
         hasPopup: "dialog" as const, restoreFocusOnClose: false, onSelect: ({triggerEl}: {triggerEl: HTMLElement | null}) => {
           const paneId = triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ?? null;

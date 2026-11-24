@@ -12,13 +12,21 @@ from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.chat import AttachmentIn, AttachmentOut, ReferenceAttachmentIn
 from nexus.schemas.live_reference import (
     CaptureScope,
+    PdfPageTarget,
     QuestionAttachment,
     SavedReference,
     SavedRetrievalTarget,
     UrlRetrievalTarget,
 )
-from nexus.schemas.resource_evidence import ResourceField
+from nexus.schemas.reader import (
+    EpubTextOffsetsTargetOut,
+    PdfPageGeometryTargetOut,
+    TranscriptTextOffsetsTargetOut,
+    WebTextOffsetsTargetOut,
+)
+from nexus.schemas.resource_evidence import CapturedEvidence, ResourceField
 from nexus.schemas.resource_items import ResourceItemOut
+from nexus.services.generation.policy import policy
 from nexus.services.highlights import read_highlight_annotations
 from nexus.services.live_references import (
     field_visible,
@@ -28,7 +36,11 @@ from nexus.services.live_references import (
 from nexus.services.media import media_summaries
 from nexus.services.resource_graph.refs import ResourceRef, require_ref
 from nexus.services.resource_graph.resolve import PromptBodyTooLarge, resolve_prompt
-from nexus.services.resource_items.evidence import capture_reader_selection
+from nexus.services.resource_items.evidence import (
+    PromptEvidenceTooLarge,
+    capture_prompt_evidence,
+    capture_reader_selection,
+)
 from nexus.services.resource_items.items import resource_items_out
 
 
@@ -40,6 +52,7 @@ class CurrentReference:
     content_available: bool
     voice: str = "subject"
     required: tuple[tuple[str, str], ...] = ()
+    evidence: CapturedEvidence | None = None
 
 
 def attachments_by_reference(
@@ -180,21 +193,37 @@ def read_attachments(
     return [resolved[reference.model_dump_json()] for reference in references]
 
 
-def resolve(
-    db: Session, *, viewer_id: UUID, reference: SavedReference, byte_limit: int, horizon_seq: int
-) -> CurrentReference:
+def _words_visible(
+    db: Session, viewer_id: UUID, reference: SavedReference, horizon_seq: int
+) -> bool:
+    """The selected field and historical message must still be readable at execution."""
     from nexus.services.chat.timeline import message_visible
 
     ref = require_ref(reference.resource_ref)
+    if not reference_visible(db, viewer_id=viewer_id, reference=reference):
+        return False
     message_id = ref.id if ref.scheme == "message" else None
     if ref.scheme == "passage_anchor":
         message_id = db.scalar(
             text("SELECT owner_id FROM passage_anchors WHERE id=:id AND owner_scheme='message'"),
             {"id": ref.id},
         )
-    if not reference_visible(db, viewer_id=viewer_id, reference=reference) or (
-        message_id is not None and not message_visible(db, viewer_id, message_id, horizon_seq)
+    if message_id is not None and not message_visible(db, viewer_id, message_id, horizon_seq):
+        return False
+    if (
+        reference.quote is not None
+        and ref.scheme == "media"
+        and db.scalar(text("SELECT 1 FROM media_parts WHERE media_id=:id"), {"id": ref.id})
     ):
+        return resolve_location(db, reference, viewer_id=viewer_id)
+    return True
+
+
+def resolve(
+    db: Session, *, viewer_id: UUID, reference: SavedReference, byte_limit: int, horizon_seq: int
+) -> CurrentReference:
+    ref = require_ref(reference.resource_ref)
+    if not _words_visible(db, viewer_id, reference, horizon_seq):
         return CurrentReference("source unavailable", "", False, False)
     if reference.locator is not None or reference.field == "annotation":
         item = resource_items_out(db, viewer_id=viewer_id, refs=[ref])[0]
@@ -202,7 +231,7 @@ def resolve(
             if len(reference.quote.exact.encode()) > byte_limit:
                 raise PromptBodyTooLarge(ref.uri)
             return CurrentReference(
-                item.label,
+                "message passage" if ref.scheme == "message" else item.label,
                 reference.quote.exact,
                 True,
                 True,
@@ -224,6 +253,31 @@ def resolve(
         return CurrentReference(
             item.label, body or "", True, True, _annotation_voice(db, viewer_id, ref)
         )
+    if ref.scheme in (
+        "content_chunk",
+        "evidence_span",
+        "fragment",
+        "reader_apparatus_item",
+        "oracle_passage_anchor",
+    ):
+        try:
+            evidence = capture_prompt_evidence(
+                db, viewer_id=viewer_id, ref=ref, byte_limit=byte_limit
+            )
+        except NotFoundError:
+            # justify-ignore-error: the subject's identity can survive loss of its complete reading extent.
+            return CurrentReference("source unavailable", "", False, False)
+        except PromptEvidenceTooLarge as error:
+            raise PromptBodyTooLarge(ref.uri) from error
+        if evidence.quote is not None:
+            return CurrentReference(
+                evidence.source.location_label or evidence.source.title or ref.uri,
+                evidence.quote.exact,
+                True,
+                True,
+                "selected words",
+                evidence=evidence,
+            )
     resource = resolve_prompt(
         db, viewer_id=viewer_id, ref=ref, byte_limit=byte_limit, identity_only=False
     )
@@ -258,7 +312,6 @@ def _answer_evidence(
     body: str,
 ) -> list[tuple[str, str]]:
     from nexus.services.chat.markdown_citations import parse_markers
-    from nexus.services.chat.timeline import message_visible
 
     rows = dict(
         db.execute(
@@ -289,9 +342,7 @@ def _answer_evidence(
             continue
         saved = target.reference
         ref = require_ref(saved.resource_ref)
-        if not reference_visible(db, viewer_id=viewer_id, reference=saved):
-            continue
-        if ref.scheme == "message" and not message_visible(db, viewer_id, ref.id, horizon_seq):
+        if not _words_visible(db, viewer_id, saved, horizon_seq):
             continue
         quote = saved.quote
         result.append((label, ref.uri))
@@ -320,10 +371,6 @@ def surroundings(
     from nexus.services.live_references import from_evidence
     from nexus.services.media_read_map import ask_page_context
     from nexus.services.reader_document import ask_fragment_context
-    from nexus.services.resource_items.evidence import (
-        PromptEvidenceTooLarge,
-        capture_prompt_evidence,
-    )
     from nexus.services.resource_items.items import ref_visible, source_attributions
 
     reference = attachment.reference
@@ -348,22 +395,6 @@ def surroundings(
         else:
             return []
         result.append(("location", f"{ref.uri} · characters {start}–{end}"))
-        if locator is not None:
-            if start:
-                result.append(
-                    (
-                        "before selection",
-                        ("[…] " if start > 512 else "") + row.content[max(0, start - 512) : start],
-                    )
-                )
-            if end < len(row.content):
-                result.append(
-                    (
-                        "after selection",
-                        row.content[end : end + 512]
-                        + (" […]" if len(row.content) - end > 512 else ""),
-                    )
-                )
         if row.role == "assistant":
             result.extend(
                 _answer_evidence(db, viewer_id, ref.id, horizon_seq, start, end, row.content)
@@ -379,11 +410,24 @@ def surroundings(
         "fragment",
     ) and (locator is None or reference.field == "annotation"):
         try:
-            evidence = capture_prompt_evidence(
-                db, viewer_id=viewer_id, ref=ref, byte_limit=4 * 1024 * 1024
+            # Only stored highlights and named passages need a separate source capture.
+            evidence = primary.evidence or capture_prompt_evidence(
+                db,
+                viewer_id=viewer_id,
+                ref=ref,
+                byte_limit=policy("chat").input_max_bytes,
             )
         except (NotFoundError, PromptEvidenceTooLarge):
             # justify-ignore-error: a retained primary can survive loss of optional source access.
+            if reference.field == "annotation":
+                retained = db.scalar(
+                    text(
+                        "SELECT exact FROM highlights WHERE id=:id AND authored_visible AND user_id=:viewer"
+                    ),
+                    {"id": ref.id, "viewer": viewer_id},
+                )
+                if retained:
+                    result.append(("highlighted words", retained))
             return result
         if evidence.target.owner_ref is None:
             return result
@@ -450,11 +494,13 @@ def surroundings(
             result.append(("attribution", source.attribution_text))
     if locator is None:
         return result
-    if locator.kind in ("PdfPage", "PdfPageGeometry") and reading.scheme == "media":
+    if isinstance(locator, (PdfPageTarget, PdfPageGeometryTargetOut)) and reading.scheme == "media":
         result.extend(
             ask_page_context(db, viewer_id, reading.id, locator.page_number, identity, exact)
         )
-    elif locator.kind in ("WebTextOffsets", "EpubTextOffsets", "TranscriptTextOffsets"):
+    elif isinstance(
+        locator, (WebTextOffsetsTargetOut, EpubTextOffsetsTargetOut, TranscriptTextOffsetsTargetOut)
+    ):
         result.extend(
             ask_fragment_context(
                 db,

@@ -24,7 +24,7 @@ export interface ItemLinkSource {
   readonly label: string;
   readonly target?: LinkTarget;
   readonly passage?: {readonly revision: string | null; readonly readingMediaId: string | null};
-  readonly prelude?: readonly Intent[];
+  readonly journalDate?: string;
 }
 export interface Position { after: string | null; before?: string | null; prelude?: readonly Intent[] }
 export interface LinkRequest { source_ref: string; target_ref: string; source_label: string | null; target_label: string | null; after: string | null; before?: string | null; prelude?: readonly Intent[] }

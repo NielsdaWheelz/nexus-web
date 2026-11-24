@@ -50,12 +50,12 @@ export function pickedTarget(target: LinkTargetResult): LinkTarget {
     capture: {...target.capture, locator: target.capture.locator === null ? null : captureLocator(target.capture.locator, target.target.owner_ref)}};
 }
 export function useReferenceQuery(input: {
-  raw: string; source: string | null; excludeRef?: string; label: string; enabled: boolean; open: boolean;
+  raw: string; source: string | null; excludeRef?: string; remoteSource?: string | null; label: string; enabled: boolean; open: boolean;
   context: string; active: SearchActive; disabled: string | null;
   setActive(value: SearchActive): void; choose(target: LinkTargetResult): void;
 }) {
   const listId = `reference-${useId().replaceAll(":", "")}`;
-  const search = useLinkTargets(input.raw, input.source, input.enabled, input.open, input.excludeRef);
+  const search = useLinkTargets(input.raw, input.source, input.enabled, input.open, input.excludeRef, input.remoteSource);
   const admitted = input.open && search.querySettled && !search.minimum && search.current;
   const items = admitted ? search.items : [];
   const options = items.map(item => ({key: targetKey(item), disabledReason: input.disabled}));

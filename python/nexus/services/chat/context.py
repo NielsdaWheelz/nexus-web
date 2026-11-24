@@ -72,6 +72,63 @@ def _completed_actions(db: Session, run_ids: list[UUID]) -> str:
     return json.dumps([dict(row) for row in rows], default=str)
 
 
+_OMISSION = "\n[additional context omitted]"
+_END_RESOURCE = "\n</resource>"
+
+
+def _enriched_block(
+    base: str,
+    fields: list[tuple[str, str]],
+    *,
+    max_bytes: int,
+    max_tokens: int,
+) -> tuple[str, bool]:
+    """Fit literal prose to its frame; locators and urls remain atomic."""
+    mark, end = _OMISSION, _END_RESOURCE
+    prefix = base.removesuffix(mark + end)
+
+    def fits(block: str) -> bool:
+        return len(block.encode()) <= max_bytes and tokens(block) <= max_tokens
+
+    complete = prefix + "".join(f"\n{label}: {escape(value)}" for label, value in fields) + end
+    if fits(complete):
+        block = complete
+    else:
+        for label, value in fields:
+            line = f"\n{label}: "
+            if fits(prefix + line + escape(value) + mark + end):
+                prefix += line + escape(value)
+                continue
+            if label in (
+                "before selection",
+                "after selection",
+                "page text",
+                "highlighted words",
+            ) or label.endswith("retained quote"):
+                left, right = 0, len(value)
+                while left < right:
+                    count = (left + right + 1) // 2
+                    piece = (
+                        "[…] " + value[-count:]
+                        if label == "before selection"
+                        else value[:count] + " […]"
+                    )
+                    if fits(prefix + line + escape(piece) + mark + end):
+                        left = count
+                    else:
+                        right = count - 1
+                if left:
+                    piece = (
+                        "[…] " + value[-left:]
+                        if label == "before selection"
+                        else value[:left] + " […]"
+                    )
+                    prefix += line + escape(piece)
+            break
+        block = prefix + mark + end
+    return block, block == complete
+
+
 def assemble(
     db: Session, *, run: ChatRun, context_budget: int, orientation: str | None
 ) -> Assembly:
@@ -174,6 +231,8 @@ def assemble(
         bytes_left -= len(orientation.encode()) + 2
     if tokens_left < 0 or bytes_left < 0:
         raise ContextTooLarge("mandatory context exceeds the model or input budget")
+    end, mark = _END_RESOURCE, _OMISSION
+    enrichment = []
     for index, attachment, current in optional:
         fields = references.surroundings(
             db,
@@ -182,60 +241,27 @@ def assemble(
             primary=current,
             horizon_seq=user.seq,
         )
-        if not fields:
-            continue
+        if fields:
+            base = blocks[index]
+            framed = base.removesuffix(end) + mark + end
+            blocks[index] = framed
+            bytes_left -= len(framed.encode()) - len(base.encode())
+            tokens_left -= tokens(framed) - tokens(base)
+            enrichment.append((index, fields))
+    if tokens_left < 0 or bytes_left < 0:
+        raise ContextTooLarge("mandatory context framing exceeds the model or input budget")
+    for index, fields in enrichment:
         base = blocks[index]
-        end = "\n</resource>"
-        prefix = base.removesuffix(end)
-        mark = "\n[additional context omitted]"
-        max_bytes = len(base.encode()) + bytes_left
-        max_tokens = tokens(base) + tokens_left
-
-        def fits(block: str) -> bool:
-            return len(block.encode()) <= max_bytes and tokens(block) <= max_tokens
-
-        complete = prefix + "".join(f"\n{label}: {escape(value)}" for label, value in fields) + end
-        if fits(complete):
-            block = complete
-        elif fits(prefix + mark + end):
-            for label, value in fields:
-                line = f"\n{label}: "
-                if fits(prefix + line + escape(value) + mark + end):
-                    prefix += line + escape(value)
-                    continue
-                if label in (
-                    "before selection",
-                    "after selection",
-                    "page text",
-                    "highlighted words",
-                ) or label.endswith("retained quote"):
-                    left, right = 0, len(value)
-                    while left < right:
-                        count = (left + right + 1) // 2
-                        piece = (
-                            "[…] " + value[-count:]
-                            if label == "before selection"
-                            else value[:count] + " […]"
-                        )
-                        if fits(prefix + line + escape(piece) + mark + end):
-                            left = count
-                        else:
-                            right = count - 1
-                    if left:
-                        piece = (
-                            "[…] " + value[-left:]
-                            if label == "before selection"
-                            else value[:left] + " […]"
-                        )
-                        prefix += line + escape(piece)
-                break
-            block = prefix + mark + end
-        else:
-            break
+        block, complete = _enriched_block(
+            base,
+            fields,
+            max_bytes=len(base.encode()) + bytes_left,
+            max_tokens=tokens(base) + tokens_left,
+        )
         blocks[index] = block
         bytes_left -= len(block.encode()) - len(base.encode())
         tokens_left -= tokens(block) - tokens(base)
-        if block != complete:
+        if not complete:
             break
     if orientation is not None:
         blocks.insert(0, orientation)

@@ -42,7 +42,6 @@ from nexus.schemas.reader_excerpts import (
     ExcerptProjection,
 )
 from nexus.schemas.resource_evidence import LocationQuote
-from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.schemas.resource_items import (
     ExcerptOut,
     ImagesResourceBodyOut,
@@ -58,6 +57,7 @@ from nexus.schemas.resource_items import (
     ResourcePreviewOut,
     SourceAttributionOut,
 )
+from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_media,
     load_contributor_credits_for_podcasts,
@@ -74,8 +74,8 @@ from nexus.services.resource_graph.liveness import ref_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.locations import (
-    current_passages,
     ScopedMediaPassage,
+    current_passages,
     media_passages,
 )
 from nexus.services.resource_items.routing import (

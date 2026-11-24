@@ -1,11 +1,15 @@
 "use client";
 
 import {useEffect, useRef, useState} from "react";
+import {Ruling} from "@/components/feedback/Ruling";
+import {usePaneFreeServerValue} from "@/lib/api/serverState";
+import {resolveResourceItem} from "@/lib/resources/items";
 import {Fact, Failed} from "@/components/feedback/Fact";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import {apiFetch, isApiError, isSameSystemApiDefect} from "@/lib/api/client";
 import type {ApiJson} from "@/lib/api/wire";
+import {dailyPage} from "@/lib/notes/api";
 import {useWritingRuntime} from "@/lib/notes/hooks";
 import {isAuthoredStorageFailure, LocalCommitError} from "@/lib/notes/runtime";
 import {createLink, LinkInputRefusal, prepareTarget, type ItemLinkSource} from "@/lib/resourceGraph/links";
@@ -15,12 +19,12 @@ import type {ReturnFocusTarget} from "@/lib/ui/overlay";
 import type {SearchActive} from "@/lib/ui/searchOptions";
 import ReferencePicker from "./ReferencePicker";
 
-async function sourceTarget(source: ItemLinkSource) {
+async function sourceTarget(source: ItemLinkSource, signal?: AbortSignal) {
   if (source.target) return source.target;
   const frozen = source.passage;
   if (!frozen?.revision) throw new LinkInputRefusal();
   const {data} = await apiFetch<ApiJson<"/resource-items/targets/search", "post">>("/api/resource-items/targets/search", {
-    method: "POST", body: JSON.stringify({q: source.ref, reading_media_id: frozen.readingMediaId,
+    method: "POST", signal, body: JSON.stringify({q: source.ref, reading_media_id: frozen.readingMediaId,
       source_ref: null, exclude_refs: [], cursor: null}),
   });
   const [target] = data.targets;
@@ -38,6 +42,27 @@ export default function ItemLink({source, open, onClose, returnFocusTo, returnFo
   returnFocusTo: ReturnFocusTarget; returnFocusFallback: ReturnFocusTarget;
 }) {
   const writing = useWritingRuntime();
+  const passage = source.passage !== undefined || source.target?.kind === "passage";
+  const needsIdentity = passage || source.journalDate !== undefined;
+  const identity = usePaneFreeServerValue({key: needsIdentity ? `link-source:${source.ref}:${source.passage?.revision ?? ""}` : null,
+    stale: "", load: async signal => {
+      try {
+        if (source.journalDate) {
+          const day = await dailyPage(writing, source.journalDate);
+          return {kind: "ready" as const, ref: day.ref, remote: day.prelude.length ? null : day.ref};
+        }
+        const endpoint = await prepareTarget(writing, await sourceTarget(source, signal));
+        // A fresh local anchor is a valid endpoint before the server has seen
+        // it. Only a known remote anchor can scope a server target query.
+        const known = await resolveResourceItem(endpoint.ref, signal);
+        return {kind: "ready" as const, ref: endpoint.ref, remote: known.missing ? null : endpoint.ref};
+      } catch (error) {
+        if (error instanceof LinkInputRefusal || isAuthoredStorageFailure(error)) return {kind: "refused" as const, error};
+        throw error;
+      }
+    }});
+  const resolved = needsIdentity ? identity.status === "ready" && identity.data.kind === "ready" ? identity.data : null
+    : {ref: source.ref, remote: source.ref};
   const field = useRef<HTMLInputElement>(null);
   const [raw, setRaw] = useState("");
   const [active, setActive] = useState<SearchActive>(null);
@@ -61,11 +86,12 @@ export default function ItemLink({source, open, onClose, returnFocusTo, returnFo
       if (frozen) {
         await frozen.retry();
       } else {
-        const from = await prepareTarget(writing, await sourceTarget(source));
+        const day = source.journalDate ? await dailyPage(writing, source.journalDate) : null;
+        const from = await prepareTarget(writing, day ? {kind: "resource", ref: day.ref} : await sourceTarget(source));
         const to = await prepareTarget(writing, pickedTarget(selected));
-        if (from.ref === to.ref) throw new LinkInputRefusal();
+        if (from.ref !== resolved?.ref || from.ref === to.ref) throw new LinkInputRefusal();
         await createLink(writing, {source_ref: from.ref, source_label: source.label, target_ref: to.ref, target_label: selected.item.label,
-          after: null, prelude: [...source.prelude ?? [], ...from.intents, ...to.intents]});
+          after: null, prelude: [...day?.prelude ?? [], ...from.intents, ...to.intents]});
       }
       onClose();
     } catch (error) {
@@ -75,8 +101,8 @@ export default function ItemLink({source, open, onClose, returnFocusTo, returnFo
       setBusy(false);
     }
   }
-  const query = useReferenceQuery({raw: "@"+raw, source: source.prelude?.length ? null : source.ref,
-    excludeRef: source.ref, label: source.label, enabled: open, open, context: raw, active, setActive,
+  const query = useReferenceQuery({raw: "@"+raw, source: resolved?.ref ?? null, remoteSource: resolved?.remote ?? null,
+    excludeRef: source.ref, label: source.label, enabled: open && resolved !== null, open, context: raw, active, setActive,
     disabled: frozen || busy ? "saving this link." : null, choose: selected => {void accept(selected);}});
   const error = failure?.error;
   const retry = () => {if (failure) void accept(failure.selected);};
@@ -87,7 +113,11 @@ export default function ItemLink({source, open, onClose, returnFocusTo, returnFo
     <Input ref={field} {...query.bindings.inputProps} aria-label={`link from ${source.label}`} placeholder="search" value={raw}
       readOnly={busy || frozen !== null} onChange={event => {setRaw(event.target.value); setFailure(null);}}
       onKeyDown={event => {if (query.bindings.handleKey(event.nativeEvent, event.nativeEvent.isComposing)) event.preventDefault();}} />
-    <ReferencePicker input={query} returnFocus={() => field.current} />
+    {resolved ? <ReferencePicker input={query} returnFocus={() => field.current} />
+      : identity.status === "loading" ? <Ruling />
+      : identity.status === "failed" ? <Failed error={identity.error} noun="this passage" retry={{run: identity.refetch, busy: identity.retrying}} />
+      : identity.data.kind === "refused" && identity.data.error instanceof LinkInputRefusal ? <Fact line={identity.data.error.line} speak />
+      : <Fact line={{fact: "couldn’t open this passage on this device."}} verbs={[{label: "retry", commandKey: "RetryLinkSource", run: identity.refetch}]} />}
     {error instanceof LinkInputRefusal ? <Fact line={error.line} speak />
       : frozen || isAuthoredStorageFailure(error) ? <Fact line={{fact: "couldn’t save this link on this device."}} speak
         verbs={[{label: "retry", commandKey: "RetryItemLink", run: retry, busy}]} />

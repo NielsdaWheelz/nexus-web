@@ -1430,20 +1430,30 @@ def ask_fragment_context(
 
     # Document embeds are placed after the source character that carries them.
     # A quoted post is attached to the end of its primary capture.
-    ids = db.execute(
-        text("""
-        SELECT citation_id,canonical_end_offset AS point,'media' AS scheme,media_id AS owner
-        FROM document_embeds WHERE media_id=:reading AND fragment_id=:fragment AND citation_id IS NOT NULL
-          AND canonical_end_offset>:lo AND canonical_end_offset<=:hi
-        UNION ALL
-        SELECT citation_id,:length,'fragment',CAST(:fragment AS uuid)
-        FROM x_post_capture_contexts WHERE capture_id=:capture AND citation_id IS NOT NULL
-          AND :hi=:length AND (:direct OR EXISTS (SELECT 1 FROM x_post_media
-                  WHERE media_id=:reading AND capture_id=:capture)
-              OR EXISTS (SELECT 1 FROM x_thread_posts WHERE thread_media_id=:reading AND capture_id=:capture))
-        ORDER BY point,citation_id
+    from nexus.services.resource_graph.citations import citation_source_visible_sql
+    from nexus.services.resource_graph.liveness import edge_live_sql
+    from nexus.services.resource_items.evidence import publisher_prompt_evidence
+
+    rows = db.execute(
+        text(f"""
+        WITH occurrence AS (
+            SELECT citation_id,canonical_end_offset AS point,'media' AS scheme,media_id AS owner
+            FROM document_embeds WHERE media_id=:reading AND fragment_id=:fragment AND citation_id IS NOT NULL
+              AND canonical_end_offset>:lo AND canonical_end_offset<=:hi
+            UNION ALL
+            SELECT citation_id,:length,'fragment',CAST(:fragment AS uuid)
+            FROM x_post_capture_contexts WHERE capture_id=:capture AND citation_id IS NOT NULL
+              AND :hi=:length AND (:direct OR EXISTS (SELECT 1 FROM x_post_media
+                      WHERE media_id=:reading AND capture_id=:capture)
+                  OR EXISTS (SELECT 1 FROM x_thread_posts WHERE thread_media_id=:reading AND capture_id=:capture))
+        )
+        SELECT e.id,e.ordinal,e.snapshot FROM occurrence o JOIN resource_edges e
+            ON e.id=o.citation_id AND e.source_id=o.owner AND e.source_scheme=o.scheme
+        WHERE e.origin='citation' AND e.ordinal IS NOT NULL AND {citation_source_visible_sql("e")}
+            AND {edge_live_sql("e")} ORDER BY o.point,e.ordinal,e.id
     """),
         {
+            "viewer_id": viewer_id,
             "reading": reading.id,
             "fragment": fragment_id,
             "capture": row.x_post_capture_id,
@@ -1453,33 +1463,10 @@ def ask_fragment_context(
             "direct": reading.scheme == "fragment",
         },
     ).all()
-    if ids:
-        from nexus.services.reader_excerpts import text_parts
-        from nexus.services.resource_graph.citations import build_citation_outs_for_sources
-
-        sources = {ResourceRef(r.scheme, r.owner) for r in ids}
-        visible = build_citation_outs_for_sources(db, viewer_id=viewer_id, sources=list(sources))
-        by_edge = {c.edge_id: c for cs in visible.values() for c in cs}
-        for citation_id in dict.fromkeys(r.citation_id for r in ids):
-            citation = by_edge.get(citation_id)
-            if citation is None or citation.item.missing:
-                continue
-            body = citation.item.preview.body
-            label = f"publisher citation {citation.ordinal}"
-            if body.kind == "passage" and body.excerpt.kind == "content":
-                words = text_parts([body.excerpt.body])[0].exact
-                if words:
-                    result.append(
-                        (
-                            label,
-                            words[:2000]
-                            + (
-                                " […]"
-                                if len(words) > 2000 or body.excerpt.selected_truncated_after
-                                else ""
-                            ),
-                        )
-                    )
-            elif citation.item.activation.kind == "external" and citation.item.activation.href:
-                result.append((label, citation.item.activation.href))
+    for citation in rows:
+        retained = publisher_prompt_evidence(
+            db, viewer_id=viewer_id, edge_id=citation.id, snapshot=citation.snapshot
+        )
+        if retained:
+            result.append((f"publisher citation {citation.ordinal}", retained))
     return result
