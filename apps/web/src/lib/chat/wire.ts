@@ -43,8 +43,7 @@ export function readFailureOf(error: unknown): { kind: "Handled" } | { kind: "De
 export function failureOf(error: unknown): ChatFailure {
   const failure = readFailureOf(error);
   if (failure.kind !== "Failed") return failure;
-  // runtime readiness is checked before chat admission.
-  return failure.error.code !== "E_GENERATION_RUNTIME_UNAVAILABLE" && outcomeUnknown(failure.error)
+  return outcomeUnknown(failure.error)
     ? { kind: "Unknown", error: failure.error } : { kind: "Refused", error: failure.error };
 }
 

@@ -57,8 +57,9 @@ server components: callFastAPI ────────────────�
   `offline` records connectivity when the failure occurred. reconnecting cannot
   relabel an already-observed offline failure. for writes only, `isRefusal` and
   `outcomeUnknown` partition modeled non-defect errors: an unsent request, answered
-  4xx (including 401/426), or pre-handler `E_AUTH_UNAVAILABLE` is refused;
-  every other sent failure is unknown. `E_DATABASE_BUSY` is unknown because a
+  4xx (including 401/426), pre-handler `E_AUTH_UNAVAILABLE`, and pre-admission
+  `E_GENERATION_RUNTIME_UNAVAILABLE` are refusals. an earlier unanswered attempt
+  stays uncertain. every other sent failure is unknown. `E_DATABASE_BUSY` is unknown because a
   transaction may have committed before a later refresh fails. this applies to the
   coded response: the edge still maps `DatabaseBusyError` to generic
   `409 E_RESOURCE_CONFLICT`, whose ambiguous causes remain a
