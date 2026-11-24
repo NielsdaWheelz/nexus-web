@@ -80,7 +80,7 @@ export default function CollectionView({
   readonly geometry?: IndexGeometry | null;
   readonly layout?: "Rows" | "Wall";
 }) {
-  if (headBefore !== undefined && geometry !== null) throw new Error("List heads require mounted rows");
+  if (headBefore !== undefined && order !== undefined) throw new Error("Manual order cannot contain list heads");
   if (layout === "Wall" && geometry !== null) throw new Error("Wall requires mounted cells");
   if (layout === "Wall" && headBefore !== undefined) throw new Error("Wall cannot contain list heads");
   if (layout === "Wall" && order !== undefined) throw new Error("Wall cannot contain manual order");
@@ -95,9 +95,18 @@ export default function CollectionView({
     departing: boolean;
   } | null>(null);
   const orderedIds = useMemo(() => rows.map(row => row.id), [rows]);
+  const heads = useMemo(() => {
+    const result = new Map<string, ReactNode>();
+    if (headBefore !== undefined) for (const row of rows) {
+      const head = headBefore(row);
+      if (head != null) result.set(row.id, head);
+    }
+    return result;
+  }, [rows, headBefore]);
+  const headIds = useMemo(() => [...heads.keys()], [heads]);
   const scopeKey = `${returnScope}:${anchorKey ?? ""}`;
   const scrollport = useCallback(() => listRef.current?.closest<HTMLElement>('[data-pane-content][data-body-mode="standard"]') ?? null, []);
-  const window = useMeasuredIndexWindow({ scopeKey, ids: orderedIds, geometry: status === "ready" ? geometry : null, listRef, scrollport });
+  const window = useMeasuredIndexWindow({ scopeKey, ids: orderedIds, headIds, geometry: status === "ready" ? geometry : null, listRef, scrollport });
   const { rowElement, pin } = window;
   usePaneCollectionGeometry({ scope: returnScope, window });
   const windowed = window.plan.kind !== "Intrinsic";
@@ -214,9 +223,11 @@ export default function CollectionView({
       </ul>
     ) : (
       <ResourceList ref={listRef} ariaLabel={ariaLabel} busy={collectionBusy || !ready} windowed={windowed} measuring={window.plan.kind === "Measure"}>
+        {windowed ? [...heads].map(([id, head]) =>
+          <ResourceListHead key={id} sampleFor={id}>{head}</ResourceListHead>) : null}
         {slots.map(slot => {
           const row = rows[slot.index];
-          const head = row ? headBefore?.(row) : null;
+          const head = heads.get(slot.id);
           return row ? <Fragment key={row.id}>
             {slot.gapBeforePx > 0 ? <li role="presentation" aria-hidden="true" style={{ height: slot.gapBeforePx, flexShrink: 0 }} /> : null}
             {head != null ? <ResourceListHead>{head}</ResourceListHead> : null}

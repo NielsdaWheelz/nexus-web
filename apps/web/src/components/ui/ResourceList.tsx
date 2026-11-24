@@ -2,8 +2,9 @@ import type { ReactNode, Ref } from "react";
 import styles from "./ResourceList.module.css";
 
 /** Nonsticky headings share the list's measure without becoming selectable rows. */
-export function ResourceListHead({ children }: { readonly children: ReactNode }) {
-  return <li role="presentation" className={styles.head}>{children}</li>;
+export function ResourceListHead({ children, sampleFor }: { readonly children: ReactNode; readonly sampleFor?: string }) {
+  return <li role="presentation" data-index-head-sample={sampleFor} aria-hidden={sampleFor !== undefined || undefined}
+    className={sampleFor === undefined ? styles.head : `${styles.head} ${styles.headSample}`}>{children}</li>;
 }
 
 /** An editorial index: rows butt together, separated by their own hairlines. */

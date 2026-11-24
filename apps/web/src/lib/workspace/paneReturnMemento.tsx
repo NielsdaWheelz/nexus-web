@@ -863,16 +863,16 @@ export function usePaneCollectionGeometry({ scope, window }: {
     read() {
       const frame = readGeometry();
       if (frame === null) return null;
-      const { ids, height } = frame;
-      return { revision: frame.epoch, root: frame.list, scrollport: frame.scrollport, origin: frame.listTop, anchors: ids,
+      return { revision: frame.epoch, root: frame.list, scrollport: frame.scrollport, origin: frame.listTop, anchors: frame.ids,
         firstVisible(top, bottom) {
-          if (bottom <= 0 || top >= ids.length * height || ids.length === 0) return null;
-          const index = Math.max(0, Math.floor(top / height));
-          return { id: ids[index], offset: index * height };
+          if (bottom <= 0 || top >= frame.totalHeight || frame.ids.length === 0) return null;
+          const index = frame.rankAt(top);
+          const offset = frame.rowTop(index);
+          return index >= frame.ids.length || offset >= bottom ? null : { id: frame.ids[index], offset };
         },
         position(id) {
-          const index = ids.indexOf(id);
-          return index < 0 ? { kind: "missing" } : { kind: "ready", offset: index * height };
+          const offset = frame.position(id);
+          return offset === null ? { kind: "missing" } : { kind: "ready", offset };
         },
       };
     },
