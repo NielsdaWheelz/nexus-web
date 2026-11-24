@@ -6,12 +6,12 @@ libraries router, whose uuid `{library_id}` would refuse the static
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Request, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import DbSession
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
-from nexus.schemas.collection_page import CollectionPage
+from nexus.schemas.collection_index import CollectionIndex, parse_index_query
 from nexus.schemas.library_members import (
     CreateInvitationRequest,
     LibraryInvitationOut,
@@ -24,17 +24,14 @@ from nexus.services import library_members
 
 router = APIRouter(tags=["libraries"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
-Cursor = Annotated[str | None, Query(min_length=1)]
-Limit = Annotated[int, Query(ge=1, le=200)]
 
 
 @router.get("/libraries/invites")
 def list_viewer_invitations(
-    viewer: ViewerDep, db: DbSession, cursor: Cursor = None, limit: Limit = 100
-) -> Data[CollectionPage[ViewerInvitationOut]]:
-    return Data(
-        data=library_members.list_viewer_invitations(db, viewer.user_id, cursor=cursor, limit=limit)
-    )
+    request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[CollectionIndex[ViewerInvitationOut]]:
+    parse_index_query(request.query_params.multi_items(), domain_keys=set())
+    return Data(data=library_members.list_viewer_invitations(db, viewer.user_id))
 
 
 @router.post("/libraries/invites/{invitation_id}/accept", status_code=204)
@@ -64,25 +61,18 @@ def create_invitation(
 
 @router.get("/libraries/{library_id}/invites")
 def list_invitations(
-    library_id: UUID, viewer: ViewerDep, db: DbSession, cursor: Cursor = None, limit: Limit = 100
-) -> Data[CollectionPage[LibraryInvitationOut]]:
-    """Pending invitations, newest first."""
-    return Data(
-        data=library_members.list_invitations(
-            db, viewer.user_id, library_id, cursor=cursor, limit=limit
-        )
-    )
+    library_id: UUID, request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[CollectionIndex[LibraryInvitationOut]]:
+    parse_index_query(request.query_params.multi_items(), domain_keys=set())
+    return Data(data=library_members.list_invitations(db, viewer.user_id, library_id))
 
 
 @router.get("/libraries/{library_id}/members")
 def list_members(
-    library_id: UUID, viewer: ViewerDep, db: DbSession, cursor: Cursor = None, limit: Limit = 100
-) -> Data[CollectionPage[LibraryMemberOut]]:
-    return Data(
-        data=library_members.list_members(
-            db, viewer.user_id, library_id, cursor=cursor, limit=limit
-        )
-    )
+    library_id: UUID, request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[CollectionIndex[LibraryMemberOut]]:
+    parse_index_query(request.query_params.multi_items(), domain_keys=set())
+    return Data(data=library_members.list_members(db, viewer.user_id, library_id))
 
 
 @router.patch("/libraries/{library_id}/members/{user_id}", status_code=204)

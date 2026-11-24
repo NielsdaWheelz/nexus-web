@@ -1,25 +1,13 @@
 "use client";
 
 import type { AnimationEventHandler } from "react";
+import type { CollectionViewRowRenderProps } from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import ResourceRow from "@/components/ui/ResourceRow";
 import { ResourceIndexTitle } from "@/components/resources/ResourceType";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { usePaneFreeServerValue, type ServerValue } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
-import { useObservationDemand } from "@/lib/api/useObservationDemand";
-import { listOpmlImports } from "@/lib/feeds/api";
-import { useImports } from "@/lib/imports/ImportsProvider";
-import { usePaneIsPresented } from "@/lib/panes/paneRuntime";
 import styles from "./FeedCommands.module.css";
-
-/** Imports' digest and revision own all batch observations. */
-export function useOpmlBatches(): ServerValue<readonly Schema<"OpmlImportSummaryOut">[]> {
-  const { digest, revision } = useImports();
-  const observing = useObservationDemand(usePaneIsPresented());
-  return usePaneFreeServerValue({ key: digest === null ? null : "opml-imports", stale: `${revision}:${digest}`,
-    enabled: observing, load: listOpmlImports });
-}
 
 /** The row and record submit the same versioned command to the feeds owner. */
 export function OpmlImportActions({ batch }: {
@@ -38,17 +26,18 @@ export function OpmlImportActions({ batch }: {
   </span>;
 }
 
-export default function OpmlBatchRow({ batch, selected, onSelect, className, onAnimationEnd }: {
+export default function OpmlBatchRow({ batch, selected, onSelect, className, onAnimationEnd, listPosition }: {
   readonly batch: Schema<"OpmlImportSummaryOut">;
   readonly selected: boolean;
   readonly onSelect: (ref: string, trigger: HTMLButtonElement) => void;
   readonly className?: string;
+  readonly listPosition?: CollectionViewRowRenderProps["listPosition"];
   readonly onAnimationEnd?: AnimationEventHandler<HTMLElement>;
 }) {
   const ref = `opml:${batch.id}`;
   const attention = batch.state === "needs_attention";
   return <ResourceRow selected={selected}
-    rootProps={{ className, onAnimationEnd, "data-collection-row-id": ref, "aria-current": selected ? "true" : undefined }}
+    rootProps={{ className, onAnimationEnd, "aria-posinset": listPosition === undefined ? undefined : listPosition.index + 1, "aria-setsize": listPosition?.count, "data-collection-row-id": ref, "aria-current": selected ? "true" : undefined }}
     primary={{ kind: "button", label: "subscription import", onActivate: trigger => onSelect(ref, trigger) }}
     title={<ResourceIndexTitle type={{ scheme: "feed", mediaKind: null }} hasArtwork={false}>subscription import</ResourceIndexTitle>}
     content={{ kind: "Index", metadata: <span className={styles.batchLine} data-tone={attention ? "Warning" : "Neutral"}>

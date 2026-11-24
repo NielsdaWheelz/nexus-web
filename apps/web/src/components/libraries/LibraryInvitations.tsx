@@ -4,15 +4,15 @@
  * terminal invitation fence. A still-pending list never settles a sent answer. */
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
-import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
+import { Failed } from "@/components/feedback/Fact";
 import Button from "@/components/ui/Button";
 import { personLabel } from "@/components/users/PeopleSearch";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useChangeStamp } from "@/lib/api/changes";
 import { isApiError, outcomeUnknown } from "@/lib/api/client";
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
-import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
-import { respondToInvitation, viewerInvitationsPage, type ViewerInvitation } from "@/lib/libraries/api";
+import { useServerValue, type Visit } from "@/lib/api/serverState";
+import { respondToInvitation, viewerInvitationsIndex, type ViewerInvitation } from "@/lib/libraries/api";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { refuseLibrary } from "@/lib/libraries/errors";
 import { installedApp, remoteAdmission, remoteAttemptAllowed } from "@/lib/native/admission";
@@ -24,7 +24,7 @@ import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LibraryInvitations.module.css";
 
-const VISIT = definePaneVisitDataKey<ListSnapshot<ViewerInvitation>>("Libraries.Invitations");
+const VISIT = definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof viewerInvitationsIndex>>>>("Libraries.Invitations");
 type Answer = { readonly invitation: ViewerInvitation; readonly accept: boolean };
 type Pending = { readonly command: Answer; readonly running: boolean; readonly unknown: number };
 
@@ -46,11 +46,10 @@ export function useLibraryInvitations() {
     current.id === pane.paneId && current.current_visit.id === pane.visitId &&
     resolvePaneRouteModel(current.current_visit.href).id === "libraries");
   const [answered, setAnswered] = useState(0);
-  const list = useServerList<ViewerInvitation>({
-    key: "invitations", stale: `${useChangeStamp("Libraries")}:${answered}`, pageSize: 100,
-    active: usePaneIsActive(), visit: VISIT, id: invitation => invitation.id, fetchPage: viewerInvitationsPage,
+  const list = useServerValue({
+    key: "/libraries/invites", stale: `${useChangeStamp("Libraries")}:${answered}`,
+    enabled: usePaneIsActive(), visit: VISIT, load: viewerInvitationsIndex,
   });
-  const readFeedback = useCollectionReadFeedback({ list, unit: { singular: "invitation", plural: "invitations" }, waiting: false, outcome: null });
   async function send(command: Answer, previous: Pending | null): Promise<boolean> {
     if (!mounted.current || !owns() || read() !== previous || previous?.running ||
       remoteAdmission() === "Checking" || !remoteAttemptAllowed() || !navigator.onLine) return false;
@@ -85,7 +84,7 @@ export function useLibraryInvitations() {
     {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
       resend: { label: "retry", commandKey: `${owner.owner}:${pending.command.invitation.id}:${pending.command.accept}:retry`, busy: pending.running,
         run: () => { void send(pending.command, pending); } } })} />;
-  return { list, admission, readFeedback, held, busy: pending?.running ? pending.command.invitation.id : null,
+  return { list, admission, held, busy: pending?.running ? pending.command.invitation.id : null,
     blocked: pending !== null || admission === "Checking" || !remoteAttemptAllowed() || connectivity === "Offline",
     answer: (invitation: ViewerInvitation, accept: boolean) => send({ invitation, accept }, null) };
 }
@@ -93,17 +92,18 @@ export function useLibraryInvitations() {
 export default function LibraryInvitations({ state }: { state: ReturnType<typeof useLibraryInvitations> }) {
   const headingId = useId();
   const [declining, setDeclining] = useState<string | null>(null);
-  const { list, admission, readFeedback, busy, blocked, answer } = state;
+  const { list, admission, busy, blocked, answer } = state;
   if (installedApp && admission !== "Ready") return null;
-  const shown = list.items.length > 0;
+  const rows = list.status === "ready" && list.error?.status !== 403 && list.error?.status !== 404 ? list.data.items : [];
+  const shown = rows.length > 0;
   return <>
     {shown ?<section className={styles.inbox} aria-labelledby={headingId}>
       <div className={styles.heading}>
-        <h2 id={headingId}>invitations · {list.items.length}</h2>
+        <h2 id={headingId}>invitations · {rows.length}</h2>
         <p>accepting adds the library here.</p>
       </div>
       <div className={styles.rows}>
-        {list.items.map((invitation) => (
+        {rows.map((invitation) => (
           <div className={styles.row} key={invitation.id}>
             <span>
               {invitation.library_name} · {invitation.role === "admin" ? "admin" : "member"} · from{" "}
@@ -157,7 +157,7 @@ export default function LibraryInvitations({ state }: { state: ReturnType<typeof
         ))}
       </div>
     </section> : null}
-    {readFeedback.notice}
-    {readFeedback.announcement}
+    {list.status !== "loading" && list.error !== null ? <Failed error={list.error} noun="invitations"
+      retry={{ run: list.refetch, busy: list.status === "ready" ? list.refreshing : list.retrying }} /> : null}
   </>;
 }

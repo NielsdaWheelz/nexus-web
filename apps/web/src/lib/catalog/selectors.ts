@@ -184,7 +184,7 @@ export function catalogFeedEntries(catalog: CatalogIndex, id: string, params = n
   const state = params.get("state") ?? "all";
   const sort = params.get("sort") ?? "newest";
   const rows = [...catalog.value.episodes, ...catalog.value.articles].filter(row => row.feed_id === id && (state === "all" || row.entry_state === state));
-  return { feed, next_cursor: null, ...index(sorted(rows, row => {
+  return { feed, ...index(sorted(rows, row => {
     switch (sort) { case "newest": case "oldest": case "duration_asc": case "duration_desc": return row.order[sort]; default: throw invalid(); }
   }).map(row => {
     const media = catalog.media.get(row.media_id);

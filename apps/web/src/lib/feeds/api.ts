@@ -129,6 +129,3 @@ export async function getFeedEntryRemovalPreview(mediaId: string, signal: AbortS
 export async function removeFeedEntry(mediaId: string, body: string, signal: AbortSignal) {
   return (await apiFetch<ApiJson<"/feed-entries/{media_id}/remove", "post">>(`/api/feed-entries/${mediaId}/remove`, { method: "POST", body, signal })).data;
 }
-export async function listOpmlImports(signal: AbortSignal) {
-  return (await apiFetch<{ data: { items: Schema<"OpmlImportSummaryOut">[] } }>("/api/feed-opml-imports", { signal })).data.items;
-}

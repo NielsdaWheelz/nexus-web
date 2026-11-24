@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.db.models import TranscriptState as MediaTranscriptState
+from nexus.schemas.collection_index import CollectionIndex
 from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
@@ -483,12 +484,8 @@ class FeedEntryListItemOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class FeedEntryIndexOut(BaseModel):
-    next_cursor: str | None
+class FeedEntryIndexOut(CollectionIndex[FeedEntryListItemOut]):
     feed: FeedDetailOut
-    items: list[FeedEntryListItemOut]
-
-    model_config = _CLOSED
 
 
 class FeedRefreshFeedScope(BaseModel):

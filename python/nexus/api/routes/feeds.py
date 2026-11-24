@@ -3,14 +3,15 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, Depends, Query, Request, Response
+from pydantic import TypeAdapter, ValidationError
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas import feed as wire
-from nexus.schemas.collection_index import CollectionIndex
+from nexus.schemas.collection_index import CollectionIndex, parse_index_query
 from nexus.schemas.consumption import ConsumptionData
 from nexus.services import media_deletion
 from nexus.services.consumption import observation
@@ -66,16 +67,6 @@ def export_opml(
             "Cache-Control": "private, no-store",
         },
     )
-
-
-class OpmlImportsOut(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    items: list[wire.OpmlImportSummaryOut]
-
-
-@router.get("/feed-opml-imports")
-def list_opml_imports(viewer: ViewerDep, db: RepeatableReadDbSession) -> Data[OpmlImportsOut]:
-    return Data(data=OpmlImportsOut(items=opml.list_imports(db, viewer.user_id)))
 
 
 @router.post("/feed-opml-imports", status_code=202)
@@ -152,14 +143,17 @@ def list_entries(
     feed_id: UUID,
     viewer: ViewerDep,
     db: RepeatableReadDbSession,
-    state: wire.EntryState = "all",
-    sort: wire.EntrySort = "newest",
-    cursor: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    request: Request,
 ) -> ConsumptionData[wire.FeedEntryIndexOut]:
-    data = entries.list_entries(
-        db, viewer.user_id, feed_id, state=state, sort=sort, cursor=cursor, limit=limit
-    )
+    query = parse_index_query(request.query_params.multi_items(), domain_keys={"state", "sort"})
+    try:
+        state = TypeAdapter(wire.EntryState).validate_python(query.get("state", "all"))
+        sort = TypeAdapter(wire.EntrySort).validate_python(query.get("sort", "newest"))
+    except ValidationError as error:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Invalid feed entry view"
+        ) from error
+    data = entries.list_entries(db, viewer.user_id, feed_id, state=state, sort=sort)
     return observation.stamp(
         db, viewer.user_id, data, [item.media_summary.media_id for item in data.items]
     )

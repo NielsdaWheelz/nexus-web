@@ -14,6 +14,7 @@ import { parseResourceRef, resourceTypeLabel } from "./resourceRef";
 import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
 export type ConnectionOut = Schema<"ConnectionOut">;
 export type ConnectionMutation = NonNullable<ConnectionOut["mutation"]>;
+export type ResolvedConnection = Schema<"ResolvedConnectionOut">;
 export type ConnectionCommand = { kind: "unlink"; link_id: string } | { kind: "remove_fact"; edge_id: string };
 export type LinkTarget = { kind: "resource"; ref: string } | { kind: "passage"; candidate_ref: string; passage_target: Schema<"CapturedPassageTarget"> | null; capture: PassageCapture | null };
 export type InsertionSource = LinkTarget | { kind: "daily_page"; local_date: string; page_id: string };
@@ -154,9 +155,15 @@ export async function deleteResource(runtime: WritingRuntime, { ref }: { ref: st
   }
   return runtime.run({ kind: "delete_resource", ref, observed_touch });
 }
-export async function queryConnections(input: Schema<"ConnectionQueryRequest">, signal?: AbortSignal): Promise<Schema<"ConnectionPageOut">> {
-  const { data } = await apiFetch<ApiJson<"/resource-graph/connections/query", "post">>("/api/resource-graph/connections/query", { method: "POST", signal, body: JSON.stringify({ ...input, limit: Math.min(input.limit ?? 100, 100) }) });
-  return data;
+export async function queryConnections(input: Schema<"ConnectionQueryRequest">, signal?: AbortSignal): Promise<Schema<"ConnectionIndexOut">> {
+  return (await apiFetch<ApiJson<"/resource-graph/connections/query", "post">>("/api/resource-graph/connections/query", {
+    method: "POST", signal, body: JSON.stringify(input),
+  })).data;
+}
+export async function resolveConnections(input: Schema<"ConnectionResolveRequest">, signal?: AbortSignal): Promise<Schema<"ConnectionResolveOut">> {
+  return (await apiFetch<ApiJson<"/resource-graph/connections/resolve", "post">>("/api/resource-graph/connections/resolve", {
+    method: "POST", signal, body: JSON.stringify(input),
+  })).data;
 }
 export async function mutateConnection(runtime: WritingRuntime, command: ConnectionCommand, signal?: AbortSignal): Promise<void> {
   if (command.kind === "unlink") return deleteLink(runtime, { linkId: command.link_id });

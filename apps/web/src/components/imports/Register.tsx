@@ -1,22 +1,20 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type AnimationEventHandler } from "react";
+import { useLayoutEffect, useRef, useState, type AnimationEventHandler } from "react";
 import { Failed } from "@/components/feedback/Fact";
 import CollectionView, { type CollectionViewRowRenderProps } from "@/components/collections/CollectionView";
 import CollectionRow from "@/components/collections/CollectionRow";
-import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
-import OpmlBatchRow, { useOpmlBatches } from "@/components/feeds/OpmlBatchRow";
+import OpmlBatchRow from "@/components/feeds/OpmlBatchRow";
 import Button from "@/components/ui/Button";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { apiFetch } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import { usePaneFreeServerValue, useServerValue, type Visit } from "@/lib/api/serverState";
 import { useObservationDemand } from "@/lib/api/useObservationDemand";
-import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
-import { dismissImports, fetchImportPage, type ImportItem } from "@/lib/imports/api";
+import { dismissImports, fetchImportIndex, type ImportIndex, type ImportItem } from "@/lib/imports/api";
 import { registerDay } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { formatLocalDateInTimeZone, shiftLocalDate } from "@/lib/localDate";
@@ -30,7 +28,7 @@ import { importDetailsAction, importRecovery, recoveryCommand } from "./ImportAc
 import ImportWorkRow from "./ImportWorkRow";
 import styles from "./Imports.module.css";
 
-const VISIT = definePaneVisitDataKey<ListSnapshot<ImportItem>>("Imports.Register");
+const VISIT = definePaneVisitDataKey<Visit<ImportIndex>>("Imports.Register");
 const WINDOW = definePaneVisitDataKey<string>("Imports.From");
 
 /** Find the first instant of the civil day, including zones whose midnight moves. */
@@ -61,28 +59,25 @@ export default function Register({ selected, onSelect }: {
   const display = useRenderEnvironment();
   const retainedFrom = usePaneVisitData(WINDOW, (): string => from);
   const [from] = useState(() => retainedFrom ?? registerFrom(new Date(), display.displayTimeZone));
-  const { summary, digest, revision } = useImports();
-  const active = useObservationDemand(usePaneIsPresented());
-  const query = new URLSearchParams({ view: "Register", from }).toString();
-  const list = useServerList({ key: digest === null ? null : `/imports?${query}`, stale: `${revision}:${digest}`,
-    pageSize: 50, drain: false, refreshComplete: false, active, visit: VISIT, id: (item: ImportItem) => item.ref,
-    fetchPage: (cursor, limit, signal) => fetchImportPage(query, cursor, limit, signal) });
-  const batches = useOpmlBatches();
+  const { digest, revision } = useImports();
+  const observing = useObservationDemand(usePaneIsPresented());
+  const register = useServerValue({ key: `/imports?${new URLSearchParams({ from })}`, stale: `${revision}:${digest}`,
+    visit: VISIT, enabled: observing, load: signal => fetchImportIndex(from, signal) });
+  const items = register.status === "ready" ? register.data.items : [];
+  const batches = register.status === "ready" ? register.data.batches : [];
   const all = usePaneFreeServerValue({ key: "imports:all", stale: "",
     load: async signal => (await apiFetch<ApiJson<"/me", "get">>("/api/me", { signal })).data.default_library_id });
-  const seeds = list.items.flatMap(item => {
+  const seeds = items.flatMap(item => {
     if (item.classification !== "Complete") return [];
     if (item.media_id === null || item.summary === null) throw new Error("Arrived import has no media summary");
     return [item.summary];
   });
   const summaries = useMediaSummaries(seeds);
-  const unsettledBatches = batches.status === "ready" ? batches.data.filter(batch => batch.state === "needs_attention" || batch.state === "pending" || batch.state === "running") : [];
-  const attentionLoaded = list.complete || list.items.some(item => item.classification !== "NeedsAttention");
   const entries = new Map<string, ImportItem | Schema<"OpmlImportSummaryOut">>();
-  for (const batch of unsettledBatches.filter(batch => batch.state === "needs_attention")) entries.set(`opml:${batch.id}`, batch);
-  for (const item of list.items.filter(item => item.classification === "NeedsAttention")) entries.set(item.ref, item);
-  if (attentionLoaded) for (const batch of unsettledBatches.filter(batch => batch.state !== "needs_attention")) entries.set(`opml:${batch.id}`, batch);
-  for (const item of list.items.filter(item => item.classification !== "NeedsAttention")) entries.set(item.ref, item);
+  for (const batch of batches.filter(batch => batch.state === "needs_attention")) entries.set(`opml:${batch.id}`, batch);
+  for (const item of items.filter(item => item.classification === "NeedsAttention")) entries.set(item.ref, item);
+  for (const batch of batches.filter(batch => batch.state !== "needs_attention")) entries.set(`opml:${batch.id}`, batch);
+  for (const item of items.filter(item => item.classification !== "NeedsAttention")) entries.set(item.ref, item);
 
   const groups = new Map<string, string>();
   const rows: CollectionRowView[] = [];
@@ -112,11 +107,11 @@ export default function Register({ selected, onSelect }: {
   const { run } = useActionRuntime();
   const [retrying, setRetrying] = useState(false);
   const [dismissing, setDismissing] = useState(false);
-  const retryable = list.items.flatMap(item => {
+  const retryable = items.flatMap(item => {
     const offer = importRecovery(item);
     return offer === null || item.media_id === null ? [] : [{ mediaId: item.media_id, offer }];
   });
-  const dismissible = list.items.flatMap(item => item.dismissal === null ? [] : [{ ref: item.ref, through: item.dismissal.through }]);
+  const dismissible = items.flatMap(item => item.dismissal === null ? [] : [{ ref: item.ref, through: item.dismissal.through }]);
   const retryAll = async () => {
     if (retrying) return;
     setRetrying(true);
@@ -130,72 +125,45 @@ export default function Register({ selected, onSelect }: {
       confirmation: null, tracked: true, execute: () => dismissImports(dismissible) }); }
     finally { setDismissing(false); }
   };
-  const pendingMore = useRef(false);
-  useEffect(() => {
-    if (!pendingMore.current || list.running !== null || !list.fresh || list.failure !== null) return;
-    pendingMore.current = false;
-    if (!list.complete) list.more();
-  }, [list]);
-  const moreHeld = useRef(false);
-  const colophon = useRef<HTMLAnchorElement>(null);
+  const error = register.status === "loading" ? null : register.error;
+  const failure = error === null ? null : <Failed error={error} noun="imports"
+    retry={{ run: register.refetch, busy: register.status === "failed" ? register.retrying : register.status === "ready" && register.refreshing }} />;
   useLayoutEffect(() => {
-    if (list.complete && moreHeld.current && document.activeElement === document.body && colophon.current) {
-      moreHeld.current = false;
-      colophon.current.focus({ preventScroll: true });
-    }
-  });
-  const feedback = useCollectionReadFeedback({ list, unit: { singular: "import", plural: "imports" }, waiting: list.status === "loading",
-    outcome: list.complete && entries.size === 0 ? "nothing arrived in the last thirty days." : null });
-  const batchError = batches.status !== "loading" && batches.error !== null ? <Failed error={batches.error} noun="subscription imports"
-    retry={{ run: batches.refetch, busy: batches.status === "failed" ? batches.retrying : batches.refreshing }} /> : null;
-  const failure = digest === null && summary.status === "failed" ? <Failed error={summary.error} noun="imports" retry={{ run: summary.refetch, busy: summary.retrying }} />
-    : list.status === "failed" && list.failure !== null ? <Failed error={list.failure.error} noun="imports" retry={{ run: list.retry, busy: list.running !== null }} />
-      : entries.size === 0 ? batchError : null;
-  const loading = digest === null && summary.status !== "failed" || list.status === "loading" || batches.status === "loading";
-  useLayoutEffect(() => {
-    if (failure === null && !loading) established.current = true;
-  });
-  usePaneReturnReady(failure !== null || !loading);
-  const count = (group: "attention" | "active") => (summary.status === "ready" ? group === "attention" ? summary.data.needs_attention_count : summary.data.active_count : 0)
-    + unsettledBatches.filter(batch => (batch.state === "needs_attention") === (group === "attention")).length;
-  return <>{feedback.announcement}<CollectionView returnScope="imports-register" anchorKey={from} rows={rows} ariaLabel="imports"
-    status={failure !== null ? "error" : loading ? "loading" : "ready"} error={failure} notice={failure === batchError ? null : batchError}
+    if (register.status === "ready") established.current = true;
+  }, [register.status]);
+  usePaneReturnReady(register.status !== "loading");
+  const attentionCount = items.filter(item => item.classification === "NeedsAttention").length
+    + batches.filter(batch => batch.state === "needs_attention").length;
+  const activeCount = items.filter(item => item.classification === "Active").length
+    + batches.filter(batch => batch.state !== "needs_attention").length;
+  return <CollectionView returnScope="imports-register" anchorKey={from} rows={rows} ariaLabel="imports" geometry="UniformIndex"
+    status={register.status === "failed" ? "error" : register.status} error={register.status === "failed" ? failure : null}
+    notice={register.status === "ready" ? failure : null}
     empty={<p>nothing arrived in the last thirty days. <Button onClick={event => requestNexusOpen({ kind: "Import", into: [] }, event.currentTarget)}>import</Button></p>}
     headBefore={row => {
       if (!firstInGroup.has(row.id)) return null;
       const group = groups.get(row.id)!;
       const entry = entries.get(row.id)!;
       let heading: string;
-      if (group === "attention") heading = `needs attention · ${count("attention")}`;
-      else if (group === "active") heading = `importing · ${count("active")}`;
+      if (group === "attention") heading = `needs attention · ${attentionCount}`;
+      else if (group === "active") heading = `importing · ${activeCount}`;
       else {
         if (!("ref" in entry) || entry.arrived_at === null) throw new Error("Arrival head has no instant");
         heading = registerDay(entry.arrived_at, new Date(), display.displayTimeZone);
       }
       return <><h3>{heading}</h3>
         {group !== "attention" ? null : <span className={styles.headActions}>
-          {retryable.length < 2 ? null : <Button aria-disabled={retrying || undefined} aria-busy={retrying || undefined} onClick={() => void retryAll()}>{attentionLoaded ? "retry all" : `retry ${retryable.length}`}</Button>}
-          {dismissible.length < 2 ? null : <Button aria-disabled={dismissing || undefined} aria-busy={dismissing || undefined} onClick={() => void dismissAll()}>{attentionLoaded ? "dismiss all" : `dismiss ${dismissible.length}`}</Button>}
+          {retryable.length < 2 ? null : <Button aria-disabled={retrying || undefined} aria-busy={retrying || undefined} onClick={() => void retryAll()}>{`retry ${retryable.length}`}</Button>}
+          {dismissible.length < 2 ? null : <Button aria-disabled={dismissing || undefined} aria-busy={dismissing || undefined} onClick={() => void dismissAll()}>{`dismiss ${dismissible.length}`}</Button>}
         </span>}</>;
     }}
     renderRow={props => <RegisterRow {...props} entry={entries.get(props.row.id)!} group={groups.get(props.row.id)!}
       animate={established.current} onSelect={onSelect} />}
-    footer={<>{feedback.notice}
-      {list.status === "ready" && pendingMore.current && list.failure?.op === "Refetch" ? <Failed error={list.failure.error} noun="updated imports"
-        retry={{ run: list.retry, busy: list.running !== null }} /> : null}
-      {list.status !== "ready" ? null : !list.complete ? <Button aria-busy={list.running !== null || undefined}
-        onFocus={() => { moreHeld.current = true; }} onBlur={event => { if (event.currentTarget.isConnected) moreHeld.current = false; }}
-        onClick={() => {
-          if (list.running !== null) pendingMore.current = true;
-          else if (list.failure?.op === "More") { pendingMore.current = false; list.retry(); }
-          else if (list.failure !== null) { pendingMore.current = true; list.retry(); }
-          else if (!list.fresh) pendingMore.current = true;
-          else list.more();
-        }}>load more</Button>
-        : <><p className={styles.colophon}>thirty days of arrivals. earlier ones are in all. {all.status === "ready" ? <a ref={colophon} href={`/libraries/${all.data}`}>open all</a> : null}</p>
-          {all.status === "failed" ? <Failed error={all.error} noun="all" retry={{ run: all.refetch, busy: all.retrying }} /> : null}</>}
-    </>}
-  /></>;
+    footer={register.status === "ready" ? <>
+      <p className={styles.colophon}>thirty days of arrivals. earlier ones are in all. {all.status === "ready" ? <a href={`/libraries/${all.data}`}>open all</a> : null}</p>
+      {all.status === "failed" ? <Failed error={all.error} noun="all" retry={{ run: all.refetch, busy: all.retrying }} /> : null}
+    </> : null}
+  />;
 }
 
 /** A row's transition outlives reads and a change from pointer to library presentation. */
@@ -219,6 +187,6 @@ function RegisterRow({ entry, group, animate, onSelect, ...props }: CollectionVi
   const className = `${motion.fall ? styles.fall : ""} ${motion.ink ? styles.ink : ""}`;
   return "ref" in entry ? entry.classification === "Complete"
     ? <CollectionRow {...props} className={className} onAnimationEnd={onAnimationEnd} occurrenceActions={[importDetailsAction(entry, onSelect)]} />
-    : <ImportWorkRow item={entry} selected={props.row.selected} onSelect={onSelect} className={className} onAnimationEnd={onAnimationEnd} />
-    : <OpmlBatchRow batch={entry} selected={props.row.selected} onSelect={onSelect} className={className} onAnimationEnd={onAnimationEnd} />;
+    : <ImportWorkRow item={entry} selected={props.row.selected} onSelect={onSelect} className={className} onAnimationEnd={onAnimationEnd} listPosition={props.listPosition} />
+    : <OpmlBatchRow batch={entry} selected={props.row.selected} onSelect={onSelect} className={className} onAnimationEnd={onAnimationEnd} listPosition={props.listPosition} />;
 }

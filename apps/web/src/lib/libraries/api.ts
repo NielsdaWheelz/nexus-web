@@ -10,7 +10,6 @@
 
 import { apiFetch } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
-import { pageQuery, type ListPage } from "@/lib/api/useServerList";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { Move, Snapshot } from "@/lib/collections/order";
 import { stampedRead, type StampedRead } from "@/lib/consumption/listening";
@@ -145,24 +144,14 @@ export async function readAcquisitionGuard(selected: readonly LibraryDestination
   return acquisitionGuard(selected, (await libraryDestinations(signal)).removal_revision);
 }
 
-function page<T>(path: string, cursor: string | null, limit: number, signal: AbortSignal) {
-  return data<ListPage<T>>(`/api/libraries/${path}?${pageQuery("", cursor, limit)}`, signal);
-}
+export const libraryMembersIndex = (id: string, signal: AbortSignal) =>
+  data<ApiJson<"/libraries/{library_id}/members", "get">["data"]>(`${libraryPath(id)}/members`, signal);
 
-export const membersPage = (id: string, cursor: string | null, limit: number, signal: AbortSignal) =>
-  page<LibraryMember>(`${encodeURIComponent(id)}/members`, cursor, limit, signal);
+export const libraryInvitationsIndex = (id: string, signal: AbortSignal) =>
+  data<ApiJson<"/libraries/{library_id}/invites", "get">["data"]>(`${libraryPath(id)}/invites`, signal);
 
-/** A library's pending invitations, newest first. */
-export const invitationsPage = (
-  id: string,
-  cursor: string | null,
-  limit: number,
-  signal: AbortSignal,
-) => page<LibraryInvitation>(`${encodeURIComponent(id)}/invites`, cursor, limit, signal);
-
-/** The invitations waiting for the viewer, newest first. */
-export const viewerInvitationsPage = (cursor: string | null, limit: number, signal: AbortSignal) =>
-  page<ViewerInvitation>("invites", cursor, limit, signal);
+export const viewerInvitationsIndex = (signal: AbortSignal) =>
+  data<ApiJson<"/libraries/invites", "get">["data"]>("/api/libraries/invites", signal);
 
 export async function invite(
   libraryId: string,

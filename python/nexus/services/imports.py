@@ -1,7 +1,7 @@
 """The Imports read model (`docs/modules/imports.md`).
 
 One CTE classifies every import over three independent obligations (source, search,
-metadata) and names the one that speaks for it; the summary, a page and a detail read it
+metadata) and names the one that speaks for it; the summary, the index and a detail read it
 alike, so a count and a row cannot disagree. Recovery answers, readiness and the metadata
 view are their owners' (`media_facts`); in-flight progress is ingest's.
 """
@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from datetime import datetime
-from typing import cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -22,6 +21,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.schemas.collection_index import CollectionIndex
 from nexus.schemas.import_history import (
     SAFE_FAILURE_CODES,
     STAGES,
@@ -29,14 +29,13 @@ from nexus.schemas.import_history import (
 )
 from nexus.schemas.import_refs import ParsedImportRef, format_import_ref
 from nexus.schemas.imports import (
-    HistoryPage,
     ImportDetail,
     ImportDismissal,
+    ImportHistory,
+    ImportIndex,
     ImportItem,
-    ImportListQuery,
     ImportObligation,
     ImportObligations,
-    ImportPage,
     ImportSummary,
     OriginalSource,
     PendingCapture,
@@ -46,15 +45,8 @@ from nexus.schemas.imports import (
 )
 from nexus.schemas.media_sources import EmailSourcePayload, SourceProgress
 from nexus.schemas.source_issues import SOURCE_ISSUES
-from nexus.services.collection_keyset import (
-    KeysetValueKind,
-    SortKey,
-    decode_keyset_cursor,
-    encode_keyset_cursor,
-    keyset_page,
-)
 from nexus.services.feeds import opml
-from nexus.services.import_history import read_history_page
+from nexus.services.import_history import read_history
 from nexus.services.media import MediaFacts, media_facts
 from nexus.services.metadata_operations import metadata_operations_sql
 from nexus.services.source_publication import load_source_progress
@@ -69,21 +61,6 @@ from nexus.services.upload_session_state import (
     UPLOAD_SESSION_DERIVED_STATE_SQL,
 )
 
-_PLANS = {
-    "Register": [
-        SortKey("class_rank", "asc", KeysetValueKind.Int),
-        SortKey("register_at", "desc", KeysetValueKind.DateTime),
-        SortKey("ref_key", "asc", KeysetValueKind.Text),
-    ],
-    "Recent": [
-        SortKey("accepted_at", "desc", KeysetValueKind.DateTime),
-        SortKey("ref_key", "asc", KeysetValueKind.Text),
-    ],
-}
-_EVENT_PLAN = [
-    SortKey("occurred_at", "desc", KeysetValueKind.DateTime),
-    SortKey("id", "desc", KeysetValueKind.Text),
-]
 _LIVE = "('pending', 'failed', 'running')"
 
 
@@ -339,37 +316,9 @@ def _params(viewer_id: UUID) -> dict[str, object]:
     }
 
 
-def _view_sql(query: ImportListQuery, params: dict[str, object]) -> str:
-    if query.view == "Register":
-        params["arrived_from"] = query.arrived_from
-        return """, filtered AS (
-            SELECT i.*, CASE i.classification
-                WHEN 'NeedsAttention' THEN 0 WHEN 'Active' THEN 1 ELSE 2 END AS class_rank,
-                CASE i.classification WHEN 'NeedsAttention' THEN i.raised_failed_at
-                    WHEN 'Active' THEN i.accepted_at ELSE i.arrived_at END AS register_at
-            FROM imports i WHERE i.classification <> 'Complete' OR i.arrived_at >= :arrived_from
-        )"""
-    # Recent keeps the viewer's own acquisitions, including superseded imports,
-    # in their existing acceptance order, independently of arrival or classification.
-    return """, filtered AS (
-        SELECT i.* FROM imports i WHERE i.session_id IS NOT NULL OR EXISTS (
-            SELECT 1 FROM media_source_attempts a
-            WHERE a.media_id = i.media_id AND a.created_by_user_id = :viewer_id
-              AND a.source_type <> :transcript_source_type
-        ) OR EXISTS (
-            SELECT 1 FROM media_source_supersessions s
-            WHERE s.media_id = i.media_id AND s.created_by_user_id = :viewer_id
-        )
-    )"""
-
-
 def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
     """Counts and one digest over the register's facts, without job lease churn."""
-    batches = [
-        batch.model_dump(mode="json")
-        for batch in opml.list_imports(db, viewer_id)
-        if batch.state in ("pending", "running", "needs_attention")
-    ]
+    batches = [batch.model_dump(mode="json") for batch in opml.unsettled_imports(db, viewer_id)]
     row = (
         db.execute(
             text(f"""{_CTE}
@@ -398,8 +347,7 @@ def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
                         s.session_updated_at, s.verification_error_code, s.upload_url_expires_at)
                         ORDER BY s.session_id)
                      FROM targeted_sessions s WHERE s.target_media_id = imports.media_id::text)
-                )::text, '' ORDER BY ref_key) FROM imports
-                    WHERE classification <> 'Complete' OR arrived_at >= now() - interval '32 days'), '')
+                )::text, '' ORDER BY ref_key) FROM imports), '')
                 || COALESCE((SELECT string_agg(jsonb_build_array(
                     batch->'id', batch->'state', batch->'attempt_version',
                     batch->'admitted_count', batch->'remaining_count', batch->'failed_count'
@@ -414,27 +362,49 @@ def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
     return ImportSummary.model_validate(dict(row))
 
 
-def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) -> ImportPage:
-    """One keyset page, bound to its viewer, view and arrival window."""
-    params = _params(viewer_id)
-    filtered = _CTE + _view_sql(query, params)
-    rows, next_cursor = keyset_page(
-        db,
-        binding={"list": f"imports:{query.view}", "viewer": viewer_id, **query.normalized()},
-        plan=_PLANS[query.view],
-        cursor=query.cursor,
-        limit=query.limit,
-        params=params,
-        sql=lambda keyset, order: (
-            f"{filtered} SELECT * FROM filtered facts WHERE TRUE {keyset}"
-            f" ORDER BY {order} LIMIT :limit"
-        ),
+def read_import_index(db: Session, *, viewer_id: UUID, arrived_from: datetime) -> ImportIndex:
+    """All unsettled work and arrivals since the reader's fixed cutoff."""
+    rows = (
+        db.execute(
+            text(f"""{_CTE}
+            SELECT i.* FROM imports i
+            WHERE i.classification <> 'Complete' OR i.arrived_at >= :arrived_from
+            ORDER BY CASE i.classification WHEN 'NeedsAttention' THEN 0 WHEN 'Active' THEN 1 ELSE 2 END,
+                CASE i.classification WHEN 'NeedsAttention' THEN i.raised_failed_at
+                    WHEN 'Active' THEN i.accepted_at ELSE i.arrived_at END DESC,
+                i.ref_key"""),
+            _params(viewer_id) | {"arrived_from": arrived_from},
+        )
+        .mappings()
+        .all()
     )
     media = _hydrate(db, viewer_id, rows)
-    return ImportPage(
+    return ImportIndex(
         items=[_item(row, media) for row in rows],
-        next_cursor=next_cursor,
+        batches=opml.unsettled_imports(db, viewer_id),
     )
+
+
+def read_recent_imports(db: Session, *, viewer_id: UUID) -> CollectionIndex[ImportItem]:
+    """Five most recently accepted acquisitions owned by the viewer."""
+    rows = (
+        db.execute(
+            text(f"""{_CTE}
+            SELECT i.* FROM imports i WHERE i.session_id IS NOT NULL OR EXISTS (
+                SELECT 1 FROM media_source_attempts a
+                WHERE a.media_id = i.media_id AND a.created_by_user_id = :viewer_id
+                  AND a.source_type <> :transcript_source_type
+            ) OR EXISTS (
+                SELECT 1 FROM media_source_supersessions s
+                WHERE s.media_id = i.media_id AND s.created_by_user_id = :viewer_id
+            ) ORDER BY i.accepted_at DESC, i.ref_key LIMIT 5"""),
+            _params(viewer_id),
+        )
+        .mappings()
+        .all()
+    )
+    media = _hydrate(db, viewer_id, rows)
+    return CollectionIndex(items=[_item(row, media) for row in rows])
 
 
 def _import_row(db: Session, viewer_id: UUID, ref: ParsedImportRef) -> RowMapping:
@@ -559,32 +529,16 @@ def read_media_source_obligations(
     return result
 
 
-def read_import_history(
-    db: Session, *, viewer_id: UUID, ref: ParsedImportRef, cursor: str | None, limit: int
-) -> HistoryPage:
-    """Newest first, under the detail's visibility; the cursor binds viewer and ref."""
+def read_import_history(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) -> ImportHistory:
+    """The complete account-visible dossier."""
     row = _import_row(db, viewer_id, ref)
-    binding = {"list": "imports:history", "viewer": viewer_id, "ref": row["ref_key"]}
-    before = None
-    if cursor is not None:
-        at, event_id = decode_keyset_cursor(cursor, binding, _EVENT_PLAN)
-        before = (cast(datetime, at), cast(str, event_id))
-    entries = read_history_page(
-        db,
-        viewer_id=viewer_id,
-        session_id=row["session_id"],
-        media_id=row["media_id"],
-        before=before,
-        limit=limit + 1,
-    )
-    last = entries[limit - 1] if len(entries) > limit else None
-    return HistoryPage(
-        entries=entries[:limit],
-        next_cursor=None
-        if last is None
-        else encode_keyset_cursor(
-            binding, _EVENT_PLAN, {"occurred_at": last.occurred_at, "id": last.id}
-        ),
+    return ImportHistory(
+        entries=read_history(
+            db,
+            viewer_id=viewer_id,
+            session_id=row["session_id"],
+            media_id=row["media_id"],
+        )
     )
 
 

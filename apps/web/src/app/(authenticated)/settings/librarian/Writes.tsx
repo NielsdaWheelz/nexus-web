@@ -7,12 +7,12 @@ import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import Button from "@/components/ui/Button";
 import MachineText from "@/components/ui/MachineText";
-import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import PaneSection from "@/components/ui/PaneSection";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, outcomeUnknown, type ApiPath } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
-import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
+import { useServerValue, type Visit } from "@/lib/api/serverState";
+import { writeScrollPosition } from "@/lib/collections/scrollMotion";
 import { formatDisplayDate } from "@/lib/display/format";
 import { isAbortError } from "@/lib/errors";
 import { formatLocalDateInTimeZone, shiftLocalDate } from "@/lib/localDate";
@@ -20,7 +20,7 @@ import { useAccountToday } from "@/lib/notes/accountDay";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
+import { definePaneVisitDataKey, PaneRefreshAnchor } from "@/lib/workspace/paneReturnMemento";
 import type { ApiJson } from "@/lib/api/wire";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { undoAssistantWrite, writeKicker, UNDO_LABEL, UNDONE, UNDO_TOO_OLD, UNDO_UNAVAILABLE, UNDO_REFUSED, UNDO_UNKNOWN } from "@/lib/assistantWrites";
@@ -28,8 +28,7 @@ import styles from "./page.module.css";
 
 type Page = ApiJson<"/assistant-writes", "get">;
 type Write = Page["data"]["items"][number];
-const VISIT = definePaneVisitDataKey<ListSnapshot<Write>>("Settings.AssistantWrites");
-const UNIT = { singular: "write", plural: "writes" };
+const VISIT = definePaneVisitDataKey<Visit<Page["data"]>>("Settings.AssistantWrites");
 
 /** Successful writes in server order. Undo changes a row's state, never its place. */
 export default function Writes({ generationId, toolCallId }: {
@@ -54,35 +53,30 @@ export default function Writes({ generationId, toolCallId }: {
   const display = { displayLocale, displayTimeZone: calendarTimeZone };
   const today = useAccountToday();
   const yesterday = today === null ? null : shiftLocalDate(today, -1);
-  const filter = generationId ? `generation_id=${encodeURIComponent(generationId)}` : "";
-  const list = useServerList<Write>({
-    key: `/assistant-writes?${filter}`,
-    stale,
-    pageSize: 30,
-    active: usePaneIsActive(),
-    visit: VISIT,
-    id: write => write.id,
-    fetchPage: async (cursor, _limit, signal) => {
-      const query = new URLSearchParams(filter);
-      if (cursor !== null) query.set("before", cursor);
-      const path: ApiPath = `/api/assistant-writes?${query}`;
-      return (await apiFetch<Page>(path, { cache: "no-store", signal })).data;
-    },
+  const key = generationId === null ? "/assistant-writes" : `/assistant-writes?generation_id=${encodeURIComponent(generationId)}`;
+  const active = usePaneIsActive();
+  const list = useServerValue({
+    key, stale, enabled: active, visit: VISIT,
+    load: async signal => (await apiFetch<Page>(`/api${key}` as ApiPath, { cache: "no-store", signal })).data,
   });
-  const writes = list.items;
-  const { current, active } = list;
+  const writes = list.status === "ready" ? list.data.items : [];
+  const current = list.status === "ready";
   useEffect(() => {
     if (pending && writes.some(write => write.id === pending.id && write.reverted_at !== null)) {
       setFocusId(pending.id);
       setPending(null);
     }
   }, [pending, writes, setPending]);
-  const readFeedback = useCollectionReadFeedback({ list, unit: UNIT, waiting: false, outcome: null });
-  const found = list.current && writes.some(write => write.id === toolCallId);
+  const found = current && writes.some(write => write.id === toolCallId);
   useEffect(() => {
     if (focusId === null || !current || !active || !writes.some(write => write.id === focusId)) return;
-    focused.current?.scrollIntoView({ block: "nearest" });
-    focused.current?.focus({ preventScroll: true });
+    const row = focused.current;
+    const port = row?.closest<HTMLElement>("[data-pane-content]");
+    if (row === null || !port) return;
+    const frame = port.getBoundingClientRect(), line = row.getBoundingClientRect();
+    const delta = line.top < frame.top ? line.top - frame.top : Math.max(0, line.bottom - frame.bottom);
+    if (delta !== 0) writeScrollPosition(port, port.scrollTop + delta);
+    row.focus({ preventScroll: true });
     setFocusId(null);
   }, [focusId, writes, current, active]);
   const { refetch } = list;
@@ -95,7 +89,7 @@ export default function Writes({ generationId, toolCallId }: {
     }
     return null;
   }, [refetch]);
-  usePaneChrome({ refresh: { kind: "Refreshable", sourceKey: `/assistant-writes?${filter}`, execute } });
+  usePaneChrome({ refresh: { kind: "Refreshable", sourceKey: key, execute } });
 
   const undo = async (id: string) => {
     const previous = draft.read();
@@ -142,11 +136,12 @@ export default function Writes({ generationId, toolCallId }: {
       {waits ? <span id={waitsId} className="sr-only">{waitReason}</span> : null}
       {pending ? <span id={otherId} className="sr-only">another undo isn’t finished.</span> : null}
       {list.status === "loading" ? <Ruling />
-        : list.status === "failed" && list.failure !== null ? <Failed error={list.failure.error} noun="writes" retry={{ run: list.retry, busy: list.running !== null }} />
-        : list.complete && writes.length === 0 ? <Fact line={{ fact: generationId ? "no writes from this answer." : "no writes yet." }} />
-        : toolCallId && !found && list.complete ? <Fact line={{ fact: "that write isn’t in this list." }} />
+        : list.status === "failed" ? <Failed error={list.error} noun="writes" retry={{ run: list.refetch, busy: list.retrying }} />
+        : writes.length === 0 ? <Fact line={{ fact: generationId ? "no writes from this answer." : "no writes yet." }} />
+        : toolCallId && !found ? <Fact line={{ fact: "that write isn’t in this list." }} />
         : null}
-      <div className={styles.days}>
+      <PaneRefreshAnchor identity={key} value={writes} ready={current}>
+      <div className={styles.days} data-pane-return-scope="Settings.AssistantWrites">
         {Array.from(days, ([day, group]) => <div key={day ?? "unavailable"}>
           {day !== null && today !== null ? <h3 className={styles.day}>{day === today || day === yesterday
             ? new Intl.RelativeTimeFormat(displayLocale, { numeric: "auto" }).format(day === today ? 0 : -1, "day")
@@ -157,7 +152,7 @@ export default function Writes({ generationId, toolCallId }: {
               const target = ref.label.trim();
               const reverted = write.reverted_at !== null;
               return <li key={write.id} className={styles.write} ref={write.id === focusId ? focused : undefined}
-                tabIndex={-1} aria-current={write.id === toolCallId ? "true" : undefined}>
+                tabIndex={-1} data-collection-row-id={write.id} aria-current={write.id === toolCallId ? "true" : undefined}>
                 <time className={styles.time} dateTime={write.created_at}>{formatDisplayDate(write.created_at, display, { hour: "numeric", minute: "2-digit" })?.toLowerCase()}</time>
                 <span className={styles.writeWords}>
                   <span>{writeKicker(ref)}</span>
@@ -173,8 +168,8 @@ export default function Writes({ generationId, toolCallId }: {
           </ol>
         </div>)}
       </div>
-      {readFeedback.notice}
-      {readFeedback.announcement}
+      </PaneRefreshAnchor>
+      {list.status === "ready" && list.error !== null ? <Failed error={list.error} noun="writes" retry={{ run: list.refetch, busy: list.refreshing }} /> : null}
     </MachineText>
   </PaneSection>;
 }

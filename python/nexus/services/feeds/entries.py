@@ -9,7 +9,7 @@ from nexus.auth.permissions import requested_media_ids_cte_sql
 from nexus.db.models import TranscriptState
 from nexus.schemas import feed as wire
 from nexus.services import media
-from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
+from nexus.services.collection_keyset import KeysetValueKind, SortKey, order_by_sql
 from nexus.services.consumption import projection
 from nexus.services.reading_time import reading_time_rows_sql
 
@@ -77,35 +77,26 @@ def list_entries(
     *,
     state: wire.EntryState,
     sort: wire.EntrySort,
-    cursor: str | None = None,
-    limit: int = 100,
 ) -> wire.FeedEntryIndexOut:
     from .queries import get_feed_detail
 
     detail = get_feed_detail(db, viewer_id, feed_id)
-    rows, next_cursor = keyset_page(
-        db,
-        binding={
-            "feed_id": str(feed_id),
-            "viewer_id": str(viewer_id),
-            "state": state,
-            "sort": sort,
-        },
-        plan=entry_order_plan(sort),
-        cursor=cursor,
-        limit=limit,
-        params={"viewer_id": viewer_id, "feed": feed_id, "state": state},
-        alias="entries",
-        sql=lambda predicate, order: f"""SELECT * FROM ({entry_rows_sql()}) entries
-            WHERE feed_id=:feed AND (:state='all' OR entry_state=:state) {predicate}
-            ORDER BY {order} LIMIT :limit""",
+    order = order_by_sql(entry_order_plan(sort), alias="entries")
+    rows = (
+        db.execute(
+            text(f"""SELECT * FROM ({entry_rows_sql()}) entries
+            WHERE feed_id=:feed AND (:state='all' OR entry_state=:state)
+            ORDER BY {order}"""),
+            {"viewer_id": viewer_id, "feed": feed_id, "state": state},
+        )
+        .mappings()
+        .all()
     )
     summaries = media.media_summaries(
         db, viewer_id=viewer_id, media_ids=[row["media_id"] for row in rows]
     )
     return wire.FeedEntryIndexOut(
         feed=detail,
-        next_cursor=next_cursor,
         items=[
             wire.FeedEntryListItemOut(
                 id=row["media_id"],

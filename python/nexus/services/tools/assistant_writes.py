@@ -20,14 +20,14 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_serializable
-from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.assistant_writes import (
     AssistantWriteOut,
-    AssistantWritePage,
     CreatedRefOut,
     MachineAuthorshipOut,
     TargetKind,
 )
+from nexus.schemas.collection_index import CollectionIndex
 from nexus.schemas.resource_evidence import ResourceField
 from nexus.schemas.resource_graph import ConnectionCreationOut
 from nexus.services import library_entries, users
@@ -136,54 +136,47 @@ def edge_provenance(
 
 
 def history(
-    db: Session, *, viewer_id: UUID, generation_id: UUID | None, before: UUID | None
-) -> AssistantWritePage:
-    """Successful writes with created targets, newest first, 30 a page, keyed by (time, id)."""
-
-    after = None
-    if before is not None:
-        after = db.execute(
-            text(
-                "SELECT created_at, id FROM tool_calls WHERE id = :id AND principal_user_id = :viewer"
-            ),
-            {"id": before, "viewer": viewer_id},
-        ).one_or_none()
-        if after is None:
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Unknown history cursor")
+    db: Session, *, viewer_id: UUID, generation_id: UUID | None
+) -> CollectionIndex[AssistantWriteOut]:
+    """All successful writes with created targets, newest first."""
     rows = db.execute(
         text(
-            "SELECT id, created_at, created_refs, result, reverted_at"
+            "SELECT id, created_at, created_refs, reverted_at"
             " FROM tool_calls WHERE principal_user_id = :viewer AND tool_id = ANY(:writes)"
             " AND result ->> 'type' = 'Success' AND jsonb_array_length(created_refs) > 0"
             " AND (CAST(:generation AS uuid) IS NULL OR generation_id = :generation)"
-            " AND (CAST(:at AS timestamptz) IS NULL OR (created_at, id) < (:at, :after))"
-            " ORDER BY created_at DESC, id DESC LIMIT 31"
+            " ORDER BY created_at DESC, id DESC"
         ),
-        {
-            "viewer": viewer_id,
-            "writes": list(WRITES),
-            "generation": generation_id,
-            "at": after.created_at if after else None,
-            "after": after.id if after else None,
-        },
+        {"viewer": viewer_id, "writes": list(WRITES), "generation": generation_id},
     ).all()
-    items = [
-        AssistantWriteOut(
-            id=row.id,
-            created_at=row.created_at,
-            created_refs=[CreatedRefOut.model_validate(ref) for ref in row.created_refs],
-            reverted_at=row.reverted_at,
-            undo_allowed=undo_eligible(
-                db,
-                viewer_id=viewer_id,
-                result=row.result,
-                created_refs=row.created_refs,
+    candidates = {
+        row.id: _entry_undo_receipts(row.created_refs) for row in rows if row.reverted_at is None
+    }
+    eligible = library_entries.eligible_entry_undos(
+        db,
+        viewer_id,
+        list(
+            {
+                receipt
+                for receipts in candidates.values()
+                if receipts is not None
+                for receipt in receipts
+            }
+        ),
+    )
+    return CollectionIndex(
+        items=[
+            AssistantWriteOut(
+                id=row.id,
+                created_at=row.created_at,
+                created_refs=[CreatedRefOut.model_validate(ref) for ref in row.created_refs],
                 reverted_at=row.reverted_at,
-            ),
-        )
-        for row in rows[:30]
-    ]
-    return AssistantWritePage(items=items, next_cursor=rows[29].id if len(rows) > 30 else None)
+                undo_allowed=(receipts := candidates.get(row.id)) is not None
+                and all(receipt in eligible for receipt in receipts),
+            )
+            for row in rows
+        ]
+    )
 
 
 def undo_eligible(
@@ -195,29 +188,32 @@ def undo_eligible(
     reverted_at: object,
 ) -> bool:
     """Account and chat history share execution's exact entry-receipt predicate."""
-    return (
-        result is not None
-        and result["type"] == "Success"
-        and bool(created_refs)
-        and reverted_at is None
-        and all(_undo_eligible(db, viewer_id, ref) for ref in created_refs)
-    )
-
-
-def _undo_eligible(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> bool:
-    if ref["kind"] != "entry":
-        return True
-    if ref["target_scheme"] != "media":
+    if result is None or result["type"] != "Success" or not created_refs or reverted_at is not None:
         return False
-    target = library_entries.media_target(UUID(ref["target_id"]))
-    return library_entries.library_entry_undo_eligible(
-        db,
-        viewer_id=viewer_id,
-        library_id=UUID(ref["library_id"]),
-        target=target,
-        entry_id=UUID(ref["id"]),
-        order_revision=None if ref["order_revision"] is None else int(ref["order_revision"]),
+    receipts = _entry_undo_receipts(created_refs)
+    return receipts is not None and set(receipts) <= library_entries.eligible_entry_undos(
+        db, viewer_id, receipts
     )
+
+
+def _entry_undo_receipts(
+    refs: list[dict[str, Any]],
+) -> list[library_entries.EntryUndoReceipt] | None:
+    receipts = []
+    for ref in refs:
+        if ref["kind"] != "entry":
+            continue
+        if ref["target_scheme"] != "media" or ref["order_revision"] is None:
+            return None
+        receipts.append(
+            library_entries.EntryUndoReceipt(
+                UUID(ref["library_id"]),
+                UUID(ref["target_id"]),
+                UUID(ref["id"]),
+                int(ref["order_revision"]),
+            )
+        )
+    return receipts
 
 
 def undo(db: Session, *, viewer_id: UUID, tool_call_id: UUID) -> None:

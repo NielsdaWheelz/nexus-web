@@ -1,6 +1,6 @@
 "use client";
 
-// One source: detail and its ordered entry prefix share one observation.
+// One source: detail and its complete entry order share one observation.
 // One visible polling lane refreshes publication, lifecycle and transcript facts.
 // Reviewed commands belong to the account owner. Observation stops outside
 // the visible pane.
@@ -26,7 +26,6 @@ import FeedTitlePage from "@/components/feeds/FeedTitlePage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { viewHref } from "@/lib/collections/view";
 import type { PaneCollation } from "@/lib/panes/collation";
-import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
 import PaneSection from "@/components/ui/PaneSection";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
@@ -48,7 +47,7 @@ import {
   matchesPaneFilterQuery,
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
-import { listFeedEntries, requestFeedRefresh, type FeedDetail, type FeedEntryRow } from "@/lib/feeds/api";
+import { listFeedEntries, requestFeedRefresh, type FeedDetail } from "@/lib/feeds/api";
 import { type EntryState } from "@/lib/feeds/api";
 import { publishChange } from "@/lib/api/changes";
 import { useCatalogRead, useCatalogState, usePromoteLiveGroup } from "@/lib/catalog/provider";
@@ -56,8 +55,7 @@ import { unstamped } from "@/lib/consumption/listening";
 import { catalogFeedEntries } from "@/lib/catalog/selectors";
 import { remoteReady } from "@/lib/native/admission";
 import { ApiError, isApiError } from "@/lib/api/client";
-import { modeledApiError, useThrowLater, type ServerValue } from "@/lib/api/serverState";
-import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
+import { modeledApiError, useServerValue, useThrowLater, type ServerValue, type Visit } from "@/lib/api/serverState";
 import { indexRowStatus, indexReading } from "@/lib/panes/indexRows";
 import { useFeedEntriesRead } from "@/lib/panes/indexPaneEntry";
 import { LIVE_SOURCE } from "@/lib/catalog/types";
@@ -75,7 +73,7 @@ import {
 
 const CHECKED = definePaneVisitDataKey<boolean>("FeedDetail.SourceCheck");
 const DETAILS = definePaneVisitDataKey<boolean>("FeedDetail.Details");
-const EPISODES = definePaneVisitDataKey<ListSnapshot<FeedEntryRow, Awaited<ReturnType<typeof listFeedEntries>>>>("FeedDetail.Entries");
+const EPISODES = definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof listFeedEntries>>>>("FeedDetail.Entries");
 export default function FeedDetailPaneBody({ kind }: { readonly kind: "podcast" | "article" }) {
   const feedId = usePaneParam(kind === "podcast" ? "podcastId" : "feedId");
   const runtime = usePaneRuntime();
@@ -107,25 +105,11 @@ function FeedDetailPane({ feedId, kind, paneId }: { readonly feedId: string; rea
   const { read: descriptor, group } = useFeedEntriesRead();
   const savedRead = useCatalogRead(value => {
     const data = catalogFeedEntries(value, feedId, new URLSearchParams(query));
-    return data === null ? null : { items: data.items, next_cursor: null, metadata: { data, consumption_revision: value.value.consumption_revision } };
+    return data === null ? null : { data, consumption_revision: value.value.consumption_revision };
   });
-  const entryList = useServerList<FeedEntryRow, Awaited<ReturnType<typeof listFeedEntries>>>({
-    key: descriptor.key, stale: descriptor.stale, catalog: savedRead, visit: EPISODES, active: observing, drain: false, pageSize: 100,
-    id: row => row.id,
-    fetchPage: async (cursor, limit, signal) => {
-      const pageQuery = new URLSearchParams(query);
-      pageQuery.set("limit", String(limit));
-      if (cursor !== null) pageQuery.set("cursor", cursor);
-      const page = await listFeedEntries(feedId, pageQuery, signal);
-      return { items: page.data.items, next_cursor: page.data.next_cursor, metadata: page };
-    },
-  });
-  const raw: ServerValue<Awaited<ReturnType<typeof listFeedEntries>>> = entryList.metadata !== null && entryList.current ? {
-    status: "ready", data: { ...entryList.metadata, data: { ...entryList.metadata.data, items: [...entryList.items] } }, source: entryList.source,
-    acceptedStale: entryList.shownStale, fresh: entryList.fresh, generation: 0,
-    error: entryList.failure?.error ?? null, refreshing: entryList.running !== null, refetch: entryList.refetch, revalidate: entryList.revalidate,
-  } : entryList.failure !== null ? { status: "failed", error: entryList.failure.error, retrying: entryList.running !== null, refetch: entryList.refetch, revalidate: entryList.revalidate }
-    : { status: "loading", refetch: entryList.refetch, revalidate: entryList.revalidate };
+  const raw = useServerValue({ ...descriptor, catalog: savedRead, visit: EPISODES, enabled: observing });
+  const readError = raw.status === "loading" ? null : raw.error;
+  const denied = readError?.code === "E_FEED_NOT_FOUND" || readError?.status === 403 || readError?.status === 404;
   const showEpisodes = useMemo(() => new Set((catalog.raw === null ? [] : [...catalog.raw.value.episodes, ...catalog.raw.value.articles]).flatMap(row => row.feed_id === feedId ? [row.media_id] : []) ), [catalog.raw, feedId]);
   usePromoteLiveGroup(group, raw.status === "ready" && raw.source.kind === "live" && raw.error === null && raw.fresh
     ? [raw.data.consumption_revision] : null, showEpisodes);
@@ -137,7 +121,9 @@ function FeedDetailPane({ feedId, kind, paneId }: { readonly feedId: string; rea
         source: { kind: "catalog" as const, snapshot_id: catalog.data.value.snapshot_id, captured_at: catalog.data.value.captured_at } };
     } catch (error) { if (isApiError(error)) return null; throw error; }
   }, [catalog.data, feedId, query]);
-  const snapshot: typeof raw = group.live || saved === null ? raw : {
+  const snapshot: typeof raw = denied && readError !== null
+    ? { status: "failed", error: readError, retrying: indexReading(raw), refetch: raw.refetch, revalidate: raw.revalidate }
+    : group.live || saved === null ? raw : {
     ...raw, status: "ready", data: saved.data, source: saved.source, fresh: false, acceptedStale: null, generation: 0,
     error: raw.status === "loading" ? null : raw.error, refreshing: indexReading(raw),
   };
@@ -233,10 +219,7 @@ function FeedDetailPane({ feedId, kind, paneId }: { readonly feedId: string; rea
   }, [canCheckSource, ctx, feedId, retainCheck, throwLater]);
   const filterRows = usePaneFilterRows({
     sourceKey: `FeedDetail.Episodes:${feedId}`,
-    getRowStatus: (text) => episodes.status === "ready" && live && !entryList.complete
-      ? { kind: entryList.failure === null ? "Partial" : "Failed", loadedCount: resolved.length,
-        visibleCount: matching(text).length, unit: { singular, plural: noun } }
-      : indexRowStatus(episodes, resolved.length, matching(text).length, { singular, plural: noun }),
+    getRowStatus: (text) => indexRowStatus(episodes, resolved.length, matching(text).length, { singular, plural: noun }),
   });
   const replaceView = useCallback(
     (changes: Readonly<Record<string, string | null>>) =>
@@ -330,11 +313,11 @@ function FeedDetailPane({ feedId, kind, paneId }: { readonly feedId: string; rea
 
   const visible = matching(text);
   const emptyTitle = text !== ""
-    ? `no ${live && !entryList.complete ? "loaded " : ""}${noun} match this filter.`
+    ? `no ${noun} match this filter.`
     : known === "all"
         ? `no ${noun}.`
         : `no ${known === "in_progress" ? "in-progress" : kind === "podcast" ? episodeState : known} ${noun}.`;
-  const readFeedback = useIndexReadFeedback({ value: episodes, requestedKey: descriptor.key, active, waiting: known !== undefined && episodes.status === "loading", outcome: visible.length > 0 ? "results updated." : emptyTitle });
+  const readFeedback = useIndexReadFeedback({ value: episodes, requestedKey: descriptor.key, active, waiting: known !== undefined && episodes.status === "loading", outcome: visible.length > 0 ? null : emptyTitle });
   const checkAgain = () => {
     if (checking) return;
     setChecking(true);
@@ -402,9 +385,8 @@ function FeedDetailPane({ feedId, kind, paneId }: { readonly feedId: string; rea
               collectionBusy={busy}
               anchorKey={text}
               empty={<Fact line={{ fact: emptyTitle }} />}
-              footer={source.kind === "live" && !entryList.complete ? entryList.failure?.op === "More"
-                ? <Failed error={entryList.failure.error} noun={`more ${noun}`} retry={{ run: entryList.retry, busy: entryList.running !== null }} />
-                : <Button disabled={entryList.running !== null} onClick={entryList.more}>load more</Button> : null}
+              notice={episodeFailure === null ? null : <Failed error={episodeFailure} noun={noun} retry={{ run: retry, busy }} />}
+              rowActionsAvailable={episodeFailure === null}
             />
             </PaneSection>
             </PlaybackSourceContext.Provider>

@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Annotated, Literal, get_args
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.assistant_writes import MachineAuthorshipOut
 from nexus.schemas.resource_evidence import CapturedEvidence, CapturedPassageTarget
@@ -50,13 +50,34 @@ class ConnectionFiltersRequest(Model):
     target_schemes: list[ResourceScheme] | None = None
 
 
-class ConnectionQueryRequest(Model):
+class ConnectionScope(Model):
     refs: list[str] = Field(min_length=1, max_length=200)
     direction: ConnectionDirection
     rollup: Literal["exact", "owner"] = "exact"
     filters: ConnectionFiltersRequest = Field(default_factory=ConnectionFiltersRequest)
+
+
+class ConnectionQueryRequest(ConnectionScope):
+    match_text: str | None
+
+
+class ConnectionResolveRequest(ConnectionScope):
+    edge_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def distinct_ids(self):
+        if len(set(self.edge_ids)) != len(self.edge_ids):
+            raise ValueError("Edge ids must be distinct")
+        return self
+
+
+class ConnectionIndexOut(Model):
+    edge_ids: list[UUID]
+    matching_edge_ids: list[UUID] | None
+
+
+class RelationQuery(ConnectionScope):
     limit: int = Field(default=100, ge=1, le=100)
-    cursor: str | None = None
 
 
 class RemoteChildrenOccurrenceRequest(Model):
@@ -112,9 +133,18 @@ class ConnectionOut(Model):
     created_at: datetime
 
 
-class ConnectionPageOut(Model):
-    items: list[ConnectionOut]
-    next_cursor: str | None
+class ResolvedConnectionOut(Model):
+    edge_id: UUID
+    origin: EdgeOrigin
+    ordinal: int | None
+    creation: ConnectionCreationOut | None
+    mutation: RemoveFactMutation | None
+    other: ResourceItemOut
+    rationale: str | None
+
+
+class ConnectionResolveOut(Model):
+    items: list[ResolvedConnectionOut]
 
 
 class LinkResourceEndpoint(Model):

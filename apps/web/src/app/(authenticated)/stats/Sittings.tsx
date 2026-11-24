@@ -5,12 +5,10 @@ import Button from "@/components/ui/Button";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
-import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { apiFetch, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
 import { transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { publishChange } from "@/lib/api/changes";
-import { useThrowLater } from "@/lib/api/serverState";
-import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
+import { useServerValue, useThrowLater, type Visit } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -29,7 +27,8 @@ export type Corrections = {
   readonly sending: Correction | null;
   readonly held: readonly (Correction & { readonly attempt: number })[];
 };
-const SITTINGS = definePaneVisitDataKey<ListSnapshot<Sitting>>("Stats.Sittings");
+type SittingIndex = ApiJson<"/consumption/sittings", "get">["data"];
+const SITTINGS = definePaneVisitDataKey<Visit<SittingIndex>>("Stats.Sittings");
 const sittingKey = (row: Schema<"ExcludeSessionIn">) =>
   [row.media_id, row.modality, row.device_id, row.started_at, row.ended_at].join();
 const FACT = {
@@ -49,26 +48,19 @@ export default function Sittings({ visible, active, stale, draft }: {
   const outcome = useOutcome();
   const resendFeedback = useResendFeedback();
   const throwLater = useThrowLater();
-  const list = useServerList<Sitting>({
-    key: visible || draft.value.held.length > 0 ? "/consumption/sittings" : null,
-    stale, pageSize: 50, active,
-    visit: SITTINGS,
-    id: sittingKey,
-    fetchPage: async (cursor, limit, signal) => {
-      const params = new URLSearchParams({ limit: String(limit) });
-      if (cursor !== null) params.set("cursor", cursor);
-      return (await apiFetch<ApiJson<"/consumption/sittings", "get">>(`/api/consumption/sittings?${params}`, { signal })).data;
-    },
+  const key = visible || draft.value.held.length > 0 ? "/consumption/sittings" : null;
+  const list = useServerValue({
+    key, stale, enabled: active || draft.value.held.length > 0, visit: SITTINGS,
+    load: async signal => (await apiFetch<ApiJson<"/consumption/sittings", "get">>("/api/consumption/sittings", { signal })).data,
   });
-  const landed = (correction: Corrections["held"][number]) => list.fresh && (
-    correction.kind === "Exclude" ? list.items.some(row => row.exclusion_id === correction.id)
-      : list.complete && !list.items.some(row => row.exclusion_id === correction.id)
+  const sittings = list.status === "ready" ? list.data.items : [];
+  const landed = (correction: Corrections["held"][number]) => list.status === "ready" && list.fresh && (
+    correction.kind === "Exclude" ? sittings.some(row => row.exclusion_id === correction.id)
+      : !sittings.some(row => row.exclusion_id === correction.id)
   );
   useLayoutEffect(() => {
     if (draft.value.held.some(landed)) draft.set(value => ({ ...value, held: value.held.filter(correction => !landed(correction)) }));
   });
-  const feedback = useCollectionReadFeedback({ list, unit: { singular: "sitting", plural: "sittings" },
-    waiting: visible && list.status === "loading", outcome: list.items.length === 0 ? "no sittings yet." : null });
   const sending = draft.value.sending !== null;
   const send = async (correction: Correction) => {
     if (!ctx.isActive() || draft.read().sending !== null) return;
@@ -110,7 +102,7 @@ export default function Sittings({ visible, active, stale, draft }: {
     }
   };
   const groups = new Map<string, Sitting[]>();
-  for (const row of list.items) {
+  for (const row of sittings) {
     const group = groups.get(row.day);
     if (group === undefined) groups.set(row.day, [row]);
     else group.push(row);
@@ -121,11 +113,10 @@ export default function Sittings({ visible, active, stale, draft }: {
         label: "retry", commandKey: `retry ${correction.id}`, run: () => void send(correction), busy: sending,
       } })} />)}
     {visible ? <div className={styles.sittings}>
-      {feedback.announcement}
       {list.status === "loading" ? <Ruling /> : null}
-      {list.status === "failed" && list.items.length === 0 && list.failure !== null
-        ? <Failed error={list.failure.error} noun="sittings" retry={{ run: list.retry, busy: list.running !== null }} /> : null}
-      {list.current && list.complete && list.items.length === 0 ? <Fact line={{ fact: "no sittings yet." }} /> : null}
+      {list.status !== "loading" && list.error !== null
+        ? <Failed error={list.error} noun="sittings" retry={{ run: list.refetch, busy: list.status === "ready" ? list.refreshing : list.retrying }} /> : null}
+      {list.status === "ready" && sittings.length === 0 ? <Fact line={{ fact: "no sittings yet." }} /> : null}
       {[...groups].map(([day, rows]) => <section key={day} aria-label={recordDate(day)}>
         <h2 className={styles.day}><time dateTime={day}>{recordDate(day)}</time></h2>
         <ul className={styles.rows}>{rows.map(row => {
@@ -135,7 +126,7 @@ export default function Sittings({ visible, active, stale, draft }: {
             {row.exclusion_id !== null ? <s>not counted · {row.title} · {recordTime(row.active_ms)}</s>
               : <span>{row.title} · {recordTime(row.active_ms)}{row.from_place !== null && row.to_place !== null
                 ? ` · ${Math.round(row.from_place * 100)} → ${Math.round(row.to_place * 100)}%` : null}</span>}
-            <Button disabled={sending || held || !list.fresh} onClick={() => {
+            <Button disabled={sending || held || list.status !== "ready" || !list.fresh} onClick={() => {
               if (row.exclusion_id !== null) void send({ kind: "Restore", id: row.exclusion_id });
               else void send({ kind: "Exclude", id: crypto.randomUUID(), body: {
                 media_id: row.media_id, modality: row.modality, device_id: row.device_id,
@@ -145,7 +136,6 @@ export default function Sittings({ visible, active, stale, draft }: {
           </li>;
         })}</ul>
       </section>)}
-      {feedback.notice}
     </div> : null}
   </>;
 }

@@ -2,14 +2,11 @@
 
 Every figure starts from the same visible, as-of spans. Exclusions remove time;
 passes retain time but add no coverage or pace. Sittings are all-time gap islands,
-never stored rows. Their cursors retain page one's as-of and bind to the viewer.
+never stored rows.
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -20,8 +17,9 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import requested_media_ids_cte_sql
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas import consumption_activity as wire
+from nexus.schemas.collection_index import CollectionIndex
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.services.consumption import projection, structure
 from nexus.services.media import media_summaries
@@ -386,17 +384,8 @@ def _read_work(
     )
 
 
-def sitting_page(
-    db: Session, viewer_id: UUID, *, cursor: str | None, limit: int
-) -> wire.SittingPageOut:
-    """Newest effective islands and active exclusions; page one's snapshot continues."""
-    params = _snapshot(db, viewer_id)
-    after = ""
-    if cursor is not None:
-        as_of, keyset = _decode(viewer_id, cursor)
-        params |= {"as_of": as_of} | keyset
-        after = """WHERE (started_at, ended_at, media_id, modality, device_id)
-                   < (:after_start, :after_end, :after_media, :after_modality, :after_device)"""
+def sitting_index(db: Session, viewer_id: UUID) -> CollectionIndex[wire.SittingOut]:
+    """Newest effective islands and active exclusions from one observation."""
     rows = _rows(
         db,
         f"""{_sessions_sql()},
@@ -418,13 +407,10 @@ def sitting_page(
             GROUP BY x.id, x.media_id, x.modality, x.device_id, x.started_at, x.ended_at
         )
         SELECT sittings.*, (started_at AT TIME ZONE :zone)::date AS day FROM sittings
-        {after} ORDER BY {_NEWEST} LIMIT :limit""",
-        params | {"limit": limit + 1},
+        ORDER BY {_NEWEST}""",
+        _snapshot(db, viewer_id),
     )
-    return wire.SittingPageOut(
-        items=[wire.SittingOut.model_validate(row) for row in rows[:limit]],
-        next_cursor=_next_cursor(viewer_id, params["as_of"], rows, limit),
-    )
+    return CollectionIndex(items=[wire.SittingOut.model_validate(row) for row in rows])
 
 
 def exact_session_exists(
@@ -455,50 +441,3 @@ def exact_session_exists(
         )
         is not None
     )
-
-
-def _next_cursor(
-    viewer_id: UUID, as_of: datetime, rows: list[dict[str, Any]], limit: int
-) -> str | None:
-    if len(rows) <= limit:
-        return None
-    last = rows[limit - 1]
-    payload = {
-        "a": as_of.isoformat(),
-        "q": _scope_hash(viewer_id),
-        "s": last["started_at"].isoformat(),
-        "e": last["ended_at"].isoformat(),
-        "m": str(last["media_id"]),
-        "o": last["modality"],
-        "d": last["device_id"],
-    }
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
-
-
-def _decode(viewer_id: UUID, cursor: str) -> tuple[datetime, dict[str, Any]]:
-    try:
-        value = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
-        if set(value) != {"a", "q", "s", "e", "m", "o", "d"} or value["q"] != _scope_hash(
-            viewer_id
-        ):
-            raise ValueError("cursor belongs to another viewer")
-        if value["o"] not in ("Reading", "Listening", "Viewing") or not isinstance(value["d"], str):
-            raise ValueError("cursor sitting identity is malformed")
-        as_of = datetime.fromisoformat(value["a"])
-        start, end = datetime.fromisoformat(value["s"]), datetime.fromisoformat(value["e"])
-        if any(instant.tzinfo is None for instant in (as_of, start, end)):
-            raise ValueError("cursor instants need time zones")
-        return as_of, {
-            "after_start": start,
-            "after_end": end,
-            "after_media": UUID(str(value["m"])),
-            "after_modality": value["o"],
-            "after_device": value["d"],
-        }
-    except (ValueError, TypeError, KeyError) as exc:
-        raise InvalidRequestError(message="Invalid sittings cursor") from exc
-
-
-def _scope_hash(viewer_id: UUID) -> str:
-    return hashlib.sha256(str(viewer_id).encode()).hexdigest()

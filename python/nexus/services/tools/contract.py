@@ -36,8 +36,8 @@ from nexus.schemas.resource_evidence import ResourceField, validate_resource_fie
 from nexus.schemas.resource_graph import (
     EDGE_KINDS,
     ConnectionDirection,
-    ConnectionQueryRequest,
     EdgeKind,
+    RelationQuery,
 )
 from nexus.services.contributor_taxonomy import (
     CONTRIBUTOR_ROLES_ORDERED,
@@ -63,7 +63,7 @@ _SEARCH_AUTHORS_MAX = 8
 _SEARCH_SCOPES_MAX = 8
 _DOCUMENT_MATCHES_MAX = 8
 _LIBRARY_NAME_MAX = int(CreateLibraryRequest.model_json_schema()["properties"]["name"]["maxLength"])
-_RELATIONS_MAX = int(ConnectionQueryRequest.model_json_schema()["properties"]["limit"]["maximum"])
+_RELATIONS_MAX = int(RelationQuery.model_json_schema()["properties"]["limit"]["maximum"])
 
 
 def refuse(error_type: str) -> Never:

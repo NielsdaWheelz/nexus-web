@@ -8,14 +8,13 @@
 
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { pageQuery, type ListPage } from "@/lib/api/useServerList";
 
 export type ImportSummary = ApiJson<"/imports/summary", "get">["data"];
-type ImportPage = ApiJson<"/imports", "get">["data"];
+export type ImportIndex = ApiJson<"/imports", "get">["data"];
 export type ImportItem = Schema<"ImportItem">;
 export type ImportObligation = Schema<"ImportObligation">;
 export type ImportDetail = ApiJson<"/imports/{ref}", "get">["data"];
-type HistoryPage = ApiJson<"/imports/{ref}/history", "get">["data"];
+export type ImportHistory = ApiJson<"/imports/{ref}/history", "get">["data"];
 export type HistoryEntry = Schema<"HistoryEntry">;
 export type ImportStage = ImportObligation["stage"];
 export type ImportFailureCode = NonNullable<HistoryEntry["failure_code"]>;
@@ -100,15 +99,12 @@ export function fetchImportSummary(
   return read("/api/imports/summary", signal);
 }
 
-/** One server page of the register window or recent acquisitions. */
-export async function fetchImportPage(
-  query: string,
-  cursor: string | null,
-  limit: number,
-  signal: AbortSignal,
-): Promise<ListPage<ImportItem>> {
-  const page = await read<ImportPage>(`/api/imports?${pageQuery(query, cursor, limit)}`, signal);
-  return { items: page.items, next_cursor: page.next_cursor };
+export function fetchImportIndex(from: string, signal: AbortSignal): Promise<ImportIndex> {
+  return read(`/api/imports?${new URLSearchParams({ from })}`, signal);
+}
+
+export function fetchRecentImports(signal: AbortSignal): Promise<ApiJson<"/imports/recent", "get">["data"]> {
+  return read("/api/imports/recent", signal);
 }
 
 /** Preserve each observed server instant verbatim; one invalidation after the write. */
@@ -131,14 +127,8 @@ export function fetchImportDetail(
   return read(refPath(ref), signal);
 }
 
-export async function fetchImportHistory(
-  ref: string,
-  cursor: string | null,
-  limit: number,
-  signal: AbortSignal,
-): Promise<ListPage<HistoryEntry>> {
-  const page = await read<HistoryPage>(`${refPath(ref)}/history?${pageQuery("", cursor, limit)}`, signal);
-  return { items: page.entries, next_cursor: page.next_cursor };
+export function fetchImportHistory(ref: string, signal: AbortSignal): Promise<ImportHistory> {
+  return read(`${refPath(ref)}/history`, signal);
 }
 
 /**
