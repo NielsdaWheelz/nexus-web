@@ -184,8 +184,8 @@ services:
     cgroup_parent: system-nexus.slice
     restart: unless-stopped
     mem_reservation: 128m
-    mem_limit: 320m
-    memswap_limit: 320m
+    mem_limit: 544m
+    memswap_limit: 544m
     pids_limit: 256
     env_file:
       - ${NEXUS_RUNTIME_CONFIG_FILE:?publish the captured runtime config}
