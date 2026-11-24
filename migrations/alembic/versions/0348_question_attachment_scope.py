@@ -26,6 +26,7 @@ _SCHEMES = set(
 
 def upgrade() -> None:
     db = op.get_bind()
+    db.execute(sa.text("LOCK TABLE messages IN SHARE ROW EXCLUSIVE MODE"))
     validator = Draft202012Validator(
         json.loads(Path(__file__).with_name("0348_attachment.schema.json").read_text()),
         format_checker=FormatChecker(),
@@ -91,17 +92,14 @@ def upgrade() -> None:
                                 valid &= span[left] < span[right]
             if not valid:
                 raise RuntimeError(f"0348 message {row.id}: malformed saved reference")
-        db.execute(
-            sa.text(
-                "UPDATE messages SET attachments=CAST(:value AS jsonb) WHERE id=:id"
-            ),
-            {
-                "id": row.id,
-                "value": json.dumps(
-                    [{"reference": r, "capture_scope": None} for r in attachments]
-                ),
-            },
-        )
+    db.execute(
+        sa.text("""
+        UPDATE messages m SET attachments=(
+            SELECT jsonb_agg(jsonb_build_object('reference',a.reference,'capture_scope',NULL) ORDER BY a.n)
+            FROM jsonb_array_elements(m.attachments) WITH ORDINALITY a(reference,n)
+        ) WHERE m.attachments <> '[]'::jsonb
+    """)
+    )
 
 
 def downgrade() -> None:
