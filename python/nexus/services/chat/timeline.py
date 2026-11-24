@@ -27,27 +27,32 @@ from nexus.services.suggestion_changes import record_input_change
 
 
 def index(db: Session, *, viewer_id: UUID, around_message_id: UUID | None) -> TimelineOut:
-    order = [
-        TimelineTurnOut(
-            run_id=run_id,
-            user_message_id=user_id,
-            assistant_message_id=assistant_id,
-            user_seq=str(seq),
-            created_at=created_at,
-        )
-        for run_id, user_id, assistant_id, seq, created_at in db.execute(
-            select(
-                ChatRun.id,
-                ChatRun.user_message_id,
-                ChatRun.assistant_message_id,
-                Message.seq,
-                Message.created_at,
+    pairs = {
+        user_id: (run_id, assistant_id)
+        for run_id, user_id, assistant_id in db.execute(
+            select(ChatRun.id, ChatRun.user_message_id, ChatRun.assistant_message_id).where(
+                ChatRun.owner_user_id == viewer_id
             )
-            .join(Message, Message.id == ChatRun.user_message_id)
-            .where(ChatRun.owner_user_id == viewer_id, Message.owner_user_id == viewer_id)
-            .order_by(Message.seq)
         ).tuples()
-    ]
+    }
+    order = []
+    for user_id, seq, created_at in db.execute(
+        select(Message.id, Message.seq, Message.created_at)
+        .where(Message.owner_user_id == viewer_id, Message.role == "user")
+        .order_by(Message.seq)
+    ).tuples():
+        pair = pairs.get(user_id)
+        if pair is not None:
+            run_id, assistant_id = pair
+            order.append(
+                TimelineTurnOut(
+                    run_id=run_id,
+                    user_message_id=user_id,
+                    assistant_message_id=assistant_id,
+                    user_seq=str(seq),
+                    created_at=created_at,
+                )
+            )
     last_start = max(0, len(order) - 25)
     start = last_start
     if around_message_id is not None:

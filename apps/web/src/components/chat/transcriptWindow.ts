@@ -6,7 +6,7 @@ import type { ScrollMotion } from "@/lib/collections/scrollMotion";
 import type { TurnKey } from "@/lib/chat/wire";
 import { getOverlayOpeners } from "@/lib/ui/overlay";
 
-const ESTIMATED_TURN_HEIGHT = 240;
+const ESTIMATED_TURN_HEIGHT = 160;
 
 function firstAfter(ends: readonly number[], offset: number): number {
   let low = 0, high = ends.length;
@@ -66,6 +66,10 @@ export function useTranscriptWindow(
     return rank === undefined ? [] : [rank];
   });
   const plan = windowRanks({ start, end, pinnedRanks, count: shown.length });
+  const demand = useRef<readonly string[]>([]);
+  // A distant seek reserves intervening slots without reading their bodies.
+  // In-flight bodies for the old viewport can still paint inside held slots.
+  if (motion === "still") demand.current = plan.demand.map(rank => shown[rank].run_id);
   const observer = useRef<ResizeObserver | null>(null);
   const items = useRef(new Map<string, HTMLElement>());
   const observe = useCallback((node: HTMLElement | null) => {
@@ -130,7 +134,7 @@ export function useTranscriptWindow(
 
   return {
     shown, motion, setMotion, readViewport, observe,
-    demand: plan.demand.map(rank => shown[rank].run_id),
+    demand: demand.current,
     rows: plan.rows.map(({ index, gap }) => ({
       rank: index, key: shown[index],
       height: layout.ends[index] - topOf(index),
