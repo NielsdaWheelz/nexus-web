@@ -62,11 +62,19 @@ identity, or its surviving order after deletion. concurrent insertions or moves
 may require revisiting the day; a reading hold is not an archive snapshot.
 
 small date orders return their keys in the description. a large description
-gives the total extent, the first dates and the ranks of requested arrivals
-and retained editors. the viewport asks for bounded rank ranges and the
-memento locates a saved civil date at the same revision. the date window
-estimates unseen heights and retains measured heights for visited days.
-active selections and rich bodies have no hard total-memory bound.
+gives the total extent, the first dates, the ranks of the requested dates
+and a 31-bit occupancy mask per occupied civil month. the masks cover the
+full order, so their size grows with occupied months. page refs and writing
+arrive by bounded rank ranges. a saved date can be located at the same
+revision.
+
+a native hold keeps the captured date order and measured extent. when the
+account advances, the current register supplies details for surviving
+dates by their new rank. a date awaiting a current detail occupies its full
+reserved block as a heading. only admitted days may resolve a page binding
+or refine their estimate. the memento expands the captured order when it
+needs saved anchor keys. active selections and rich bodies have no hard
+total-memory bound.
 
 the ui, worker and packaged native plans share the same query contract and
 android's 16-mib result limit. a change to the account store revision
