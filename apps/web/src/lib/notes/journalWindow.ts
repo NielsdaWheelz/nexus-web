@@ -8,6 +8,16 @@ import { usePaneBeforeLayout, type AnchorGeometry, type AnchorGeometryFrame } fr
 
 export const JOURNAL_DAY_ESTIMATE = 320;
 
+function before(tops: readonly number[], offset: number): number {
+  let lo = 0, hi = tops.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (tops[mid] <= offset) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo - 1;
+}
+
 export interface JournalOrder {
   count: number;
   observation: string | null;
