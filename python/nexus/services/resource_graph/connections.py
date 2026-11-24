@@ -8,6 +8,7 @@ citation has no frozen snapshot. Child existence checks never hydrate their resu
 from __future__ import annotations
 
 from collections.abc import Sequence
+from itertools import batched
 from typing import Literal, cast
 from unicodedata import normalize
 from uuid import UUID
@@ -371,9 +372,12 @@ def query_remote_children(
             continue
         if item.excluded_edge_ids:
             stmt = stmt.where(ResourceEdge.id.not_in(item.excluded_edge_ids))
-        probes.append(select(literal(index).label("index"), stmt.exists().label("present")))
-    if probes:
-        for index, present in db.execute(union_all(*probes)):
+        exists = stmt.with_only_columns(literal(1)).exists()
+        probes.append(select(literal(index).label("index"), exists.label("present")))
+    # Each incidence plan includes the full admission and citation-owner joins.
+    # Bound planner memory while keeping every probe in the same read snapshot.
+    for batch in batched(probes, 8):
+        for index, present in db.execute(union_all(*batch)):
             items[index].has_children = present
     return RemoteChildrenOut(items=items)
 
