@@ -123,10 +123,8 @@ function createMobileViewport() {
       const usableEdge = viewport.bottom - Math.max(nexusBase, stageKeyboardPx);
       // The grid's floor already accounts for pane padding and the in-flow player.
       row.style.marginBottom = `${Math.max(0, grid.getBoundingClientRect().bottom - usableEdge)}px`;
-      if (mobile) {
-        const rowBox = frameBox(row);
-        if (rowBox) nexusOffset = Math.max(nexusBase, envelope([rowBox], viewport, "Bottom"));
-      }
+      const rowBox = mobile ? frameBox(row) : null;
+      if (rowBox) nexusOffset = Math.max(nexusBase, envelope([rowBox], viewport, "Bottom"));
     }
     root.setProperty("--mobile-nexus-bottom-offset", `${nexusOffset}px`);
     root.setProperty("--mobile-overlay-keyboard-inset", `${keyboardPx}px`);
