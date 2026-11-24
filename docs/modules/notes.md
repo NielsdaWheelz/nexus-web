@@ -87,7 +87,9 @@ returns it. text always uses the note's current wording.
 
 `work_pending`, `work_completed` and `habits` read bounded rank ranges of one
 local revision. unfinished tasks and today's unchecked habits share numeric
-capture order, with replica and ref ties.
+capture order, with replica and ref ties. the habit register carries the
+ordered ref, its label and whether repetition is active. its visible rows
+separately read positive checks for the selected year.
 the journal agenda ends with `add a task`, which opens its capture form in
 place. a completion fills the sign immediately. after 600ms from the press,
 its receipt replaces the row. an active menu or an editor still in use keeps
