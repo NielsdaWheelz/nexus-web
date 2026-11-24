@@ -49,10 +49,7 @@ import {
   useMobileChromeHold,
   useMobileChromeSurface,
 } from "@/lib/mobileShell/chrome";
-import {
-  readMobileCssLength,
-  useMobileViewport,
-} from "@/lib/mobileShell/viewport";
+import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import {
   createPaneChromeStore,
   PANE_COMMAND_RESOLVING_REASON,
@@ -83,8 +80,12 @@ import { useShareController } from "@/lib/sharing/controller";
 import { formatShortcut, matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { prepareActionSelect, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
-import { hasActiveInteractionOwner, isTopmostInteractionOwner, useInteractionBlocked } from "@/lib/ui/overlay";
-import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
+import {
+  hasActiveInteractionOwner,
+  isTopmostInteractionOwner,
+  useInteractionBlocked,
+  useInteractionOwner,
+} from "@/lib/ui/overlay";
 import type { PaneVisit, WorkspacePane } from "@/lib/workspace/model";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
@@ -241,22 +242,22 @@ function PaneView({
   const mobileViewport = useMobileViewport();
   const readerComposition = useContext(MobileReaderCompositionContext);
   useLayoutEffect(() => mobileViewport.refreshGeometry(), [mobileViewport, readerComposition, isMobile, isActive]);
-  const { keyboardBottomInsetPx } = useKeyboardInset();
   const { openShare } = useShareController();
   const { platform } = useRenderEnvironment();
   const touchCapable = useTouchCapable();
-  const [commandsBottom, setCommandsBottom] = useState(0);
-  const outlineCommands = touchCapable && isActive && !hasActiveInteractionOwner() && state.outlineCommands?.touchVisible ? state.outlineCommands : null;
+  const interactionOwner = useInteractionOwner();
+  const outlineCommands = touchCapable && isActive && interactionOwner === null && state.outlineCommands?.touchVisible
+    ? state.outlineCommands
+    : null;
+  const rowShown = outlineCommands !== null;
+  const primaryGridRef = useRef<HTMLDivElement>(null);
+  const outlineRowRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    if (!outlineCommands) {setCommandsBottom(0); return;}
-    const measure = () => {
-      const consumed = Math.max(0, window.innerHeight - (paneRef.current?.getBoundingClientRect().bottom ?? window.innerHeight));
-      setCommandsBottom(Math.max(0, Math.max(keyboardBottomInsetPx,
-        readMobileCssLength("var(--mobile-content-bottom-clearance)")) - consumed));
-    };
-    measure();
-    return mobileViewport.subscribeContentBottomClearance(measure);
-  }, [outlineCommands, keyboardBottomInsetPx, mobileViewport]);
+    const grid = primaryGridRef.current;
+    const row = outlineRowRef.current;
+    if (!rowShown || !grid || !row) return;
+    return mobileViewport.registerOutlineAccessory({ grid, row, mobile: isMobile });
+  }, [mobileViewport, isMobile, rowShown]);
   const identityId = useId();
   const landmarkLabelId = useId();
   const paneRef = useRef<HTMLElement>(null);
@@ -548,6 +549,7 @@ function PaneView({
         {paneHeaderAccessibleName(header)}
       </span>
       <div
+        ref={primaryGridRef}
         className={styles.primaryPane}
         style={isMobile || isMaximized ? undefined : { width: width.widthPx + railPx }}
       >
@@ -645,7 +647,7 @@ function PaneView({
           {rail ? <div className={styles.rail}>{rail.body}</div> : null}
           <StageAnchor kind="Pane" paneId={paneId} floor />
         </div>
-        {outlineCommands ? <div className={styles.outlineAccessory} style={{marginBottom: commandsBottom}}>
+        {outlineCommands ? <div ref={outlineRowRef} className={styles.outlineAccessory}>
           <OutlineCommands publication={outlineCommands} current={() => {
             const current = chrome.get().outlineCommands;
             return touchCapable && isActive && !hasActiveInteractionOwner() && current?.touchVisible ? current : null;

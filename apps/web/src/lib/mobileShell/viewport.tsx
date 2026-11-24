@@ -2,8 +2,9 @@
 
 // the shell owns placement and shown/current rectangular envelopes. stationary
 // frames supply endpoint extent; animated surfaces supply computed visibility.
-// one ordered pass places controls/nexus, writes pane and reader geometry, then
-// notifies consumers. tap visibility changes occlusion, never endpoint extent.
+// one ordered pass places controls, the outline accessory and nexus, writes pane
+// and reader geometry, then notifies consumers. tap visibility changes occlusion,
+// never endpoint extent.
 import {
   createContext,
   useContext,
@@ -22,6 +23,8 @@ type GeometryChange = "Occlusion" | "Layout";
 export interface MobileViewport {
   registerTopSurface(id: MobileTopSurfaceId, frame: HTMLElement, chromeSurface: HTMLElement | null): () => void;
   registerBottomSurface(id: MobileBottomSurfaceId, frame: HTMLElement, chromeSurface: HTMLElement | null): () => void;
+  /** The shell owns the row's bottom margin until release. */
+  registerOutlineAccessory(input: OutlineAccessory): () => void;
   registerContentSurface(element: HTMLElement): () => void;
   registerReaderScrollport(element: HTMLElement, geometryChanged: (reason: GeometryChange) => void): () => void;
   refreshGeometry(): void;
@@ -44,6 +47,7 @@ export function readMobileCssLength(cssLength: string): number {
 }
 
 type Surface = { frame: HTMLElement; chromeSurface: HTMLElement | null };
+type OutlineAccessory = { grid: HTMLElement; row: HTMLElement; mobile: boolean };
 type ReaderGeometry = {
   width: number;
   height: number;
@@ -59,9 +63,9 @@ const READER_PROPERTIES = [
   "--reader-occlusion-bottom",
 ];
 
-/** frames are untransformed; zero-sized/suppressed surfaces cover nothing. */
-function surfaceBox(surface: Surface | undefined): DOMRect | null {
-  const box = surface?.frame.getBoundingClientRect();
+/** Stationary frames with nonzero area participate in geometry. */
+function frameBox(frame: HTMLElement | undefined): DOMRect | null {
+  const box = frame?.getBoundingClientRect();
   return box && box.width > 0 && box.height > 0 ? box : null;
 }
 
@@ -83,6 +87,7 @@ function envelope(boxes: DOMRect[], port: DOMRect, edge: "Top" | "Bottom"): numb
 
 function createMobileViewport() {
   const surfaces = new Map<MobileTopSurfaceId | MobileBottomSurfaceId, Surface>();
+  let outlineAccessory: OutlineAccessory | null = null;
   const contents = new Set<HTMLElement>();
   const stageAnchors = new Set<HTMLElement>();
   const readers = new Map<HTMLElement, {
@@ -103,15 +108,26 @@ function createMobileViewport() {
     const safe = Math.ceil(readMobileCssLength("var(--viewport-safe-bottom)"));
     const keyboardPx = keyboard.at(-1)?.px ?? 0;
     const root = document.documentElement.style;
-    const headerBox = surfaceBox(surfaces.get("Header"));
+    const headerBox = frameBox(surfaces.get("Header")?.frame);
     root.setProperty("--mobile-header-height", `${headerBox?.height ?? 0}px`);
     const controls = surfaces.get("Controls");
     if (controls) {
       const origin = controls.frame.offsetParent?.getBoundingClientRect().top ?? 0;
       controls.frame.style.setProperty("--mobile-controls-top", `${Math.max(0, (headerBox?.bottom ?? origin) - origin)}px`);
     }
-    const playerBox = surfaceBox(surfaces.get("Player"));
-    const nexusOffset = Math.max(safe, envelope(playerBox ? [playerBox] : [], viewport, "Bottom"));
+    const playerBox = frameBox(surfaces.get("Player")?.frame);
+    const nexusBase = Math.max(safe, envelope(playerBox ? [playerBox] : [], viewport, "Bottom"));
+    let nexusOffset = nexusBase;
+    if (outlineAccessory) {
+      const { grid, row, mobile } = outlineAccessory;
+      const usableEdge = viewport.bottom - Math.max(nexusBase, stageKeyboardPx);
+      // The grid's floor already accounts for pane padding and the in-flow player.
+      row.style.marginBottom = `${Math.max(0, grid.getBoundingClientRect().bottom - usableEdge)}px`;
+      if (mobile) {
+        const rowBox = frameBox(row);
+        if (rowBox) nexusOffset = Math.max(nexusBase, envelope([rowBox], viewport, "Bottom"));
+      }
+    }
     root.setProperty("--mobile-nexus-bottom-offset", `${nexusOffset}px`);
     root.setProperty("--mobile-overlay-keyboard-inset", `${keyboardPx}px`);
 
@@ -121,7 +137,7 @@ function createMobileViewport() {
     const shownBottom: DOMRect[] = [];
     const visibleBottom: DOMRect[] = [];
     for (const [id, surface] of surfaces) {
-      const box = surfaceBox(surface);
+      const box = frameBox(surface.frame);
       if (!box) continue;
       const top = id === "Header" || id === "Controls";
       (top ? shownTop : shownBottom).push(box);
@@ -210,9 +226,31 @@ function createMobileViewport() {
     };
   }
 
+  function detachOutlineAccessory() {
+    if (!outlineAccessory) return;
+    const { grid, row } = outlineAccessory;
+    outlineAccessory = null;
+    observer?.unobserve(grid);
+    observer?.unobserve(row);
+    row.style.removeProperty("margin-bottom");
+  }
+
   return {
     registerTopSurface: registerSurface,
     registerBottomSurface: registerSurface,
+    registerOutlineAccessory({ grid, row, mobile }: OutlineAccessory) {
+      detachOutlineAccessory();
+      const accessory = { grid, row, mobile };
+      outlineAccessory = accessory;
+      observe(grid);
+      observe(row);
+      refreshGeometry();
+      return () => {
+        if (outlineAccessory !== accessory) return;
+        detachOutlineAccessory();
+        refreshGeometry();
+      };
+    },
     refreshGeometry,
     registerContentSurface(element: HTMLElement) {
       contents.add(element);
