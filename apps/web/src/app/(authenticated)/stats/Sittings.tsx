@@ -23,6 +23,7 @@ import { recordDate, recordTime } from "@/lib/consumption/recordText";
 import styles from "./Sittings.module.css";
 
 type Sitting = Schema<"SittingOut">;
+type SittingRow = CollectionRowView & { readonly sitting: Sitting; readonly startsDay: boolean };
 type Correction =
   | { readonly kind: "Exclude"; readonly id: string; readonly body: Schema<"ExcludeSessionIn"> }
   | { readonly kind: "Restore"; readonly id: string };
@@ -36,6 +37,8 @@ const SITTINGS = definePaneVisitDataKey<Visit<SittingIndex>>(SCOPE);
 const NO_SITTINGS: readonly Sitting[] = [];
 const sittingKey = (row: Schema<"ExcludeSessionIn">) =>
   [row.media_id, row.modality, row.device_id, row.started_at, row.ended_at].join();
+const dayHeading = (row: SittingRow) => row.startsDay
+  ? <h2><time dateTime={row.sitting.day}>{recordDate(row.sitting.day)}</time></h2> : null;
 const FACT = {
   Exclude: "couldn’t stop counting this sitting.",
   Restore: "couldn’t restore this sitting.",
@@ -106,21 +109,12 @@ export default function Sittings({ visible, active, stale, draft }: {
       draft.set(value => ({ ...value, sending: null }));
     }
   };
-  const { rows, entries, heads } = useMemo(() => {
-    const entries = new Map<string, Sitting>();
-    const heads = new Map<string, string>();
-    const rows: CollectionRowView[] = [];
-    let day: string | null = null;
-    for (const sitting of sittings) {
-      const id = sittingKey(sitting);
-      entries.set(id, sitting);
-      if (sitting.day !== day) heads.set(id, sitting.day);
-      day = sitting.day;
-      rows.push({ id, kind: "settings_row", presentation: "Index", title: { text: sitting.title }, primary: { kind: "static" },
-        contributors: [], publicationDate: null, context: null, resourceRef: null, selected: false });
-    }
-    return { rows, entries, heads };
-  }, [sittings]);
+  const sittingFacts = useMemo(() => new Set(sittings), [sittings]);
+  const rows = useMemo(() => sittings.map((sitting, index): SittingRow => ({
+    id: sittingKey(sitting), kind: "settings_row", presentation: "Index", title: {text: sitting.title}, primary: {kind: "static"},
+    contributors: [], publicationDate: null, context: null, resourceRef: null, selected: false,
+    sitting, startsDay: sittings[index - 1]?.day !== sitting.day,
+  })), [sittings]);
   return <>
     {draft.value.held.map(correction => <Hold key={correction.id} id={correction.id} attempt={correction.attempt}
       {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }, resend: {
@@ -132,27 +126,24 @@ export default function Sittings({ visible, active, stale, draft }: {
         ? <Failed error={list.error} noun="sittings" retry={{ run: list.refetch, busy: list.status === "ready" ? list.refreshing : list.retrying }} /> : null}
       {list.status === "ready" && sittings.length === 0 ? <Fact line={{ fact: "no sittings yet." }} /> : null}
       {!rows.length ? null : <CollectionView returnScope={SCOPE} rows={rows} ariaLabel="sittings" status="ready" surface={false} geometry="UniformIndex"
-        headBefore={row => {
-          const day = heads.get(row.id);
-          return day === undefined ? null : <h3><time dateTime={day}>{recordDate(day)}</time></h3>;
-        }}
+        headBefore={dayHeading}
         renderRow={({row: view, as, listPosition, rowActionsAvailable}) => {
-          const row = entries.get(view.id)!;
+          const row = view.sitting;
           const held = draft.value.held.some(correction => correction.kind === "Restore"
             ? correction.id === row.exclusion_id : sittingKey(correction.body) === view.id);
           return <ResourceRow as={as} title={row.exclusion_id === null ? row.title : <s>{row.title}</s>} primary={view.primary}
-            rootProps={{"data-collection-row-id":view.id, "aria-posinset":listPosition ? listPosition.index + 1 : undefined, "aria-setsize":listPosition?.count}}
+            rootProps={{title: row.title, "data-collection-row-id":view.id, "aria-posinset":listPosition ? listPosition.index + 1 : undefined, "aria-setsize":listPosition?.count}}
             content={{kind:"Index", metadata:<span className={styles.time}>
               {row.exclusion_id === null ? null : "not counted · "}{recordTime(row.active_ms)}
-              {row.from_place !== null && row.to_place !== null ? ` · ${Math.round(row.from_place * 100)} → ${Math.round(row.to_place * 100)}%` : null}
+              {row.exclusion_id === null && row.from_place !== null && row.to_place !== null ? ` · ${Math.round(row.from_place * 100)} → ${Math.round(row.to_place * 100)}%` : null}
             </span>}}
-            controls={!rowActionsAvailable ? null : <Button data-row-primary-control="" disabled={sending || held || list.status !== "ready" || !list.fresh} onClick={() => {
+            controls={!rowActionsAvailable ? null : <span data-row-primary-control=""><Button disabled={sending || held || !sittingFacts.has(row) || list.status !== "ready" || !list.fresh} onClick={() => {
               if (row.exclusion_id !== null) void send({ kind: "Restore", id: row.exclusion_id });
               else void send({ kind: "Exclude", id: crypto.randomUUID(), body: {
                 media_id: row.media_id, modality: row.modality, device_id: row.device_id,
                 started_at: row.started_at, ended_at: row.ended_at,
               } });
-            }}>{row.exclusion_id !== null ? "Restore" : "Don’t count"}</Button>} />;
+            }}>{row.exclusion_id !== null ? "Restore" : "Don’t count"}</Button></span>} />;
         }} />}
     </div> : null}
   </>;

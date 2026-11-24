@@ -24,9 +24,9 @@ import { IndexRowWindow } from "@/lib/collections/indexRowWindow";
 import { usePaneCollectionGeometry } from "@/lib/workspace/paneReturnMemento";
 import styles from "./CollectionView.module.css";
 
-export interface CollectionViewRowRenderProps {
+export interface CollectionViewRowRenderProps<Row extends CollectionRowView = CollectionRowView> {
   readonly afterRemoval: () => HTMLElement | null;
-  readonly row: CollectionRowView;
+  readonly row: Row;
   readonly layout: "Rows" | "Wall";
   readonly as?: "li" | "div";
   readonly primaryControl?: ReactNode;
@@ -40,7 +40,7 @@ export interface CollectionViewRowRenderProps {
  * own row chrome, action placement or density. Rows may window; Wall mounts every cell.
  * Rows commit directly; anchorKey separates view changes from same-view refreshes.
  */
-export default function CollectionView({
+export default function CollectionView<Row extends CollectionRowView>({
   returnScope,
   rows: incoming,
   status,
@@ -62,7 +62,7 @@ export default function CollectionView({
   layout = "Rows",
 }: {
   readonly returnScope: string;
-  readonly rows: readonly CollectionRowView[];
+  readonly rows: readonly Row[];
   readonly status: "loading" | "error" | "ready";
   readonly ariaLabel: string;
   readonly toolbar?: ReactNode;
@@ -71,8 +71,8 @@ export default function CollectionView({
   readonly empty?: ReactNode;
   readonly footer?: ReactNode;
   readonly rowControls?: Readonly<Record<string, ReactNode>>;
-  readonly renderRow?: (props: CollectionViewRowRenderProps) => ReactNode;
-  readonly headBefore?: (row: CollectionRowView) => ReactNode;
+  readonly renderRow?: (props: CollectionViewRowRenderProps<Row>) => ReactNode;
+  readonly headBefore?: (row: Row) => ReactNode;
   readonly rowActionsAvailable?: boolean;
   readonly order?: OrderPresentation;
   readonly collectionBusy?: boolean;
@@ -222,11 +222,11 @@ export default function CollectionView({
     target?.focus({ preventScroll: true });
   });
   const renderCollectionRow = useCallback((
-    row: CollectionRowView,
+    row: Row,
     as?: "li" | "div",
     index?: number,
   ) => {
-    const props: CollectionViewRowRenderProps = {
+    const props: CollectionViewRowRenderProps<Row> = {
       afterRemoval: () => {
         return recover(row.id, orderedIds);
       },
@@ -239,7 +239,7 @@ export default function CollectionView({
     };
     return <IndexRowWindow window={window} id={row.id}>{renderRow ? renderRow(props) : <CollectionRow {...props} />}</IndexRowWindow>;
   }, [orderedIds, rowControls, rowActionsAvailable, renderRow, recover, window, windowed, layout]);
-  const renderSortableRow = useCallback((row: CollectionRowView) => renderCollectionRow(row, "div"), [renderCollectionRow]);
+  const renderSortableRow = useCallback((row: Row) => renderCollectionRow(row, "div"), [renderCollectionRow]);
   usePaneReturnDescendantReady({
     rootRef: returnScopeRef,
     ready,
