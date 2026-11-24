@@ -1275,7 +1275,11 @@ occurrence when no start is visible. nested captures share one commit correction
 a pending child can yield to its measured parent's displacement. a measured
 successor can take a deleted occurrence's line. the correction is relative to
 the live offset and accounts for native clamping. at scroll zero the pane keeps
-its origin. the correction never admits rows or becomes a visit restore.
+its origin for ordinary refresh. when an explicit journal reveal is clamped,
+its input lease protects the visible destination heading from a stationary
+change that would push it out of view. the same correction uses the heading's
+fresh displacement for that commit. the correction never admits rows or
+becomes a visit restore.
 
 `AnchorGeometry` is the common committed-frame contract for uniform collections
 and variable journal days and rows. it gives the pane ordered identities,

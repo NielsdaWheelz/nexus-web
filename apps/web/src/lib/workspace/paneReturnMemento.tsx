@@ -78,6 +78,7 @@ interface Scrollport {
   moving: boolean;
   heldPointer: number | null;
   restFrame: number | null;
+  clampedArrival: { anchor: Anchor; valid(): boolean } | null;
 }
 interface MeasuredAnchor extends Anchor {
   top: number;
@@ -89,6 +90,7 @@ interface RefreshSnapshot {
   oldTop: number;
   anchors: MeasuredAnchor[];
   order: readonly string[];
+  clampedArrival: { anchor: Anchor; top: number; valid(): boolean } | null;
   scheduled: boolean;
 }
 interface Readiness {
@@ -100,6 +102,7 @@ interface PendingRestore {
   port: Scrollport;
   memento: Memento | null;
   valid: () => boolean;
+  retainClampedArrival: boolean;
   frame: number | null;
   readonly mounted: Map<string, () => void>;
 }
@@ -213,6 +216,22 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       ? row.getBoundingClientRect().top - port.element.getBoundingClientRect().top + port.element.scrollTop
       : (published ? frame.origin + port.element.clientTop : origin(frame)) + position.offset;
     return {kind: "ready", offset};
+  }
+
+  function journalHeading(port: Scrollport, anchor: Anchor, published = false): { top: number; height: number } | null {
+    const article = geometryFor(port, anchor)?.geometry.element(anchor.id);
+    const heading = article?.querySelector("[data-journal-heading] h2");
+    if (!article || !heading?.getClientRects().length) return null;
+    const position = locate(port, anchor, published);
+    if (position.kind !== "ready") return null;
+    const box = heading.getBoundingClientRect();
+    return {top: position.offset + box.top - article.getBoundingClientRect().top, height: box.height};
+  }
+
+  function headingVisible(port: Scrollport, heading: { top: number; height: number }, scrollTop: number): boolean {
+    const band = paneVisibleBand(port.element);
+    const y = heading.top + port.element.getBoundingClientRect().top - scrollTop;
+    return y + heading.height > band.top && y < band.bottom;
   }
 
   function captureEyeLine(port: Scrollport, published = false): EyeLine | null {
@@ -341,11 +360,14 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     return true;
   }
 
-  function place(port: Scrollport, memento: Memento): void {
+  function place(restore: PendingRestore, memento: Memento): void {
+    const {port} = restore;
     const moved = rebaseFrames(port);
     const anchor = memento.eyeLine;
     const position = anchor === null ? null : locate(port, anchor);
     const top = anchor !== null && position?.kind === "ready" ? position.offset - anchor.offset : memento.scrollTop;
+    if (restore.retainClampedArrival && anchor && position?.kind === "ready" && top - clamp(port, top) > 1)
+      port.clampedArrival = {anchor, valid: restore.valid};
     if (writeTop(port, top) || moved) refreshRanges(port);
   }
 
@@ -415,6 +437,8 @@ export function createPaneReturnMemento(guard: WorkGuard) {
   }
 
   function cancelPlacement(paneId: string): void {
+    const port = scrollports.get(paneId);
+    if (port) port.clampedArrival = null;
     finish(paneId, false);
     holds.delete(paneId);
     refreshes.delete(paneId);
@@ -520,7 +544,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     // settled extent so an early clamp does not throw away part of the offset.
     if (memento.eyeLine === null && !memento.focus?.anchor && !isReady(port)) return;
     if (atFrame) {
-      flushSync(() => { place(port, memento); finish(paneId, true); });
+      flushSync(() => { place(restore, memento); finish(paneId, true); });
     } else if (restore.frame === null) {
       restore.frame = requestAnimationFrame(() => {
         restore.frame = null;
@@ -529,10 +553,10 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     }
   }
 
-  function requestRestore(paneId: string, port: Scrollport, memento: Memento | null): void {
+  function requestRestore(paneId: string, port: Scrollport, memento: Memento | null, retainClampedArrival = false): void {
     sampleTravel(paneId, port);
     cancelPlacement(paneId);
-    pending.set(paneId, {port, memento, valid: inputLease(paneId, port), frame: null, mounted: new Map()});
+    pending.set(paneId, {port, memento, valid: inputLease(paneId, port), retainClampedArrival, frame: null, mounted: new Map()});
     attempt(paneId);
   }
 
@@ -558,7 +582,10 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         return candidate?.scope === line.scope ? [candidate.id] : [];
       });
     }
-    const snapshot = {paneId, port, oldTop, anchors, order, scheduled: false};
+    const arrival = port.clampedArrival;
+    const heading = arrival?.valid() ? journalHeading(port, arrival.anchor, published) : null;
+    const clampedArrival = arrival && heading && headingVisible(port, heading, oldTop) ? {...arrival, top: heading.top} : null;
+    const snapshot = {paneId, port, oldTop, anchors, order, clampedArrival, scheduled: false};
     refreshes.set(paneId, snapshot);
     return snapshot;
   }
@@ -567,7 +594,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     if (snapshot.scheduled) return;
     snapshot.scheduled = true;
     queueMicrotask(() => {
-      const {paneId, port, oldTop, anchors, order} = snapshot;
+      const {paneId, port, oldTop, anchors, order, clampedArrival} = snapshot;
       if (refreshes.get(paneId) !== snapshot) return;
       refreshes.delete(paneId);
       if (scrollports.get(paneId) !== port || !anchoring.has(port.element) || sampleTravel(paneId, port)) return;
@@ -586,6 +613,9 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         target += next.offset - anchor.top;
         break;
       }
+      const heading = clampedArrival?.valid() ? journalHeading(port, clampedArrival.anchor) : null;
+      if (clampedArrival && heading && !headingVisible(port, heading, clamp(port, target)))
+        target = oldTop + heading.top - clampedArrival.top;
       const moved = rebaseFrames(port);
       const delta = clamp(port, target) - port.element.scrollTop;
       if (delta !== 0) {
@@ -634,7 +664,10 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     captureDeparture(paneId: string): void {
       capture(paneId);
       const port = scrollports.get(paneId);
-      if (port !== undefined) port.inputGeneration++;
+      if (port !== undefined) {
+        port.inputGeneration++;
+        port.clampedArrival = null;
+      }
       finish(paneId, false);
       refreshes.delete(paneId);
     },
@@ -808,7 +841,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       const parents = parentsFor(port, anchor);
       const inset = paneVisibleBand(port.element).top - port.element.getBoundingClientRect().top;
       requestRestore(paneId, port, {routeKey: port.routeKey, scrollTop: port.element.scrollTop, anchors: orderedAnchors(port),
-        eyeLine: {...anchor, offset: inset, parents}, focus: focus ? {anchor, parents} : null});
+        eyeLine: {...anchor, offset: inset, parents}, focus: focus ? {anchor, parents} : null}, anchor.scope === "journal");
     },
 
     inputLease(paneId: string, visitId: string, routeKey: string): () => boolean {
@@ -824,6 +857,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       refreshes.delete(paneId);
       const port = scrollports.get(paneId);
       if (port === undefined) return null;
+      port.clampedArrival = null;
       const held = { element: port.element, top: port.element.scrollTop, scheduled: false };
       holds.set(paneId, held);
       return () => { if (holds.get(paneId) === held) applyHold(paneId); };
@@ -912,7 +946,7 @@ export function usePaneReturnScrollport(input: {
     const restore = continuityKey === null || previous.current !== continuityKey;
     previous.current = continuityKey;
     const port: Scrollport = {visitId, routeKey, element, content, inputGeneration: 0,
-      observedTop: element.scrollTop, moving: false, heldPointer: null, restFrame: null};
+      observedTop: element.scrollTop, moving: false, heldPointer: null, restFrame: null, clampedArrival: null};
     return memory.register(paneId, port, restore);
   }, [enabled, scrollportRef, contentRef, continuityKey, memory, paneId, visitId, routeKey]);
 }
