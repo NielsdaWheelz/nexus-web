@@ -48,7 +48,12 @@ from nexus.services.media_text_scope import (
     text_scope_rows_sql,
     x_capture_scope_rows_sql,
 )
-from nexus.services.reader_excerpts import contains_table, plain_excerpt, read_captures, scope_excerpts
+from nexus.services.reader_excerpts import (
+    contains_table,
+    plain_excerpt,
+    read_captures,
+    scope_excerpts,
+)
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 
 if TYPE_CHECKING:
