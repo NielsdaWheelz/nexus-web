@@ -10,10 +10,11 @@ retain their separate owners.
 `/daily` resolves the account's current civil date; `/daily/:date` opens the
 continuous journal at that date. newest dates precede older dates; writing keeps
 each page's own relationship order. `/pages/:id` is a separate standalone view.
-the local `daily_index` unions visible daily pages and recorded work dates.
-completion-only dates have a null page ref; empty authored pages remain indexed.
-only the requested unwritten date adds a presentation section. reading, focus and scrolling create or restore nothing; canonical daily
-bindings, including historical refs, remain authoritative.
+the local `daily_index` orders visible daily pages, recorded work dates, the
+requested arrival and any presented retained editors. civil date is the key.
+completion-only and unwritten dates may have a null page ref. reading, focus
+and scrolling leave storage unchanged. canonical daily bindings, including
+historical refs, remain authoritative.
 
 one pane coordinates dates, one controller owns each day, and one memento owns
 programmatic scrolling. the journal's variable-height date geometry composes
@@ -60,14 +61,16 @@ may revisit a live preview. fresh admission follows the captured neighbor's
 identity, or its surviving order after deletion. concurrent insertions or moves
 may require revisiting the day; a reading hold is not an archive snapshot.
 
-the complete index and visited geometry cost `o(days)`. unseen heights are
-estimates; active selections and rich bodies have no hard total-memory bound.
-android's existing 16-mib result cap applies to the compact index and compound
-windows. the ui, worker and packaged native plans share the same closed query
-contract. provisioning, dated-page patches and note changes invalidate the index.
-note invalidation is conservative: body edits can revive a deleted work note.
-this accepts extra local index reads without a second dependency cache.
-link/status changes do not invalidate it.
+small date orders return their keys in the description. a large description
+gives the total extent, the first dates and the ranks of requested arrivals
+and retained editors. the viewport asks for bounded rank ranges and the
+memento locates a saved civil date at the same revision. the date window
+estimates unseen heights and retains measured heights for visited days.
+active selections and rich bodies have no hard total-memory bound.
+
+the ui, worker and packaged native plans share the same query contract and
+android's 16-mib result limit. a change to the account store revision
+invalidates descriptions and fences outstanding ranges.
 
 ## work
 
