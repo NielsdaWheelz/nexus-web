@@ -32,7 +32,8 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
   const route = resolvePaneRouteModel(href);
   if (route.id === "librarian") {
     const located = ["message", "start_offset", "end_offset"].some(key => query.has(key));
-    if (query.has("q") && (located || ["before_seq", "after_seq", "loc"].some(key => query.has(key)) || url.hash || query.getAll("q").length !== 1))
+    if (query.has("before_seq") || query.has("after_seq") ||
+        query.has("q") && (located || query.has("loc") || url.hash || query.getAll("q").length !== 1))
       return { kind: "invalid_destination", reason: "invalid_reader_destination" };
     if (located) {
       if (`${url.pathname}${url.search}${url.hash}`.length > MAX_WORKSPACE_HREF_LENGTH)

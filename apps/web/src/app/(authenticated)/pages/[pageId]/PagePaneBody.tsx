@@ -1,5 +1,6 @@
 "use client";
 
+import { usePaneFilterQuery } from "@/lib/panes/paneFilterRows";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAuthoredStorageFailure, LocalCommitError } from "@/lib/notes/runtime";
 import type { Intent } from "@nexus/authored/commands";
@@ -68,7 +69,7 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
   const { delivery, claim } = usePaneEntryDelivery();
   const [initialTitle, setInitialTitle] = useState(() => newPage ? params.get("title") ?? "" : "");
   const { say } = useOutcome();
-  const [filter, setFilter] = useState("");
+  const {query: filter, onQueryChange: setFilter, clearQuery: clearFilter} = usePaneFilterQuery(`open-outline:${rootRef}`);
   const [entryDefect, setEntryDefect] = useState<{ error: unknown } | null>(null);
   // A storage failure is the entry's outcome; a failed commit is the account's words at risk; the rest is a defect.
   const entryFailed = useCallback((fact: string) => (error: unknown) => {
@@ -85,8 +86,8 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
     header: {kind: "Resource", resource: {status: "Ready", creditGroups: []}},
     resourceRef: page !== null && id !== null ? canonicalResourceRef({ scheme: "page", id }) : undefined,
     query: { kind: "Collation", collation: {
-      words: { label: "filter page items", value: filter, applied: filter, onChange: setFilter,
-        onClear: () => setFilter(""), standing: false, onSubmit: null, rows: null, notice: null, verbs: [] },
+      words: { label: "filter open outline", value: filter, applied: filter, onChange: setFilter,
+        onClear: clearFilter, standing: false, onSubmit: null, rows: null, notice: null, verbs: [] },
       dimensions: [], order: null, reset: null,
     } },
   });
@@ -109,10 +110,10 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
       if (entry.pageId !== id) { say({ fact: "this page is no longer available." }); return; }
       void handle.focusRoot(document => ({anchor: 1, head: document.doc.getText("title").length + 1})).catch(entryFailed("couldn’t open this page’s title."));
     } else if (entry.kind === "AppendNote") {
-      setFilter("");
+      clearFilter();
       if (outline.current && claim(delivery)) void outline.current.append().catch(entryFailed("couldn’t add a note to this page."));
     } else if (entry.kind === "FocusNote") {
-      setFilter("");
+      clearFilter();
       const controller = new AbortController();
       const handle = outline.current;
       if (handle === null) return;
@@ -122,12 +123,11 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
       }).catch(error => { if (!controller.signal.aborted) entryFailed("couldn’t open that note in this page.")(error); });
       return () => controller.abort();
     }
-  }, [claim, delivery, id, newPage, root.rootReady, entryFailed, say]);
+  }, [claim, delivery, id, newPage, root.rootReady, entryFailed, say, clearFilter]);
   if (entryDefect !== null) throw entryDefect.error;
   return <>
     {page !== null && id !== null ? <Inspector pageId={id} label={displayTitle} /> : null}
     {root.rootEditor}
-    {filter.trim() ? <p>filter applies to loaded items.</p> : null}
     {root.view}
   </>;
 }

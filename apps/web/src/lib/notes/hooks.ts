@@ -1,11 +1,11 @@
 "use client";
 /** React reads subscribe to the local account database, including online. */
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Intent } from "@nexus/authored/commands";
-import { paneFilterText } from "@nexus/authored/paneFilterText";
 import type { AuthoredQuery, QueryResult } from "@nexus/authored/types";
 import { useAuthoredStore, useAuthoredAccountId } from "@/lib/authored/provider";
 import { getWritingRuntime, type WritingDocument, type WritingRuntime } from "./runtime";
+
 export function useWritingRuntime(): WritingRuntime {
   const accountId = useAuthoredAccountId();
   return useMemo(() => getWritingRuntime(accountId), [accountId]);
@@ -45,6 +45,15 @@ export function useAuthoredQuery(query: AuthoredQuery | null) {
   const current = state.key === key && state.accountId === accountId;
   return { data: current ? state.data : null, error: current ? state.error : null, occurrence: current ? state.occurrence : null, pending: query !== null && (!current || state.pending), retry };
 }
+export function useWorkLabel({ref, label}: {ref: string; label: string | null}) {
+  const read = useAuthoredQuery(label === null ? {kind: "register_label", ref} : null);
+  const resolved = read.data?.register_label;
+  return {
+    label: (label ?? resolved?.label ?? (resolved?.oversized ? "name too large to display" : "note")) || "empty note",
+    read,
+  };
+}
+
 export function useWritingDocument(ref: string | null, prelude: readonly Intent[] = []) {
   const runtime = useWritingRuntime();
   const preludeKey = JSON.stringify(prelude);
@@ -71,103 +80,142 @@ export function useWritingDocument(ref: string | null, prelude: readonly Intent[
 /** Read a bounded prefix from one local revision. A newer subscription delivery
  * supersedes an in-flight traversal; mixed-revision pages are never published. */
 type CursorQuery = Extract<AuthoredQuery, { cursor: string | null }>;
-export function useAuthoredPrefix(
-  query: CursorQuery | null, count: number,
-  complete?: (prefix: QueryResult) => Promise<QueryResult | null>,
-) {
-  const store = useAuthoredStore();
-  const accountId = useAuthoredAccountId();
-  const key = JSON.stringify([accountId, query === null ? null : { ...query, cursor: null }]);
-  const [state, setState] = useState<{ key: string; data: QueryResult | null; error: unknown | null; occurrence: object | null; pending: boolean }>({ key, data: null, error: null, occurrence: null, pending: query !== null });
-  const [attempt, retry] = useState(0);
+
+export class AuthoredContinuationCursorError extends Error {}
+
+/** One admitted first-page subscription and one outstanding cursor. A demand
+ * reads just that cursor; only its own live account, query and revision can append. */
+export function useAuthoredContinuation(query: CursorQuery | null) {
+  const store = useAuthoredStore(), account = useAuthoredAccountId();
+  const key = JSON.stringify([account, query === null ? null : {...query, cursor: null}]);
+  const [state, setState] = useState<{key: string; data: QueryResult | null; error: unknown | null; pending: boolean}>(
+    {key, data: null, error: null, pending: query !== null});
+  const owner = useRef<{key: string; more(signal?: AbortSignal): Promise<QueryResult | null>; retry(): void} | null>(null);
+
   useEffect(() => {
-    if (query === null) {
-      setState({ key, data: null, error: null, occurrence: null, pending: false });
-      return;
-    }
-    const begin = () => setState(old => old.key === key ? { ...old, pending: true }
-      : { key, data: null, error: null, occurrence: null, pending: true });
-    begin();
-    let generation = 0;
-    let active = true;
-    let latestRevision:bigint|null=null;
-    const firstQuery = { ...query, cursor: null };
-    const receive = (first: QueryResult) => {
-      const revision=BigInt(first.store_revision);
-      if(!active || latestRevision!==null && revision<latestRevision)return;
-      latestRevision=revision;
-      const current = ++generation;
-      begin();
+    if (query === null) return;
+    const first = {...query, cursor: null};
+    let live = true, generation = 0, replaying = false;
+    let data: QueryResult | null = null, revision: bigint | null = null;
+    let active: Promise<QueryResult | null> | null = null, failedCursor = false;
+    let spent = new Set<string>();
+    const publish = (pending: boolean, error: unknown | null = null) => {
+      if (live) setState({key, data, error, pending});
+    };
+    function receive(next: QueryResult) {
+      const incoming = BigInt(next.store_revision);
+      if (!live || revision !== null && incoming < revision) return;
+      // A repeat notification from the same snapshot cannot truncate an accepted suffix.
+      if (data?.store_revision === next.store_revision && data.scope_available === next.scope_available) {
+        if (replaying) { replaying = false; publish(false); }
+        return;
+      }
+      const ticket = ++generation;
+      revision = incoming;
+      active = null;
+      failedCursor = false;
+      const pages = spent.size + 1;
+      const commit = (value: QueryResult, cursors: Set<string>) => {
+        data = value.scope_available ? value : {...value, rows: [], next_cursor: null};
+        spent = value.scope_available ? cursors : new Set();
+        replaying = false;
+        publish(false);
+      };
+      if (!next.scope_available || pages === 1 || next.next_cursor === null) {
+        commit(next, new Set());
+        return;
+      }
+      replaying = true;
+      publish(true);
       void (async () => {
-        const rows = first.scope_available === false ? [] : [...first.rows];
-        let cursor = first.scope_available === false ? null : first.next_cursor;
-        for (let page = 1; page < count && cursor !== null; page++) {
-          const next = await store.query({ ...query, cursor });
-          if (!active || current !== generation || next.store_revision !== first.store_revision) return;
-          if (next.scope_available === false) {
-            setState({ key, data: { ...next, rows: [], next_cursor: null }, error: null, occurrence: null, pending: false });
+        const cursors = new Set<string>();
+        const rows = [...next.rows];
+        let cursor = next.next_cursor;
+        while (cursor !== null && cursors.size + 1 < pages) {
+          cursors.add(cursor);
+          next = await store.query({...first, cursor});
+          if (!live || generation !== ticket) return;
+          const version = BigInt(next.store_revision);
+          if (!next.scope_available && version >= incoming) {
+            revision = version;
+            commit(next, new Set());
             return;
           }
-          rows.push(...next.rows); cursor = next.next_cursor;
+          if (version !== incoming) {
+            if (version > incoming) revision = version;
+            refresh();
+            return;
+          }
+          cursor = next.next_cursor;
+          if (cursor !== null && cursors.has(cursor))
+            throw new AuthoredContinuationCursorError("Local search returned a previous cursor");
+          rows.push(...next.rows);
         }
-        const prefix = { ...first, rows, next_cursor: cursor };
-        const data = complete === undefined ? prefix : await complete(prefix);
-        if (data !== null && active && current === generation)
-          setState({ key, data, error: null, occurrence: null, pending: false });
-      })().catch(error => { if (active && current === generation) setState(old => ({ key, data: old.key === key ? old.data : null, error, occurrence: old.key === key ? old.occurrence ?? {} : {}, pending: false })); });
-    };
-    const unsubscribe = store.subscribe(firstQuery, receive, error => {
-      if (!active) return;
-      generation++;
-      setState(old => ({ key, data: old.key === key ? old.data : null, error, occurrence: old.key === key ? old.occurrence ?? {} : {}, pending: false }));
+        commit({...next, rows}, cursors);
+      })().catch(error => {
+        if (!live || generation !== ticket) return;
+        replaying = false;
+        publish(false, error);
+      });
+    }
+    function refresh() {
+      const ticket = ++generation;
+      replaying = true;
+      active = null;
+      publish(true);
+      void store.query(first).then(next => {
+        if (live && generation === ticket) receive(next);
+      }, error => {
+        if (!live || generation !== ticket) return;
+        replaying = false;
+        publish(false, error);
+      });
+    }
+    function more(signal?: AbortSignal): Promise<QueryResult | null> {
+      if (!live || replaying || signal?.aborted || data === null || data.next_cursor === null) return Promise.resolve(null);
+      if (active !== null) return active;
+      const base = data, cursor = data.next_cursor, ticket = generation;
+      failedCursor = false;
+      publish(true);
+      const read = store.query({...first, cursor}).then(next => {
+        if (!live || generation !== ticket) return null;
+        if (signal?.aborted) { publish(false); return null; }
+        if (!next.scope_available) { receive(next); return data; }
+        if (next.store_revision !== base.store_revision) {
+          if (BigInt(next.store_revision) > BigInt(base.store_revision)) {
+            revision = BigInt(next.store_revision);
+            refresh();
+          } else publish(false);
+          return null;
+        }
+        if (next.next_cursor !== null && (next.next_cursor === cursor || spent.has(next.next_cursor))) {
+          failedCursor = true; publish(false, new AuthoredContinuationCursorError("Local search returned a previous cursor")); return null;
+        }
+        spent.add(cursor);
+        data = {...next, rows: [...base.rows, ...next.rows]};
+        publish(false);
+        return data;
+      }, error => {
+        if (live && generation === ticket) { failedCursor = !signal?.aborted; publish(false, signal?.aborted ? null : error); }
+        return null;
+      }).finally(() => { if (active === read) active = null; });
+      active = read;
+      return read;
+    }
+    owner.current = {key, more, retry: () => { if (failedCursor) void more(); else refresh(); }};
+    publish(true);
+    const unsubscribe = store.subscribe(first, receive, error => {
+      if (!live) return;
+      generation++; active = null; replaying = false; failedCursor = false; publish(false, error);
     });
-    return () => { active = false; generation++; unsubscribe(); };
-    // The serialized query is its stable value identity.
+    return () => { live = false; owner.current = null; unsubscribe(); };
+    // The complete serialized query plus account is its subscription identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store, key, count, attempt, complete]);
-  return { data: query !== null && state.key === key ? state.data : null, error: query !== null && state.key === key ? state.error : null, occurrence: query !== null && state.key === key ? state.occurrence : null, pending: query !== null && (state.key !== key || state.pending), retry: () => retry(n => n + 1) };
-}
-
-/** Read the current ordered prefix and any departed candidates at one revision.
- * The last page's lookahead is the witness for continuation. */
-export function useNotesRegister({ query, order, depth, getRetainedRefs }: {
-  query: string;
-  order: "worked" | "title";
-  depth: number;
-  getRetainedRefs: () => readonly string[];
-}) {
-  const store = useAuthoredStore();
-  const complete = useCallback(async (prefix: QueryResult): Promise<QueryResult | null> => {
-    const retained = getRetainedRefs();
-    const matches = new Map(prefix.rows.map(row => [row.resource.ref, row]));
-    const missing = retained.filter(ref => !matches.has(ref));
-    const needle = paneFilterText(query.trim());
-    for (let offset = 0; offset < missing.length; offset += 100) {
-      const result = await store.query({ kind: "resolve", refs: missing.slice(offset, offset + 100) });
-      if (result.store_revision !== prefix.store_revision) return null;
-      for (const row of result.rows) {
-        const resource = row.resource;
-        if (resource.title_key !== null && resource.title_key.includes(needle))
-          matches.set(resource.ref, row);
-      }
-    }
-    const rows: QueryResult["rows"] = [];
-    for (const ref of retained) {
-      const row = matches.get(ref);
-      if (row !== undefined) rows.push(row);
-      matches.delete(ref);
-    }
-    for (const row of prefix.rows) {
-      if (rows.length === depth) break;
-      if (matches.has(row.resource.ref)) rows.push(row);
-    }
-    return { ...prefix, rows };
-  }, [depth, getRetainedRefs, query, store]);
-  const read = useAuthoredPrefix({ kind: "pages", order, title_filter: query, cursor: null, limit: 100 }, depth / 100, complete);
-  const data = useMemo(() => read.data === null ? null : {
-    rows: read.data.rows.map(({ resource }) => resource), more: read.data.next_cursor !== null,
-  }, [read.data]);
-  return { ...read, data };
+  }, [key, store]);
+  const more = useCallback((signal?: AbortSignal) => owner.current?.key === key ? owner.current.more(signal) : Promise.resolve(null), [key]);
+  const retry = useCallback(() => { if (owner.current?.key === key) owner.current.retry(); }, [key]);
+  const current = query !== null && state.key === key;
+  return {data: current ? state.data : null, pending: query !== null && (!current || state.pending), error: current ? state.error : null, more, retry};
 }
 
 type Resolved = QueryResult["rows"][number]["resource"];
@@ -192,14 +240,4 @@ export function useResolvedRefs(refs: readonly string[]) {
     return new Map<string, Resolved>((source?.rows ?? []).flatMap(({ resource }) => members.has(resource.ref) ? [[resource.ref, resource]] : []));
   }, [source, wanted]);
   return { resources, settled, error: read.error, pending: read.pending, retry: read.retry };
-}
-
-/** The picker owns its page count; controlled search passes its count to the same prefix owner. */
-export function useAuthoredPages(query: CursorQuery | null) {
-  const accountId = useAuthoredAccountId();
-  const key = JSON.stringify([accountId, query === null ? null : { ...query, cursor: null }]);
-  const [pages, setPages] = useState({ key, count: 1 });
-  const count = pages.key === key ? pages.count : 1;
-  const prefix = useAuthoredPrefix(query, count);
-  return { ...prefix, more: () => setPages({ key, count: count + 1 }) };
 }

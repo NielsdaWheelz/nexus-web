@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Intent } from "@nexus/authored/commands";
+import type { DailyIndexEntry, DailyIndexSource, QueryResult } from "@nexus/authored/types";
 import { Ruling, RulingRegion } from "@/components/feedback/Ruling";
 import { useOutcome } from "@/components/feedback/Feedback";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
@@ -10,12 +11,14 @@ import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import Button from "@/components/ui/Button";
 import CompletedWork from "@/components/work/CompletedWork";
 import WorkSection from "@/components/work/WorkSection";
+import { useWorkRegister } from "@/components/work/workRegister";
 import { useAuthoredAccountId } from "@/lib/authored/provider";
 import { formatDay, isLocalDate } from "@/lib/localDate";
 import { useAccountToday } from "@/lib/notes/accountDay";
 import { dailyPage } from "@/lib/notes/api";
-import { useAuthoredPages, useAuthoredQuery, useWritingRuntime } from "@/lib/notes/hooks";
-import { JOURNAL_DAY_ESTIMATE, useJournalWindow } from "@/lib/notes/journalWindow";
+import { useAuthoredQuery, useWritingRuntime } from "@/lib/notes/hooks";
+import { JOURNAL_DAY_ESTIMATE, journalOrder, useJournalWindow } from "@/lib/notes/journalWindow";
+import { useRankedAuthoredWindow } from "@/lib/notes/rankedAuthoredWindow";
 import type { OutlineController } from "@/lib/notes/outlineController";
 import { OutlineHistoryAllowance } from "@/lib/notes/outlineHistoryAllowance";
 import { OutlinePresentationAllowance } from "@/lib/notes/outlinePresentationAllowance";
@@ -28,12 +31,13 @@ import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
 import { readerType } from "@/lib/reader/typography";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { cx } from "@/lib/ui/cx";
-import { PaneRefreshAnchor, usePaneAnchorGeometry, usePaneInputLease, usePaneReturnReady, usePaneRevealAnchor } from "@/lib/workspace/paneReturnMemento";
+import { PaneRefreshAnchor, usePaneAnchorGeometry, usePaneInputLease, usePaneReturnReady, usePaneRevealAnchor, usePaneScrollMotion } from "@/lib/workspace/paneReturnMemento";
 import { useWorkspaceStore, type WorkspaceNavigationResult } from "@/lib/workspace/store";
 import JournalDates from "./JournalDates";
 import styles from "./journal.module.css";
 
 type Day = { local_date: string; ref: string | null };
+const dailyIndex = (result: QueryResult) => result.daily_index;
 type Binding = { ref: string; prelude: readonly Intent[] };
 const EMPTY_INTENTS: readonly Intent[] = [];
 const TITLE = { label: "page title", placeholder: "" };
@@ -60,7 +64,6 @@ export default function JournalPaneBody() {
 
 function Journal({ arrival }: { arrival: string }) {
   const pane = requirePaneRuntime(usePaneRuntime(), "JournalPaneBody");
-  const index = useAuthoredQuery({ kind: "daily_index" });
   const today = useAccountToday();
   const profile = useReaderProfile();
   const type = useMemo(() => readerType(profile), [profile]);
@@ -96,30 +99,45 @@ function Journal({ arrival }: { arrival: string }) {
   const [, presentationChanged] = useState(0);
   const [presentationAllowance] = useState(() => new OutlinePresentationAllowance(() => presentationChanged(value => value + 1)));
   const [retained, setRetained] = useState<ReadonlyMap<string, Day>>(() => new Map());
-  const members = index.data?.daily_index ?? null;
-  if (index.data !== null && members === null) throw new Error("daily index result is missing");
-  const recordedDates = useMemo(() => members?.map(day => day.local_date) ?? null, [members]);
-  const directory = useMemo(() => {
-    const byDate = new Map<string, Day>(members?.map(day => [day.local_date, day]));
-    const extra: string[] = [];
-    for (const [date, day] of retained) {
-      if (byDate.has(date)) continue;
-      byDate.set(date, day);
-      extra.push(date);
-    }
-    if (!byDate.has(arrival)) {
-      byDate.set(arrival, { local_date: arrival, ref: null });
-      extra.push(arrival);
-    }
-    const recorded = recordedDates ?? [];
-    return { byDate, dates: extra.length ? mergeDates(recorded, extra.sort().reverse()) : recorded };
-  }, [members, recordedDates, arrival, retained]);
-  const indexState = members !== null ? "ready" : index.error !== null ? "failed" : "pending";
-  const window = useJournalWindow(directory.dates, root, indexState, presentationAllowance.pressured ? 0 : 1, type);
+  const retainedDates = [...retained.keys()].filter(date => date !== arrival).sort().join(",");
+  const source = useMemo<DailyIndexSource>(() => ({kind: "daily_index", arrival, retained: retainedDates === "" ? [] : retainedDates.split(",")}), [arrival, retainedDates]);
+  const index = useAuthoredQuery({...source, at: {kind: "describe"}, expected_revision: null});
+  const last = useRef<QueryResult | null>(null);
+  const admitted = index.data ?? last.current;
+  useLayoutEffect(() => { if (index.data !== null) last.current = index.data; }, [index.data]);
+  const description = admitted?.daily_index;
+  if (admitted !== null && description?.kind !== "description") throw new Error("daily index description is missing");
+  const revision = admitted?.store_revision ?? null;
+  // Durable dates already belong to the union. Focusing one need not retire its admitted ranges.
+  const syntheticDates = description?.kind === "description" ? description.attachments
+    .filter(day => !day.recorded && day.local_date !== arrival).map(day => day.local_date).sort().join(",") : "";
+  const rankedSource = useMemo<DailyIndexSource>(() => ({kind: "daily_index", arrival,
+    retained: syntheticDates === "" ? [] : syntheticDates.split(",")}), [arrival, syntheticDates]);
+  const ranked = useRankedAuthoredWindow(rankedSource, revision,
+    description?.kind === "description" ? description : null, dailyIndex);
+  const byDate = useMemo(() => description?.kind === "description"
+    ? new Map([...description.items, ...description.attachments, ...ranked.items.values()].map(day => [day.local_date, day]))
+    : new Map<string, DailyIndexEntry>(), [description, ranked.items]);
+  const current = useMemo(() => journalOrder(description?.kind === "description" ? description : null), [description]);
+  const motion = usePaneScrollMotion();
+  const presented = useRef(current);
+  const before = presented.current;
+  const held = motion !== "still" && before.count > 0;
+  const append = motion === "travel" && current.count > before.count &&
+    before.dates.every((date, rank) => date === current.dateAt(rank));
+  const order = held && !append && (before.observation === null || before.observation !== current.observation) ? before : current;
+  useLayoutEffect(() => { presented.current = order; }, [order]);
+  const error = index.error ?? ranked.error;
+  const retry = index.error === null ? ranked.retry : index.retry;
+  const indexState = error !== null ? "failed" : admitted === null ? "pending" : "ready";
+  const window = useJournalWindow(order, root, indexState, presentationAllowance.pressured ? 0 : 1, type, held);
+  const { opening, settle } = window;
+  useLayoutEffect(() => {
+    if (opening !== null && current.rankOf(opening) === null && !retained.has(opening)) settle(opening);
+  }, [current, opening, retained, settle]);
   const directoryReady = indexState !== "pending";
   usePaneAnchorGeometry({ scope: "journal", geometry: window.geometry, ready: directoryReady });
   usePaneReturnReady(directoryReady);
-
   const retain = useCallback((date: string, ref: string | null, keep: boolean) => setRetained(previous => {
     const old = previous.get(date);
     if (!keep && old === undefined || keep && old?.ref === ref) return previous;
@@ -127,8 +145,8 @@ function Journal({ arrival }: { arrival: string }) {
     if (keep) next.set(date, { local_date: date, ref }); else next.delete(date);
     return next;
   }), []);
-  const headless = today !== null && directory.dates[0] === today;
-  const readingDate = window.reading ?? (members !== null && window.viewport.from < 0 ? today : null) ?? arrival;
+  const headless = today !== null && order.dateAt(0) === today;
+  const readingDate = window.reading ?? (admitted !== null && window.viewport.from < 0 ? today : null) ?? arrival;
   const name = formatDay(readingDate, today);
   const showBand = today !== null && readingDate === today && (headless || window.reading === null);
   const [seen, setSeen] = useState<{ target: Element; intersecting: boolean } | null>(null);
@@ -185,9 +203,37 @@ function Journal({ arrival }: { arrival: string }) {
     const dates = new Set([...retained.keys(), ...window.requested]);
     if (window.opening !== null) dates.add(window.opening);
     if (receivingArrival) dates.add(arrival);
-    return [...dates].filter(date => directory.byDate.has(date)).sort().reverse();
-  }, [arrival, directory.byDate, receivingArrival, retained, window.opening, window.requested]);
+    if (headless) dates.add(today);
+    return [...dates].filter(date => order.rankOf(date) !== null || retained.has(date)).sort().reverse();
+  }, [arrival, headless, order, receivingArrival, retained, today, window.opening, window.requested]);
+  useLayoutEffect(() => {
+    if (current.observation === null) return;
+    const rankOf = current.rankOf;
+    const ranks = window.nearby.flatMap(date => {
+      const rank = rankOf(date);
+      return rank === null ? [] : [rank - 1, rank, rank + 1];
+    });
+    ranked.request(ranks, pinned.filter(date => rankOf(date) !== null));
+  });
+  const recordedDates = useMemo(() => {
+    if (pickerDate === null || description?.kind !== "description") return null;
+    const unrecorded = new Set([...description.items, ...description.attachments].filter(day => !day.recorded).map(day => day.local_date));
+    return current.dates.filter(date => !unrecorded.has(date));
+  }, [current, description, pickerDate]);
   const shown = mergeDates(window.nearby, pinned);
+  const lastDate = order.dateAt(order.count - 1);
+  useLayoutEffect(() => {
+    const port = root.current?.closest<HTMLElement>("[data-pane-content]");
+    if (!port || lastDate === undefined) return;
+    const end = (event: KeyboardEvent) => {
+      if (!event.isTrusted || event.defaultPrevented || event.target !== port || event.key !== "End" ||
+          event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      event.preventDefault();
+      reveal("journal", lastDate, false);
+    };
+    port.addEventListener("keydown", end, true);
+    return () => port.removeEventListener("keydown", end, true);
+  }, [lastDate, reveal]);
   const nearby = new Set(window.nearby);
   const visible = new Set(window.visible);
   const bandBox = bandRef.current?.getBoundingClientRect();
@@ -197,23 +243,28 @@ function Journal({ arrival }: { arrival: string }) {
   return <WorkHistoryContext.Provider value={work.history}><div {...type}>
     {today === null ? null : <div ref={bandRef} tabIndex={-1} data-row-focusable="true" className={styles.band} data-pane-return-scope="journal-band" data-collection-row-id="band">
       <p className={cx(styles.bandDate, "reader-display")}><time dateTime={today}>{formatDay(today, today)}</time></p>
-      <JournalBandMenu key={today} date={today} refId={directory.byDate.get(today)?.ref ?? null} visible={bandVisible} />
+      <JournalBandMenu key={today} date={today} refId={byDate.get(today)?.ref ?? null} visible={bandVisible} />
     </div>}
     {work.history ? <WorkSection history={work.history} /> : null}
-    {index.error === null ? null : <AuthoredReadFailure error={index.error} pending={index.pending} retry={index.retry} noun="your journal" />}
-    <PaneRefreshAnchor identity="journal" value={directory.dates} ready={true}><div ref={root} role="feed" aria-label="journal" data-pane-return-scope="journal"
-      className={styles.feed} style={{ height: window.height }}>
+    <AuthoredReadFailure error={error} pending={index.pending} retry={retry} noun="your journal" />
+    <PaneRefreshAnchor identity="journal" value={order.observation ?? order.dates} ready={directoryReady}><div ref={root} role="feed" aria-label="journal" data-pane-return-scope="journal"
+      className={styles.feed} style={{ height: admitted === null ? undefined : window.height }}>
+      {indexState === "pending" ? <Ruling /> : null}
       {shown.map(date => {
-        const rank = window.ranks.get(date)!;
+        const rank = order.rankOf(date) ?? -1;
+        if (rank >= 0 && current.rankOf(date) === null && !retained.has(date))
+          return <div key={date} className={styles.day} aria-hidden="true" style={{ top: window.tops[rank], height: window.sizes.get(date) ?? JOURNAL_DAY_ESTIMATE }} />;
+        const member = byDate.get(date);
+        const day = member?.recorded ? member : retained.get(date) ?? member ?? null;
         const receiving = date === arrival && receivingArrival;
         const attached = nearby.has(date) && (window.opening !== date || visible.has(date));
-        return <JournalDay key={date} day={directory.byDate.get(date)!} arrival={arrival} today={today} rank={rank} window={window}
-          count={members === null ? null : directory.dates.length} attached={attached || window.requested.has(date) || receiving}
+        return <JournalDay key={date} date={date} day={day} arrival={arrival} today={today} rank={rank} window={window}
+          count={order.count} attached={attached || window.requested.has(date) || receiving}
           visible={visible.has(date)} headless={headless && date === today} menuInBand={bandVisible && date === today}
           headRef={!showBand && date === readingDate ? setTarget : undefined}
           forced={editingEntry && date === arrival || window.bodies.has(date)} mayArrive={mayArrive}
           allowance={allowance} presentationAllowance={presentationAllowance} retain={retain}
-          newer={directory.dates[rank - 1] ?? null} older={directory.dates[rank + 1] ?? null} />;
+          newer={rank < 0 ? null : order.dateAt(rank - 1) ?? null} older={rank < 0 ? null : order.dateAt(rank + 1) ?? null} />;
       })}
     </div></PaneRefreshAnchor>
     {pickerDate === null ? null : <JournalDates readingDate={pickerDate} today={today}
@@ -222,16 +273,15 @@ function Journal({ arrival }: { arrival: string }) {
   </div></WorkHistoryContext.Provider>;
 }
 
-function JournalDay({ day, arrival, today, window, rank, count, visible, attached, headless, menuInBand, forced, headRef,
+function JournalDay({ day, date, arrival, today, window, rank, count, visible, attached, headless, menuInBand, forced, headRef,
   allowance, presentationAllowance, retain, mayArrive, newer, older }: {
-  day: Day; arrival: string; today: string | null; window: ReturnType<typeof useJournalWindow>; rank: number; count: number | null;
+  day: Day | null; date: string; arrival: string; today: string | null; window: ReturnType<typeof useJournalWindow>; rank: number; count: number;
   visible: boolean; attached: boolean; headless: boolean; menuInBand: boolean; forced: boolean;
   headRef: ((node: HTMLElement | null) => void) | undefined;
   allowance: OutlineHistoryAllowance; presentationAllowance: OutlinePresentationAllowance;
   retain(date: string, ref: string | null, keep: boolean): void;
   mayArrive(activation: string): boolean | null; newer: string | null; older: string | null;
 }) {
-  const date = day.local_date;
   const heading = useId();
   const name = formatDay(date, today);
   const reveal = usePaneRevealAnchor();
@@ -249,13 +299,13 @@ function JournalDay({ day, arrival, today, window, rank, count, visible, attache
   const [menuOpen, setMenuOpen] = useState(false);
   const [editTitle, setEditTitle] = useState(false);
   const passive = window.opening === date;
-  const request = forced || focused || editTitle || passive && visible;
+  const request = day !== null && (forced || focused || editTitle || passive && visible);
   const { begin, release, settle, measure, descendant, article: register } = window;
   const ref = useCallback((element: HTMLElement | null) => {
     article.current = element;
     register(date, element);
   }, [date, register]);
-  const bound = useJournalBinding(date, day.ref, started);
+  const bound = useJournalBinding(date, day?.ref ?? null, started && day !== null);
   // The opener remains mounted until its issued binding and completed-work reads settle.
   const value = bound.value;
   if (!started && request) setStarted(true);
@@ -267,22 +317,25 @@ function JournalDay({ day, arrival, today, window, rank, count, visible, attache
     begin(date);
     return () => release(date);
   }, [date, ownsOpening, begin, release]);
-  const completed = useAuthoredPages(started ? { kind: "work_completed", local_date: date, cursor: null, limit: 100 } : null);
-  const completedFirst = completed.data !== null || completed.error !== null;
+  const completed = useWorkRegister("work_completed", started && day !== null ? date : null);
+  const completedError = completed.read.error ?? completed.error;
+  const completedFirst = completed.presentation !== null || completedError !== null;
   const bindingFailed = value === null && bound.error !== null;
   const outlineFirst = bindingFailed || outlineStarted && opening !== "pending";
-  useLayoutEffect(() => descendant(date, bindingFailed ? "failed" : opening), [date, bindingFailed, opening, descendant]);
+  const descendantState = !outlineFirst || !completedFirst ? "pending"
+    : bindingFailed || opening === "failed" || completedError !== null ? "failed" : "ready";
+  useLayoutEffect(() => descendant(date, descendantState), [date, descendantState, descendant]);
   const abandoned = !request && !outlineStarted && (value !== null || bindingFailed);
   const settled = completedFirst && (outlineFirst || abandoned);
   useLayoutEffect(() => {
-    if (!passive || !settled && (started || request)) return;
+    if (day === null || !passive || !settled && (started || request)) return;
     if (abandoned) setStarted(false);
     settle(date);
-  }, [passive, settled, started, request, abandoned, date, settle]);
-  const shown = attached || focused || menuOpen || editTitle;
+  }, [day, passive, settled, started, request, abandoned, date, settle]);
+  const shown = rank >= 0 && (attached || focused || menuOpen || editTitle);
   const protectedDay = protectedSession || focused || menuOpen || editTitle;
-  useLayoutEffect(() => retain(date, value?.ref ?? day.ref, started && !settled || protectedDay),
-    [date, value, day.ref, started, settled, protectedDay, retain]);
+  useLayoutEffect(() => retain(date, value?.ref ?? day?.ref ?? null, day !== null && (started && !settled || protectedDay)),
+    [date, value, day, started, settled, protectedDay, retain]);
   useLayoutEffect(() => {
     if (started && settled && !shown && !passive) setStarted(false);
   }, [started, settled, shown, passive]);
@@ -291,24 +344,24 @@ function JournalDay({ day, arrival, today, window, rank, count, visible, attache
     return controller.holdReadingWindow(null);
   }, [controller, focused]);
   const hasWriting = opening === "ready";
-  const hasWork = Boolean(completed.data?.rows.length);
-  const fullyMeasured = hasWriting && completed.error === null && completed.data !== null;
+  const hasWork = (completed.presentation?.count ?? 0) > 0;
+  const fullyMeasured = hasWriting && completedError === null && completed.presentation !== null;
   useLayoutEffect(() => {
     if (!shown || (!hasWriting && !hasWork) || !natural.current) return;
     return measure(date, natural.current, fullyMeasured);
   }, [shown, hasWriting, hasWork, fullyMeasured, date, measure]);
 
   const reading = (next: string | null) => { if (next !== null) reveal("journal", next, true); };
-  const failedRead = bindingFailed || outlineResult.error !== null || completed.error !== null;
+  const failedRead = bindingFailed || outlineResult.error !== null || completedError !== null;
   const waiting = started && !failedRead && (!outlineFirst || !completedFirst);
   const showStatus = visible && (passive || request || window.reading === date) && (waiting || failedRead);
   const size = window.sizes.get(date) ?? JOURNAL_DAY_ESTIMATE;
-  const top = window.tops[rank];
+  const top = rank < 0 ? 0 : window.tops[rank];
   const statusTop = Math.max(0, window.viewport.from - top);
   return <article ref={ref} hidden={!shown} className={styles.day} style={{ top, height: size }} data-journal-date={date}
-      data-last={count === null || rank + 1 === count || undefined}
+      data-last={rank + 1 === count || undefined}
       data-pane-return-scope="journal" data-collection-row-id={date} data-row-focusable="true"
-      tabIndex={0} aria-labelledby={heading} aria-posinset={count === null ? undefined : rank + 1} aria-setsize={count ?? undefined}
+      tabIndex={0} aria-labelledby={heading} aria-posinset={rank < 0 ? undefined : rank + 1} aria-setsize={count}
       onFocus={() => setFocused(true)}
       onBlur={event => {
         const next = event.relatedTarget;
@@ -328,7 +381,7 @@ function JournalDay({ day, arrival, today, window, rank, count, visible, attache
           allowance={allowance} presentationAllowance={presentationAllowance} mayArrive={mayArrive}
           onOpening={onOpening} retryRef={outlineRetry} onRetain={setProtectedSession} onController={setController}
           editTitle={editTitle} onEditTitle={() => setEditTitle(false)} /> : null}
-        <CompletedWork date={date} read={completed} />
+        <CompletedWork date={date} work={completed} />
         <nav className={`${styles.continuation} sr-only`} aria-label="journal reading">
           {newer === null ? null : <Button onClick={() => reading(newer)}>newer day</Button>}
           {older === null ? null : <Button onClick={() => reading(older)}>older day</Button>}
@@ -339,7 +392,7 @@ function JournalDay({ day, arrival, today, window, rank, count, visible, attache
           {bindingFailed ? <AuthoredReadFailure error={bound.error} pending={bound.pending} retry={bound.retry} noun="this day" />
             : waiting ? <Ruling /> : null}
           <AuthoredReadFailure error={outlineResult.error} retry={() => outlineRetry.current()} noun="linked items" />
-          <AuthoredReadFailure error={completed.error} pending={completed.pending} retry={completed.retry} noun="completed work" />
+          <AuthoredReadFailure error={completedError} pending={completed.read.pending} retry={completed.read.error === null ? completed.retry : completed.read.retry} noun="completed work" />
         </RulingRegion>
       </div> : null}
     </article>;

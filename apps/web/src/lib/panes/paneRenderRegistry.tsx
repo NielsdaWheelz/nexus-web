@@ -1,6 +1,8 @@
 "use client";
 
 import { Suspense, useDeferredValue, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
+import HabitsPaneBody from "@/app/(authenticated)/habits/HabitsPaneBody";
+import NotesPaneBody from "@/app/(authenticated)/notes/NotesPaneBody";
 import NotePaneBody from "@/app/(authenticated)/notes/[blockId]/NotePaneBody";
 import JournalPaneBody from "@/app/(authenticated)/daily/JournalPaneBody";
 import PagePaneBody from "@/app/(authenticated)/pages/[pageId]/PagePaneBody";
@@ -10,7 +12,7 @@ import { PaneModuleLoadError } from "@/lib/panes/PaneModuleLoadError";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 
 type Module = { default: ComponentType };
-type LazyPaneRouteId = Exclude<PaneRouteId, "note" | "pageNew" | "page" | "dailyDate">;
+type LazyPaneRouteId = Exclude<PaneRouteId, "habits" | "notes" | "note" | "pageNew" | "page" | "dailyDate">;
 
 // Secondary bodies remain separate chunks; pending code suspends server rendering and
 // hydration. Startup updates can still replace streamed markup before hydration;
@@ -34,10 +36,8 @@ const LOADERS: Record<LazyPaneRouteId, () => Promise<Module>> = {
   search: () => import("@/app/(authenticated)/search/SearchPaneBody"),
   author: () => import("@/app/(authenticated)/authors/[handle]/AuthorPaneBody"),
   highlight: () => import("@/app/(authenticated)/highlights/[id]/HighlightPaneBody"),
-  notes: () => import("@/app/(authenticated)/notes/NotesPaneBody"),
   imports: () => import("@/app/(authenticated)/imports/ImportsPaneBody"),
   stats: () => import("@/app/(authenticated)/stats/StatsPaneBody"),
-  habits: () => import("@/app/(authenticated)/habits/HabitsPaneBody"),
   settingsAccount: () =>
     import("@/app/(authenticated)/settings/account/SettingsAccountPaneBody"),
   settingsReader: () =>
@@ -98,6 +98,8 @@ function load(id: LazyPaneRouteId): ModuleEntry {
 }
 
 function PaneBody({ id }: { readonly id: Exclude<PaneRouteId, "pageNew"> }) {
+  if (id === "habits") return <><HabitsPaneBody /><ServerArrivalsSpent /></>;
+  if (id === "notes") return <><NotesPaneBody /><ServerArrivalsSpent /></>;
   if (id === "note") return <><NotePaneBody /><ServerArrivalsSpent /></>;
   if (id === "page") return <><PagePaneBody /><ServerArrivalsSpent /></>;
   if (id === "dailyDate") return <><JournalPaneBody /><ServerArrivalsSpent /></>;

@@ -3,7 +3,7 @@
 .ruling {
   --pitch: var(--ruling-pitch, var(--size-xl));
   position: relative;
-  block-size: calc(6 * var(--pitch));
+  block-size: calc(var(--ruling-lines, 6) * var(--pitch));
   background: repeating-linear-gradient(
     to bottom,
     transparent 0 calc(var(--pitch) - 1px),

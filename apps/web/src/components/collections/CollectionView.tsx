@@ -6,25 +6,35 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 import PaneSurface from "@/components/ui/PaneSurface";
 import ResourceList, { ResourceListHead } from "@/components/ui/ResourceList";
 import SortableList from "@/components/sortable/SortableList";
 import { Ruling } from "@/components/feedback/Ruling";
+import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import type { CollectionRowView, OrderPresentation } from "@/lib/collections/types";
-import { PaneRefreshAnchor, usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
+import { PaneRefreshAnchor, usePaneReturnDescendantReady, usePaneScrollMotion } from "@/lib/workspace/paneReturnMemento";
 import CollectionRow from "./CollectionRow";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { focusableElements } from "@/lib/ui/overlay";
-import { useMeasuredIndexWindow, type IndexGeometry } from "@/lib/collections/measuredIndexWindow";
+import { useMeasuredIndexWindow, type IndexGeometry, type RankedIndex } from "@/lib/collections/measuredIndexWindow";
 import { IndexRowWindow } from "@/lib/collections/indexRowWindow";
 import { usePaneCollectionGeometry } from "@/lib/workspace/paneReturnMemento";
 import styles from "./CollectionView.module.css";
 
-export interface CollectionViewRowRenderProps {
+const ROW_FOCUS = "[data-row-focusable]:not([disabled])";
+
+function rowControl(row: HTMLElement | null, selector: string): HTMLElement | null {
+  const control = row?.querySelector<HTMLElement>(selector);
+  return (control?.hasAttribute("data-row-primary-control") ? focusableElements(control)[0] : control)
+    ?? row?.querySelector<HTMLElement>(ROW_FOCUS) ?? null;
+}
+
+export interface CollectionViewRowRenderProps<Row extends CollectionRowView = CollectionRowView> {
   readonly afterRemoval: () => HTMLElement | null;
-  readonly row: CollectionRowView;
+  readonly row: Row;
   readonly layout: "Rows" | "Wall";
   readonly as?: "li" | "div";
   readonly primaryControl?: ReactNode;
@@ -38,9 +48,9 @@ export interface CollectionViewRowRenderProps {
  * own row chrome, action placement or density. Rows may window; Wall mounts every cell.
  * Rows commit directly; anchorKey separates view changes from same-view refreshes.
  */
-export default function CollectionView({
+export default function CollectionView<Row extends CollectionRowView>({
   returnScope,
-  rows,
+  rows: incoming,
   status,
   ariaLabel,
   toolbar,
@@ -51,6 +61,7 @@ export default function CollectionView({
   rowControls,
   renderRow,
   headBefore,
+  ranked,
   rowActionsAvailable = true,
   order,
   collectionBusy,
@@ -60,7 +71,7 @@ export default function CollectionView({
   layout = "Rows",
 }: {
   readonly returnScope: string;
-  readonly rows: readonly CollectionRowView[];
+  readonly rows: readonly Row[];
   readonly status: "loading" | "error" | "ready";
   readonly ariaLabel: string;
   readonly toolbar?: ReactNode;
@@ -69,8 +80,9 @@ export default function CollectionView({
   readonly empty?: ReactNode;
   readonly footer?: ReactNode;
   readonly rowControls?: Readonly<Record<string, ReactNode>>;
-  readonly renderRow?: (props: CollectionViewRowRenderProps) => ReactNode;
-  readonly headBefore?: (row: CollectionRowView) => ReactNode;
+  readonly renderRow?: (props: CollectionViewRowRenderProps<Row>) => ReactNode;
+  readonly headBefore?: (row: Row) => ReactNode;
+  readonly ranked?: { source: RankedIndex; headSamples: ReadonlyMap<string, ReactNode>; headAt(rank: number): ReactNode };
   readonly rowActionsAvailable?: boolean;
   readonly order?: OrderPresentation;
   readonly collectionBusy?: boolean;
@@ -80,7 +92,7 @@ export default function CollectionView({
   readonly geometry?: IndexGeometry | null;
   readonly layout?: "Rows" | "Wall";
 }) {
-  if (headBefore !== undefined && geometry !== null) throw new Error("List heads require mounted rows");
+  if (headBefore !== undefined && order !== undefined) throw new Error("Manual order cannot contain list heads");
   if (layout === "Wall" && geometry !== null) throw new Error("Wall requires mounted cells");
   if (layout === "Wall" && headBefore !== undefined) throw new Error("Wall cannot contain list heads");
   if (layout === "Wall" && order !== undefined) throw new Error("Wall cannot contain manual order");
@@ -94,29 +106,91 @@ export default function CollectionView({
     portal: HTMLElement | null;
     departing: boolean;
   } | null>(null);
+  const account = useOptionalAuthenticatedAccount()?.accountId ?? null;
+  const scopeKey = JSON.stringify([account, returnScope, anchorKey ?? null, layout]);
+  const motion = usePaneScrollMotion();
+  const liveHeads = useMemo(() => {
+    const result = new Map<string, ReactNode>();
+    if (headBefore !== undefined) for (const row of incoming) {
+      const head = headBefore(row);
+      if (head != null) result.set(row.id, head);
+    }
+    return result;
+  }, [incoming, headBefore]);
+  const presentation = useMemo(() => ({ scopeKey, rows: incoming, heads: liveHeads, ranked }), [scopeKey, incoming, liveHeads, ranked]);
+  const committed = useRef(presentation);
+  const previous = committed.current;
+  const nextRankedChunk = previous.ranked !== undefined && previous.ranked.source.revision === ranked?.source.revision;
+  const holding = !nextRankedChunk && motion !== "still" && previous.scopeKey === scopeKey && previous.rows.length > 0 && order === undefined && layout === "Rows";
+  const [sizes, setSizes] = useState<{ scopeKey: string; heights: ReadonlyMap<string, number> } | null>(null);
+  const heldSizes = holding && sizes?.scopeKey === scopeKey ? sizes.heights : null;
+  const append = useMemo(() => heldSizes !== null && motion === "travel" && ranked === undefined && previous.ranked === undefined && incoming.length > previous.rows.length &&
+    previous.rows.every((row, index) => row.id === incoming[index].id && previous.heads.has(row.id) === liveHeads.has(row.id)),
+    [heldSizes, motion, incoming, previous, liveHeads, ranked]);
+  const shown = holding && !append ? previous : presentation;
+  // The first hold commit keeps its existing contents until the layout effect records
+  // their sizes. That effect installs reserved slots before the browser paints.
+  const currentRows = holding && heldSizes === null ? previous.rows : incoming;
+  const currentHeads = holding && heldSizes === null ? previous.heads : liveHeads;
+  const shownStatus = holding ? "ready" : status;
+  const rows = shown.rows;
+  const currentById = useMemo(() => new Map(currentRows.map(row => [row.id, row])), [currentRows]);
   const orderedIds = useMemo(() => rows.map(row => row.id), [rows]);
-  const scopeKey = `${returnScope}:${anchorKey ?? ""}`;
+  const samples = shown.ranked?.headSamples ?? shown.heads;
+  const headIds = useMemo(() => [...samples.keys()], [samples]);
+  const headSamples = useMemo(() => [...samples].map(([id, head]) =>
+    <ResourceListHead key={id} sampleFor={id}>{head}</ResourceListHead>), [samples]);
   const scrollport = useCallback(() => listRef.current?.closest<HTMLElement>('[data-pane-content][data-body-mode="standard"]') ?? null, []);
-  const window = useMeasuredIndexWindow({ scopeKey, ids: orderedIds, geometry: status === "ready" ? geometry : null, listRef, scrollport });
+  const window = useMeasuredIndexWindow({ scopeKey, ids: orderedIds, headIds, ranked: shown.ranked?.source, hold: holding,
+    geometry: shownStatus === "ready" ? geometry : null, listRef, scrollport });
   const { rowElement, pin } = window;
   usePaneCollectionGeometry({ scope: returnScope, window });
   const windowed = window.plan.kind !== "Intrinsic";
-  const ready = status !== "loading" && window.plan.kind !== "Measure";
-  const committedIds = useRef(orderedIds);
-  useLayoutEffect(() => { committedIds.current = orderedIds; });
-  const pendingFocus = useRef<{ id: string; selector: string; fallback: HTMLElement | null; release: () => void } | null>(null);
+  const ready = shownStatus !== "loading" && window.plan.kind !== "Measure";
+  const liveIds = useMemo(() => holding ? orderedIds.filter(id => currentById.has(id)) : orderedIds,
+    [holding, orderedIds, currentById]);
+  const committedIds = useRef(liveIds);
+  const plan = window.plan;
+  const count = shown.ranked?.source.count ?? rows.length;
+  useLayoutEffect(() => {
+    committed.current = shown;
+    committedIds.current = liveIds;
+    const list = listRef.current;
+    if (!holding || list === null) {
+      if (sizes !== null) setSizes(null);
+      return;
+    }
+    const measured = new Map(heldSizes);
+    if (heldSizes === null) for (const element of list.querySelectorAll<HTMLElement>(":scope > [data-index-head-sample]")) {
+      measured.set(`head:${element.dataset.indexHeadSample}`, element.getBoundingClientRect().height);
+    }
+    const rowHeight = plan.kind === "Ready" ? plan.height : null;
+    for (const element of list.querySelectorAll<HTMLElement>(":scope > [data-collection-row-id], :scope > [data-index-head-before]")) {
+      const head = element.dataset.indexHeadBefore;
+      const id = head === undefined ? element.dataset.collectionRowId! : `head:${head}`;
+      const uniform = head === undefined ? rowHeight : null;
+      const height = uniform ?? measured.get(id) ?? element.getBoundingClientRect().height;
+      if (uniform === null) measured.set(id, height);
+      element.style.setProperty("--index-held-size", `${height}px`);
+    }
+    if (heldSizes === null || measured.size !== heldSizes.size) setSizes({ scopeKey, heights: measured });
+  }, [shown, liveIds, holding, heldSizes, plan, scopeKey, sizes]);
+  const pendingFocus = useRef<{ id: string; selector: string; previous: readonly string[] | null; fallback: HTMLElement | null; release: () => void } | null>(null);
   const fallbackTarget = useCallback(() => {
     const root = returnScopeRef.current;
     const paneId = root?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
     return root?.closest<HTMLElement>('section[aria-label][tabindex="-1"], [role="region"][aria-label][tabindex="-1"]')
       ?? findPaneLandmarkFocusTarget(paneId) ?? findPaneChromeFocusTarget(paneId);
   }, []);
-  const recover = useCallback((id: string, previous: readonly string[], sameRow = false) => {
-    const selector = "[data-row-focusable]:not([disabled])";
+  const recover = useCallback((id: string, previous: readonly string[], controlSelector?: string | null) => {
     const root = returnScopeRef.current;
     const latest = new Set(committedIds.current);
-    const next = sameRow && latest.has(id) ? id : previous.slice(previous.indexOf(id) + 1).find(candidate => latest.has(candidate));
-    const mounted = next ? rowElement(next)?.querySelector<HTMLElement>(selector) : null;
+    const sparse = committed.current.ranked?.source;
+    // A sparse revision can still contain a row that its current window hasn't loaded.
+    const sameRow = controlSelector !== undefined && (sparse === undefined ? latest.has(id) : sparse.rankOf(id) !== null);
+    const next = sameRow ? id : previous.slice(previous.indexOf(id) + 1).find(candidate => latest.has(candidate));
+    const selector = sameRow ? controlSelector ?? ROW_FOCUS : ROW_FOCUS;
+    const mounted = next ? rowControl(rowElement(next), selector) : null;
     if (mounted?.isConnected) return mounted;
     const fallback = fallbackTarget();
     if (next && root && windowed) {
@@ -127,7 +201,7 @@ export default function CollectionView({
         if (pendingFocus.current?.release === release) pendingFocus.current = null;
       };
       const release = () => { unpin(); fallback?.removeEventListener("blur", cancel); };
-      pendingFocus.current = { id: next, selector, fallback, release };
+      pendingFocus.current = { id: next, selector, previous: sameRow && sparse !== undefined ? previous : null, fallback, release };
       fallback?.addEventListener("blur", cancel);
     }
     return fallback;
@@ -140,8 +214,14 @@ export default function CollectionView({
       if (active !== document.body && active !== pending.fallback) {
         pending.release(); pendingFocus.current = null;
       } else {
-        const target = rowElement(pending.id)?.querySelector<HTMLElement>(pending.selector);
-        if (target) { target.focus({ preventScroll: true }); pending.release(); pendingFocus.current = null; }
+        const target = rowControl(rowElement(pending.id), pending.selector);
+        const sparse = shown.ranked?.source;
+        const missing = sparse === undefined ? !committedIds.current.includes(pending.id) : sparse.rankOf(pending.id) === null;
+        const previous = missing ? pending.previous : null;
+        if (target !== null || previous !== null) {
+          pending.release(); pendingFocus.current = null;
+          (target ?? (previous === null ? null : recover(pending.id, previous)))?.focus({ preventScroll: true });
+        }
       }
     }
     const focus = ownedFocusRef.current;
@@ -153,22 +233,17 @@ export default function CollectionView({
     }
     if (document.activeElement !== document.body || root.closest("[inert]")) return;
     ownedFocusRef.current = null;
-    const remaining = Array.from(root.querySelectorAll<HTMLElement>("[data-collection-row-id]"));
-    const sameRow = remaining.find((item) => item.dataset.collectionRowId === focus.rowId);
-    const control = sameRow?.querySelector<HTMLElement>(focus.controlSelector ?? "[data-row-focusable]:not([disabled])");
-    const sameControl = control?.hasAttribute("data-row-primary-control")
-      ? focusableElements(control)[0] : control;
     const paneId = root.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
-    const target = sameControl ?? sameRow?.querySelector<HTMLElement>("[data-row-focusable]:not([disabled])") ??
-      recover(focus.rowId, focus.orderedIds, true) ?? findPaneLandmarkFocusTarget(paneId);
+    const target = rowControl(rowElement(focus.rowId), focus.controlSelector ?? ROW_FOCUS) ??
+      recover(focus.rowId, focus.orderedIds, focus.controlSelector) ?? findPaneLandmarkFocusTarget(paneId);
     target?.focus({ preventScroll: true });
   });
   const renderCollectionRow = useCallback((
-    row: CollectionRowView,
+    row: Row,
     as?: "li" | "div",
     index?: number,
   ) => {
-    const props: CollectionViewRowRenderProps = {
+    const props: CollectionViewRowRenderProps<Row> = {
       afterRemoval: () => {
         return recover(row.id, orderedIds);
       },
@@ -177,22 +252,25 @@ export default function CollectionView({
       as,
       primaryControl: rowControls?.[row.id],
       rowActionsAvailable,
-      listPosition: windowed && index !== undefined && as !== "div" ? { index, count: orderedIds.length } : undefined,
+      listPosition: windowed && index !== undefined && as !== "div" ? { index, count } : undefined,
     };
     return <IndexRowWindow window={window} id={row.id}>{renderRow ? renderRow(props) : <CollectionRow {...props} />}</IndexRowWindow>;
-  }, [orderedIds, rowControls, rowActionsAvailable, renderRow, recover, window, windowed, layout]);
-  const renderSortableRow = useCallback((row: CollectionRowView) => renderCollectionRow(row, "div"), [renderCollectionRow]);
+  }, [orderedIds, count, rowControls, rowActionsAvailable, renderRow, recover, window, windowed, layout]);
+  const renderSortableRow = useCallback((row: CollectionRowView) => {
+    const current = currentById.get(row.id);
+    return current === undefined ? null : renderCollectionRow(current, "div");
+  }, [currentById, renderCollectionRow]);
   usePaneReturnDescendantReady({
     rootRef: returnScopeRef,
     ready,
   });
-  const slots = window.plan.kind === "Measure" ? [{ id: window.plan.sampleId, index: 0, gapBeforePx: 0 }] : window.plan.slots;
+  const slots = window.plan.kind === "Measure" ? [{ id: window.plan.sampleId, index: 0, headId: undefined, gapBeforePx: 0 }] : window.plan.slots;
   const body =
-    status === "loading" ? (
+    shownStatus === "loading" ? (
       <Ruling />
-    ) : status === "error" ? (
+    ) : shownStatus === "error" ? (
       error
-    ) : rows.length === 0 ? (
+    ) : count === 0 ? (
       empty
     ) : order ? (
       <SortableList
@@ -213,22 +291,26 @@ export default function CollectionView({
         })}
       </ul>
     ) : (
-      <ResourceList ref={listRef} ariaLabel={ariaLabel} busy={collectionBusy || !ready} windowed={windowed} measuring={window.plan.kind === "Measure"}>
+      <ResourceList ref={listRef} ariaLabel={ariaLabel} busy={collectionBusy || !ready} windowed={windowed}
+        measuring={window.plan.kind === "Measure"} held={heldSizes !== null}>
+        {windowed ? headSamples : null}
         {slots.map(slot => {
-          const row = rows[slot.index];
-          const head = row ? headBefore?.(row) : null;
-          return row ? <Fragment key={row.id}>
+          const row = slot.id === undefined ? undefined : currentById.get(slot.id);
+          const head = shown.ranked?.headAt(slot.index) ?? (slot.headId === undefined ? null : currentHeads.get(slot.headId));
+          return <Fragment key={slot.id ?? `gap:${slot.index}`}>
             {slot.gapBeforePx > 0 ? <li role="presentation" aria-hidden="true" style={{ height: slot.gapBeforePx, flexShrink: 0 }} /> : null}
-            {head != null ? <ResourceListHead>{head}</ResourceListHead> : null}
-            {renderCollectionRow(row, undefined, slot.index)}
-          </Fragment> : null;
+            {slot.headId !== undefined ? <ResourceListHead before={slot.headId}>{head}</ResourceListHead> : null}
+            {row !== undefined ? renderCollectionRow(row, undefined, slot.index) :
+              <li role="presentation" aria-hidden="true" data-collection-row-id={slot.id}
+                style={{ blockSize: (slot.id === undefined ? undefined : heldSizes?.get(slot.id)) ?? (window.plan.kind === "Ready" ? window.plan.height : undefined), flexShrink: 0 }} />}
+          </Fragment>;
         })}
         {window.plan.kind === "Ready" && window.plan.tailGapPx > 0 ? <li role="presentation" aria-hidden="true" style={{ height: window.plan.tailGapPx, flexShrink: 0 }} /> : null}
       </ResourceList>
     );
 
   return (
-    <PaneRefreshAnchor identity={`${returnScope}:${anchorKey ?? ""}`} value={rows} ready={status === "ready"}>
+    <PaneRefreshAnchor identity={`${returnScope}:${anchorKey ?? ""}`} value={shown.ranked?.source.revision ?? shown} ready={shownStatus === "ready"}>
     <div
       ref={returnScopeRef}
       data-pane-return-scope={returnScope}
@@ -258,7 +340,7 @@ export default function CollectionView({
         const href = target.getAttribute("href");
         let controlSelector: string | null = null;
         if (target.matches("[data-row-focusable]")) {
-          controlSelector = "[data-row-focusable]:not([disabled])";
+          controlSelector = ROW_FOCUS;
         } else if (target.matches("[data-row-actions-control]")) {
           controlSelector = "[data-row-actions-control]";
         } else if (target.closest("[data-row-primary-control]")) {

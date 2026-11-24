@@ -14,21 +14,18 @@ import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedb
 import { Ruling } from "@/components/feedback/Ruling";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Select from "@/components/ui/Select";
 import PeopleSearch, { personLabel, type Person } from "@/components/users/PeopleSearch";
-import { useServerList, type ListSnapshot, type ServerList } from "@/lib/api/useServerList";
+import { useServerValue, type ServerValue, type Visit } from "@/lib/api/serverState";
 import {
-  invitationsPage,
+  libraryInvitationsIndex,
   invite,
-  membersPage,
+  libraryMembersIndex,
   removeMember,
   revokeInvitation,
   setMemberRole,
   transferOwnership,
   type Library,
-  type LibraryInvitation,
-  type LibraryMember,
   type LibraryRole,
 } from "@/lib/libraries/api";
 import { isApiError, outcomeUnknown } from "@/lib/api/client";
@@ -43,10 +40,15 @@ import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
+import PeopleIndex from "./PeopleIndex";
 import styles from "./LibraryMembers.module.css";
 
-const MEMBERS = definePaneVisitDataKey<ListSnapshot<LibraryMember>>("Library.Members");
-const INVITATIONS = definePaneVisitDataKey<ListSnapshot<LibraryInvitation>>("Library.Invitations");
+type Member = Awaited<ReturnType<typeof libraryMembersIndex>>["items"][number];
+type Invitation = Awaited<ReturnType<typeof libraryInvitationsIndex>>["items"][number];
+const memberKey = (row: Member) => `member:${row.user_id}`;
+const invitationKey = (row: Invitation) => `invitation:${row.id}`;
+const MEMBERS = definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof libraryMembersIndex>>>>("Library.Members");
+const INVITATIONS = definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof libraryInvitationsIndex>>>>("Library.Invitations");
 
 /** A row's pending confirmation: its question and the command it confirms. */
 interface Question {
@@ -91,24 +93,29 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
     return current.id === pane.paneId && current.current_visit.id === pane.visitId && route.id === "library" && route.params.id === id;
   });
   const key = library?.can_manage && open ? id : null;
-  const members = useServerList<LibraryMember>({
-    key: key && `members:${key}`, stale: String(version), pageSize: 100, active, visit: MEMBERS,
-    id: member => member.user_id, fetchPage: (cursor, limit, signal) => membersPage(id, cursor, limit, signal),
+  const members = useServerValue({
+    key: key && `/libraries/${key}/members`, stale: String(version), enabled: active, visit: MEMBERS,
+    load: signal => libraryMembersIndex(id, signal),
   });
-  const invitations = useServerList<LibraryInvitation>({
-    key: key && `invitations:${key}`, stale: String(version), pageSize: 100, active, visit: INVITATIONS,
-    id: invitation => invitation.id, fetchPage: (cursor, limit, signal) => invitationsPage(id, cursor, limit, signal),
+  const invitations = useServerValue({
+    key: key && `/libraries/${key}/invites`, stale: String(version), enabled: active, visit: INVITATIONS,
+    load: signal => libraryInvitationsIndex(id, signal),
   });
+  const denied = [members, invitations].some(read => read.status !== "loading" &&
+    (read.error?.status === 403 || read.error?.status === 404));
+  const opening = members.status === "loading" || invitations.status === "loading";
+  const memberRows = !opening && !denied && members.status === "ready" ? members.data.items : [];
+  const invitationRows = !opening && !denied && invitations.status === "ready" ? invitations.data.items : [];
   const pending = owner.value;
   let observed = false;
   if (pending !== null && !pending.running && pending.unknown > 0) {
     const command = pending.command;
     switch (command.kind) {
-      case "Invite": observed = invitations.fresh && invitations.complete && invitations.items.some(invitation => invitation.id === command.body.id &&
+      case "Invite": observed = invitations.status === "ready" && invitations.fresh && invitationRows.some(invitation => invitation.id === command.body.id &&
         invitation.invitee_user_id === command.body.invitee_user_id && invitation.role === command.body.role &&
         invitation.invitee_email === command.body.invitee_email); break;
-      case "Role": observed = members.fresh && members.complete && members.items.some(member => member.user_id === command.userId && member.role === command.role); break;
-      case "Transfer": observed = members.fresh && members.complete && members.items.some(member => member.user_id === command.userId && member.is_owner); break;
+      case "Role": observed = members.status === "ready" && members.fresh && memberRows.some(member => member.user_id === command.userId && member.role === command.role); break;
+      case "Transfer": observed = members.status === "ready" && members.fresh && memberRows.some(member => member.user_id === command.userId && member.is_owner); break;
       // Pending-only invitation absence does not identify its terminal status.
       // Removed membership could be recreated. Exact accepted replay owns these.
       case "Remove": case "Revoke": break;
@@ -117,7 +124,7 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
   }
   useEffect(() => { if (observed) set(value => value === pending ? null : value); }, [observed, pending, set]);
   async function send(command: Command, previous: Pending | null): Promise<boolean> {
-    if (!mounted.current || !owns() || read() !== previous || previous?.running ||
+    if (denied || !mounted.current || !owns() || read() !== previous || previous?.running ||
       remoteAdmission() === "Checking" || !remoteAttemptAllowed() || !navigator.onLine) return false;
     const key = previous?.key ?? crypto.randomUUID();
     set({ key, command, running: true, unknown: previous?.unknown ?? 0 });
@@ -153,15 +160,15 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
     {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
       resend: { label: "retry", commandKey: `${owner.owner}:${pending.key}:retry`, busy: pending.running,
         run: () => { void send(pending.command, pending); } } })} />;
-  const blocked = pending !== null || admission === "Checking" || !remoteAttemptAllowed() || connectivity === "Offline";
-  return { held, shown: library?.can_manage ? { library, members, invitations, blocked, running: pending?.running === true,
+  const blocked = opening || denied || pending !== null || admission === "Checking" || !remoteAttemptAllowed() || connectivity === "Offline";
+  return { held, shown: library?.can_manage ? { library, members, invitations, memberRows, invitationRows, opening, denied, blocked, running: pending?.running === true,
     run: (command: Command) => send(command, null) } : null };
 }
 
 export type LibraryMembersState = NonNullable<ReturnType<typeof useLibraryMembers>["shown"]>;
 
 export default function LibraryMembers({ state }: { readonly state: LibraryMembersState }) {
-  const { library, members, invitations, blocked, running, run } = state;
+  const { library, members, invitations, memberRows, invitationRows, opening, denied, blocked, running, run } = state;
   const [person, setPerson] = useState<Person | null>(null);
   const [role, setRole] = useState<LibraryRole>("member");
   const [question, setQuestion] = useState<Question | null>(null);
@@ -169,9 +176,6 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
   const triggers = useRef(new Map<string, HTMLElement>());
   const heading = useRef<HTMLHeadingElement>(null);
   const headingId = useId();
-  const memberFeedback = useCollectionReadFeedback({ list: members, unit: { singular: "member", plural: "members" }, waiting: members.status === "loading", outcome: null });
-  const invitationsEmpty = invitations.complete && invitations.items.length === 0;
-  const invitationFeedback = useCollectionReadFeedback({ list: invitations, unit: { singular: "invitation", plural: "invitations" }, waiting: invitations.status === "loading", outcome: invitationsEmpty ? "no pending invitations." : null });
   const trigger = (key: string) => (node: HTMLElement | null) => {
     if (node) triggers.current.set(key, node);
     else triggers.current.delete(key);
@@ -228,9 +232,12 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
     </div>
   );
 
-  /** A cold read waits or fails where its rows would stand; a failed reread over rows says nothing. */
-  const footer = (list: ServerList<unknown>, noun: string) => list.status === "loading" ? <Ruling />
-    : list.status === "failed" ? <Failed error={list.failure?.error} noun={noun} retry={{ run: list.retry, busy: list.running !== null }} /> : null;
+  const footer = (read: ServerValue<unknown>, noun: string) => {
+    if (read.status === "loading") return <Ruling />;
+    const error = read.error;
+    const busy = read.status === "ready" ? read.refreshing : read.retrying;
+    return error === null ? null : <Failed error={error} noun={noun} retry={{ run: read.refetch, busy }} />;
+  };
 
   return (
     <section className={styles.surface} aria-labelledby={headingId}>
@@ -240,7 +247,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
         </h3>
         <p>Manage who can open {library.name}.</p>
       </div>
-      <div className={styles.invite}>
+      {denied ? null : <div className={styles.invite}>
         <PeopleSearch
           context={library.id}
           label="Find an existing Nexus user by name or account email"
@@ -269,12 +276,12 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
             Invite
           </Button>
         </span>
-      </div>
+      </div>}
 
       <div className={styles.section}>
         <h4>People</h4>
-        {members.items.map((member) => {
-          const key = `member:${member.user_id}`;
+        <PeopleIndex rows={memberRows} id={memberKey} pinned={question?.key ?? null} label="people" scope="library:people" render={member => {
+          const key = memberKey(member);
           const name = personLabel(member);
           const ask = (q: Omit<Question, "key">) => () => setQuestion({ key, ...q });
           return (
@@ -351,16 +358,15 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
               )}
             </div>
           );
-        })}
+        }}/>
         {footer(members, "members")}
-        {memberFeedback.notice}
       </div>
 
       <div className={styles.section}>
         <h4>Pending invitations</h4>
-        {invitations.current && invitations.failure === null && invitationsEmpty ? <Fact line={{ fact: "no pending invitations." }} /> : null}
-        {invitations.items.map((invitation) => {
-          const key = `invitation:${invitation.id}`;
+        {!opening && !denied && invitations.status === "ready" && invitations.error === null && invitationRows.length === 0 ? <Fact line={{ fact: "no pending invitations." }} /> : null}
+        <PeopleIndex rows={invitationRows} id={invitationKey} pinned={question?.key ?? null} label="pending invitations" scope="library:invitations" render={invitation => {
+          const key = invitationKey(invitation);
           const name = personLabel({
             display_name: invitation.invitee_display_name,
             email: invitation.invitee_email,
@@ -396,16 +402,13 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
               )}
             </div>
           );
-        })}
+        }}/>
         {footer(invitations, "pending invitations")}
-        {invitationFeedback.notice}
       </div>
       <p className={styles.note}>
         Removing a member closes only this library’s access; they may keep access through another
         library or a direct share.
       </p>
-      {memberFeedback.announcement}
-      {invitationFeedback.announcement}
     </section>
   );
 }

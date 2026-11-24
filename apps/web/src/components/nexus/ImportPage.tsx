@@ -29,7 +29,7 @@ import { apiFetch, type ApiError } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { extractLinks } from "@/lib/extractLinks";
-import { fetchImportPage, type ImportItem } from "@/lib/imports/api";
+import { fetchRecentImports, type ImportItem } from "@/lib/imports/api";
 import { attentionPhrase, importLine } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { ADMIT_LIMIT, useImportCreation, useImportIntake, type IntakeLine } from "@/lib/imports/intake";
@@ -127,8 +127,8 @@ export default function ImportPage({ controller, page, mobile, scrollRef: import
   // justify-polling: the shelf shares Imports' observer and rereads only changed facts.
   const shelfShown = intake.lines.length === 0;
   useEffect(() => shelfShown ? retainObserver() : undefined, [shelfShown, retainObserver]);
-  const shelf = usePaneFreeServerValue({ key: shelfShown && digest !== null ? "import-shelf" : null, stale: `${revision}:${digest}`,
-    load: signal => fetchImportPage("view=Recent", null, 5, signal) });
+  const shelf = usePaneFreeServerValue({ key: shelfShown ? "/imports/recent" : null, stale: `${revision}:${digest}`,
+    load: fetchRecentImports });
 
   const { links } = extractLinks(intake.field, "UrlsOrSoleDomain");
   const rows: Row[] = links.length > 0 ? [{ kind: "Commit", key: "Commit", links }] : [];

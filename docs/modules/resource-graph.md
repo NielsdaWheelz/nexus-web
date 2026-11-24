@@ -67,6 +67,12 @@ references, in the same server transaction. they retain directional meaning and
 are not additional authored membership. no adapter invents attribution,
 replacement quote text or approximate identity matches.
 
+the browser connection index returns ordered admitted edge ids. an explicit
+filter adds an ordered subset matching the admitted label or displayed quote.
+visible detail resolution takes 1–100 distinct edge ids under the same scope,
+rechecks visibility and retains requested order. omitted identities trigger one
+index refresh. the reader map and tool traversal keep their own bounded reads.
+
 ## citations
 
 ordinal citations are source-owned `origin=citation`, `kind=context` facts with

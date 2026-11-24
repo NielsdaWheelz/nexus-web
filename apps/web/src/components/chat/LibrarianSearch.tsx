@@ -7,14 +7,15 @@ import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { ExcerptText } from "@/components/resources/ResourceBody";
-import Button from "@/components/ui/Button";
+import DiscoveryTail from "@/components/collections/DiscoveryTail";
+import { heldDiscoverySlotStyle, nearDiscoveryTail, useDiscoverySlotHeights, useInitialDiscoveryDemand } from "@/lib/search/discoveryBoundary";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useServerList, type ListSnapshot, type ServerList } from "@/lib/api/useServerList";
 import type { ApiJson } from "@/lib/api/wire";
 import { librarianSearchQuery } from "@/lib/panes/indexPaneQuery";
 import { truncatePaneSearchQuery, type PaneQuery } from "@/lib/panes/paneChrome";
 import { publishPaneScroll } from "@/lib/panes/paneScroll";
-import { requirePaneRuntime, usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { requirePaneRuntime, usePaneIsVisible, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
 import { searchHref } from "@/lib/search/searchParams";
@@ -22,7 +23,7 @@ import { searchPrefixTimeoutMs } from "@/lib/search/policy";
 import { useHydratedBrowserTimeZone } from "@/lib/time/browserTimeZone";
 import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
-import { definePaneVisitDataKey, usePaneReturnScrollport, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
+import { definePaneVisitDataKey, PaneRefreshAnchor, usePaneForwardTravel, usePaneReturnScrollport, usePaneScrollMotion, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import styles from "./LibrarianSearch.module.css";
@@ -30,12 +31,13 @@ import styles from "./LibrarianSearch.module.css";
 type Row = ApiJson<"/search", "get">["results"][number];
 const RESULTS = definePaneVisitDataKey<ListSnapshot<Row>>("Librarian.SearchResults");
 const SELECTION = definePaneVisitDataKey<SearchActive>("Librarian.SearchSelection");
+const ATTEMPT = definePaneVisitDataKey<{ key: string; count: number }>("Librarian.SearchAttempt");
 const QUERY_SETTLE_MS = 120;
 
 export function useLibrarianSearch() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "LibrarianSearch");
   const { accountId } = useAuthenticatedAccount();
-  const active = usePaneIsActive();
+  const active = usePaneIsVisible();
   const workspace = useLatestWorkspace();
   const inputRef = useRef<HTMLInputElement>(null);
   // The shell mounts the field after its body; the ref claims entry focus there.
@@ -87,8 +89,15 @@ export function useLibrarianSearch() {
   const query: SearchQuery = { ...emptySearchQuery(), text: applied, requestedKinds: new Set(["messages"]), view: "passages" };
   const eligible = searching && Array.from(applied).length >= 2;
   const key = JSON.stringify([accountId, applied]);
+  const capturedAttempt = useRef<{ key: string; count: number } | null>(null);
+  const restoredAttempt = usePaneVisitData(ATTEMPT, () => capturedAttempt.current);
+  const [attempt, restart] = useState(() => restoredAttempt?.key === key ? restoredAttempt : { key, count: 0 });
+  capturedAttempt.current = attempt;
+  const readKey = `${key}:${attempt.key === key ? attempt.count : 0}`;
+  const settled = text.trim() === applied && !composing;
   const list = useServerList<Row>({
-    key: eligible ? key : null, stale: "", pageSize: 20, drain: false, active: active && eligible,
+    key: eligible ? readKey : null, stale: "", pageSize: 20, active: active && eligible && settled,
+    continuation: () => true, retainPreviousKey: true,
     retry: "capacity", cursorRecovery: "manual", readPolicy: "search:lexical-prefix", prefixTimeoutMs: searchPrefixTimeoutMs,
     visit: RESULTS, id: row => row.item.ref,
     fetchPage: async (cursor, limit, signal) => {
@@ -100,15 +109,23 @@ export function useLibrarianSearch() {
   const restored = usePaneVisitData(SELECTION, () => captured.current);
   const saveSelection = usePaneVisitDataWriter(SELECTION);
   const [selection, setSelection] = useState<SearchActive>(restored);
-  const current = eligible && list.current && text.trim() === applied && !composing;
-  const rows = list.current ? list.items : [];
-  const options = rows.map(row => ({ key: row.item.ref, disabledReason: row.item.activation.href === null ? "message unavailable" : null }));
+  const current = eligible && list.current && settled;
+  const received = list.current || list.shownKey?.startsWith(`${key}:`) ? list.items : [];
+  const motion = usePaneScrollMotion();
+  const presented = useRef({ key, rows: received });
+  const withdrawn = list.failure?.withdrawn === true;
+  const holdingWithdrawal = withdrawn && motion !== "still";
+  const rows = (motion === "seek" || holdingWithdrawal) && presented.current.key === key ? presented.current.rows : received;
+  useLayoutEffect(() => { presented.current = { key, rows }; }, [key, rows]);
+  const canContinue = current && !list.complete && list.failure === null;
+  const options = withdrawn ? [] : rows.map(row => ({ key: row.item.ref, disabledReason: row.item.activation.href === null ? "message unavailable" : null }));
   const selected = reconcileSearchActive({ context: key, admitted: current, options, initialKey: rows[0]?.item.ref ?? null, active: selection });
   if (selected !== selection) setSelection(selected);
   captured.current = selected;
   const navigation = useSearchOptions<HTMLDivElement>({
     listId: `${id}-messages`, label: "matching messages", open: current, options, activeKey: selected?.key ?? null,
     onActiveChange: ref => setSelection({ context: key, key: ref }), allowShiftEnter: true,
+    onForward: () => { if (canContinue) list.fetchAhead(); },
     onActivate: (ref, event) => {
       if (!current) return;
       const row = rows.find(row => row.item.ref === ref);
@@ -126,7 +143,12 @@ export function useLibrarianSearch() {
   const pending = eligible && !list.current && list.failure === null;
   const feedback = useCollectionReadFeedback({ list, unit: { singular: "message", plural: "messages" }, waiting: pending,
     outcome: list.current ? `${rows.length} messages shown.` : null });
-  const refresh = async () => { await list.refetch(); return null; };
+  const rejected = list.failure?.error.code === "E_INVALID_CURSOR" || list.failure?.error.code === "E_REPEATED_CURSOR";
+  const refresh = async () => {
+    if (rejected) restart(value => ({ key, count: value.key === key ? value.count + 1 : 1 }));
+    else await list.refetch();
+    return null;
+  };
   const controls: PaneQuery = { kind: "Collation", collation: {
     dimensions: [], order: null, reset: null,
     words: {
@@ -156,17 +178,20 @@ export function useLibrarianSearch() {
   return {
     searching, query: controls, ready: !eligible || list.current || list.failure !== null, refresh,
     content: searching ? <LibrarianSearchResults query={applied} eligible={eligible} list={list} current={current}
+      canContinue={canContinue} refresh={() => { void refresh().catch(() => {}); }} rows={rows} holdingWithdrawal={holdingWithdrawal} moving={motion !== "still"}
       navigation={navigation} announcement={feedback.announcement} /> : null,
   };
 }
 
-function LibrarianSearchResults({ query, eligible, list, current, navigation, announcement }: {
+function LibrarianSearchResults({ query, eligible, list, current, canContinue, refresh, rows, holdingWithdrawal, moving, navigation, announcement }: {
   query: string; eligible: boolean; list: ServerList<Row>; current: boolean;
+  canContinue: boolean; refresh: () => void; rows: readonly Row[]; holdingWithdrawal: boolean; moving: boolean;
   navigation: ReturnType<typeof useSearchOptions<HTMLDivElement>>;
   announcement: ReturnType<typeof useCollectionReadFeedback>["announcement"];
 }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "LibrarianSearchResults");
   const content = useRef<HTMLDivElement>(null);
+  const slotHeights = useDiscoverySlotHeights(content, rows, moving, list.failure?.withdrawn === true);
   usePaneReturnScrollport({ enabled: true, scrollportRef: navigation.listRef, contentRef: content,
     continuityKey: `${runtime.visitId}:${runtime.routeKey}` });
   useLayoutEffect(() => {
@@ -174,22 +199,36 @@ function LibrarianSearchResults({ query, eligible, list, current, navigation, an
     if (port) return publishPaneScroll(port);
   }, [navigation.listRef]);
   const timeZone = useHydratedBrowserTimeZone();
-  const rows = list.current ? list.items : [];
+  usePaneForwardTravel(port => { if (canContinue && nearDiscoveryTail(port)) list.fetchAhead(); });
+  useInitialDiscoveryDemand({ key: query, current: list.current, active: canContinue && list.active,
+    viewport: () => navigation.listRef.current, run: list.fetchAhead });
+  const failure = list.failure?.error ?? null;
+  const rejected = failure?.code === "E_INVALID_CURSOR";
+  const repeated = failure?.code === "E_REPEATED_CURSOR";
+  const failureNotice = failure !== null ? <Fact line={{ fact: list.current ? "couldn’t load more messages." : "couldn’t search messages.",
+    reason: repeated ? "the source repeated its continuation." : rejected ? "the ranking has changed." : undefined }}
+    verbs={[{ label: rejected || repeated ? "refresh results" : "retry", commandKey: "search librarian", busy: list.running !== null,
+      run: rejected || repeated ? refresh : list.retry }]} /> : null;
   return <div ref={navigation.listRef} className={styles.scrollport}>
+    <PaneRefreshAnchor identity={query} value={rows} ready={current}>
     <div ref={content} className={styles.searchResults} data-pane-return-scope="Librarian.Search">
       {!eligible ? <Fact line={{ fact: "type at least two characters" }} />
-        : list.failure ? <Fact line={{ fact: "couldn’t search messages." }} verbs={[{ label: "retry", commandKey: "search librarian", busy: list.running !== null,
-          run: list.failure.error.code === "E_INVALID_CURSOR" ? () => { void list.refetch(); } : list.retry }]} />
-        : !list.current ? <Ruling />
-        : rows.length === 0 ? <Fact line={{ fact: `no messages match “${query}”` }} /> : null}
+        : holdingWithdrawal ? null
+        : !list.current ? failureNotice ?? (rows.length === 0 ? <Ruling /> : null)
+        : list.complete && rows.length === 0 ? <Fact line={{ fact: `no messages match “${query}”` }} /> : null}
       <div {...navigation.listProps} className={styles.rows} aria-busy={eligible && !list.current || undefined}>
-        {rows.map(row => <MessageResult key={row.item.ref} row={row} current={current}
-          option={navigation.optionProps(row.item.ref)} timeZone={timeZone} />)}
+        {rows.map(row => holdingWithdrawal
+          ? <div key={row.item.ref} data-collection-row-id={row.item.ref}
+            style={heldDiscoverySlotStyle(slotHeights.get(row.item.ref) ?? null)} aria-hidden="true" />
+          : <MessageResult key={row.item.ref} row={row} current={current}
+            option={navigation.optionProps(row.item.ref)} timeZone={timeZone} />)}
       </div>
-      {list.current && !list.complete && list.failure === null ? <Button disabled={list.running !== null || !current}
-        aria-busy={list.running === "More" || undefined} onClick={list.more}>show more messages</Button> : null}
+      {list.current ? failureNotice : null}
+      <DiscoveryTail label="continue searching messages" action={canContinue ? list.more : null}
+        busy={list.running !== null} show={rows.length === 0 || list.continuationNeedsAction} />
       {announcement}
     </div>
+    </PaneRefreshAnchor>
   </div>;
 }
 

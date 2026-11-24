@@ -6,26 +6,26 @@ Published browser captures and pending bound captures share the media import; lo
 uploads keep their session import after publication.
 Its source, search and metadata obligations are independent; the
 server classifies the import over them and names the one that speaks for it (`primary`).
-`ImportListQuery.normalized()` is the only filter identity a list cursor is bound to.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal, Self
+from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
 from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.schemas.collection_index import CollectionIndex
+from nexus.schemas.feed import OpmlImportSummaryOut
 from nexus.schemas.import_history import HistoryEntry, SafeFailureCode, Stage
 from nexus.schemas.media_sources import EmailProvenance, SourceProgress
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.source_issues import SourceIssue
 
-ImportView = Literal["Register", "Recent"]
 Classification = Literal["Active", "NeedsAttention", "Complete"]
 WaitingReason = Literal["Queue", "Capacity", "RetryBackoff", "AwaitingUploadConfirmation"]
 SourceRecoveryInput = Literal["StoredSource", "RefetchSource"]
@@ -112,9 +112,19 @@ class ImportItem(_Wire):
     source_issue_count: int
 
 
-class ImportPage(_Wire):
-    items: list[ImportItem]
-    next_cursor: str | None
+class ImportArrival(_Wire):
+    """An accepted arrival names a media occurrence; its body loads only when visible."""
+
+    ref: str
+    media_id: UUID
+    title: str
+    media_kind: MediaKind
+    arrived_at: datetime
+    classification: Literal["Complete"]
+
+
+class ImportIndex(CollectionIndex[ImportItem | ImportArrival]):
+    batches: list[OpmlImportSummaryOut]
 
 
 class ImportSummary(_Wire):
@@ -152,48 +162,25 @@ class ImportDetail(_Wire):
     email_source: EmailProvenance | None
 
 
-class HistoryPage(_Wire):
+class ImportHistory(_Wire):
     entries: list[HistoryEntry]
-    next_cursor: str | None
 
 
-def _instant(value: object, name: str) -> datetime | None:
+def parse_import_instant(value: object, name: str) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, str):
-        value = datetime.fromisoformat(value)
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError as error:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, f"Invalid {name} instant"
+            ) from error
     if not isinstance(value, datetime):
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"{name} must carry an offset")
     if value.utcoffset() is None:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"{name} must carry an offset")
     return value.astimezone(UTC)
-
-
-class ImportListQuery(_Wire):
-    """One register window or the viewer's own recent acquisitions."""
-
-    view: ImportView
-    arrived_from: datetime | None = Field(default=None, alias="from")
-    cursor: str | None = None
-    limit: int = Field(default=50, ge=1, le=100)
-
-    @field_validator("arrived_from", mode="before")
-    @classmethod
-    def _parse_from(cls, value: object) -> datetime | None:
-        return _instant(value, "from")
-
-    @model_validator(mode="after")
-    def _normalize(self) -> Self:
-        if (self.view == "Register") != (self.arrived_from is not None):
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Register requires from; Recent refuses it",
-            )
-        return self
-
-    def normalized(self) -> dict[str, object]:
-        """The window identity a list cursor is bound to."""
-        return self.model_dump(mode="json", exclude={"cursor", "limit"})
 
 
 class ImportDismissalInput(_Wire):
@@ -203,7 +190,7 @@ class ImportDismissalInput(_Wire):
     @field_validator("through", mode="before")
     @classmethod
     def _parse_through(cls, value: object) -> datetime | None:
-        return _instant(value, "through")
+        return parse_import_instant(value, "through")
 
 
 class DismissImportsRequest(_Wire):

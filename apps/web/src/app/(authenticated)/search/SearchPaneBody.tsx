@@ -1,6 +1,7 @@
 "use client";
 import { excerptTextParts } from "@nexus/authored/excerpt";
 import { authoredItem } from "@/lib/notes/presentation";
+import { AuthoredContinuationCursorError } from "@/lib/notes/hooks";
 import ExcerptDisclosure from "@/components/resources/ExcerptDisclosure";
 import ResourceBody from "@/components/resources/ResourceBody";
 
@@ -23,7 +24,9 @@ import { ExcerptText } from "@/components/resources/ResourceBody";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
-import Button from "@/components/ui/Button";
+import DiscoveryTail from "@/components/collections/DiscoveryTail";
+import { writeScrollPosition } from "@/lib/collections/scrollMotion";
+import { heldDiscoverySlotStyle, nearDiscoveryTail, useDiscoverySlotHeights, useInitialDiscoveryDemand } from "@/lib/search/discoveryBoundary";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { assertNever } from "@/lib/assertNever";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -39,7 +42,7 @@ import { effectiveSearchKinds, emptySearchQuery, searchHasSemanticFamily, type S
 import { fetchSearchResultPage, type SearchPhase } from "@/lib/search/searchApi";
 import { searchHref, searchQueryFromParams, searchQueryToParams } from "@/lib/search/searchParams";
 import { searchPrefixTimeoutMs } from "@/lib/search/policy";
-import { definePaneVisitDataKey, usePaneReturnReady, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
+import { definePaneVisitDataKey, PaneRefreshAnchor, usePaneForwardTravel, usePaneReturnReady, usePaneScrollMotion, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
 import { localSearchApplies, useLocalSearch, type LocalMatch } from "@/lib/search/localSearch";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { resourceType, resourceTypeName } from "@/lib/resources/type";
@@ -67,6 +70,24 @@ const HYBRID_VISIT = definePaneVisitDataKey<ListSnapshot<Row, Metadata>>("Search
 const UNFIXABLE = ["E_INVALID_REQUEST", "E_NOT_FOUND"];
 const VIEWS = [{ value: "resources", label: "resources" }, { value: "passages", label: "passages" }];
 const phaseRank = { lexical: 0, hybrid: 1 };
+const GROUPS = [
+  { key: "exact", label: "exact matches" },
+  { key: "primary", label: "resources" },
+  { key: "saved", label: "saved passages" },
+  { key: "inside", label: "inside sources" },
+] as const;
+
+function resourceGroup(row: Row): number | null {
+  if (!("section" in row)) return null;
+  const { section } = row;
+  switch (section) {
+    case "primary": return row.name_match === "exact" ? 0 : 1;
+    case "saved": return 2;
+    case "inside": return 3;
+    default: return assertNever(section);
+  }
+}
+
 /** What the last key showed, rows or none, so the next key can stand them dimmed until it adopts. */
 type Shown = { readonly accountId: string; readonly view: SearchQuery["view"]; readonly rows: readonly Row[] };
 
@@ -115,11 +136,16 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
   const visible = usePaneIsVisible();
   const active = usePaneIsActive();
   const root = useRef<HTMLDivElement>(null);
+  const remoteTail = useRef<HTMLDivElement>(null);
+  const remoteRows = useRef<HTMLDivElement>(null);
+  const localTail = useRef<HTMLDivElement>(null);
+  const motion = usePaneScrollMotion();
+  const viewport = () => root.current?.closest<HTMLElement>("[data-pane-content]") ?? null;
   const key = searchQueryToParams(query).toString();
   const stamp = `${useMediaQueryRevision()}:${useChangeStamp("Notes", "NoteBodies", "Metadata")}`;
   const captured = useRef<SearchVisit | null>(null);
   const restored = usePaneVisitData(VISIT, useCallback(() => captured.current, []));
-  const [visit, setVisit] = useState<SearchVisit>(() => restored?.accountId === accountId ? restored : {
+  const [visit, setVisit] = useState<SearchVisit>(() => restored?.accountId === accountId && restored.key === key ? restored : {
     accountId, key, adopted: null, latched: false, attempts: { lexical: 0, hybrid: 0 }, selection: null, cursorRejected: false,
   });
   const latched = useRef(visit.latched);
@@ -128,7 +154,7 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
   if (wasVisible.current && !visible) returning.current = true;
   wasVisible.current = visible;
   const [refreshPhase, setRefreshPhase] = useState<SearchPhase | null>(null);
-  const [refreshError, setRefreshError] = useState<{ phase: SearchPhase; error: ApiError; shownStamp: string; failedStamp: string } | null>(null);
+  const [refreshError, setRefreshError] = useState<{ phase: SearchPhase; error: ApiError; shownStamp: string; failedStamp: string; withdrawn: boolean } | null>(null);
   captured.current = visit;
   const blank = query.text.trim().length === 0 && (
     query.view === "passages" || query.formats.length + query.authors.length + query.roles.length === 0
@@ -150,7 +176,8 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
   const lexical = useServerList<Row, Metadata>({
     key: enabled ? lexicalGeneration.key : null,
     stale: visit.adopted?.key === lexicalGeneration.key ? selectedStamp("lexical") : lexicalGeneration.stamp,
-    pageSize: 20, drain: false, retainPreviousKey: true, active: active && enabled, visit: LEXICAL_VISIT,
+    pageSize: 20, retainPreviousKey: true, active: enabled, visit: LEXICAL_VISIT,
+    continuation: row => !row.item.authored_by_viewer,
     retry: "capacity", cursorRecovery: "manual", readPolicy: "search:lexical-prefix", prefixTimeoutMs: searchPrefixTimeoutMs,
     id: row => row.item.ref,
     fetchPage: async (cursor, limit, signal) => {
@@ -161,7 +188,8 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
   const hybrid = useServerList<Row, Metadata>({
     key: hybridWanted ? hybridGeneration.key : null,
     stale: visit.adopted?.key === hybridGeneration.key ? selectedStamp("hybrid") : hybridGeneration.stamp,
-    pageSize: 20, drain: false, retainPreviousKey: true, active: active && hybridWanted, visit: HYBRID_VISIT,
+    pageSize: 20, retainPreviousKey: true, active: hybridWanted, visit: HYBRID_VISIT,
+    continuation: row => !row.item.authored_by_viewer,
     retry: "capacity", cursorRecovery: "manual", readPolicy: "search:hybrid-prefix", prefixTimeoutMs: searchPrefixTimeoutMs,
     id: row => row.item.ref,
     fetchPage: async (cursor, limit, signal) => {
@@ -170,6 +198,8 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
     },
   });
   const selected = visit.adopted?.phase === "hybrid" ? hybrid : lexical;
+  const withdrawn = selected.failure?.withdrawn === true || refreshError?.withdrawn === true;
+  const holdingWithdrawal = withdrawn && motion !== "still";
   // A phase's failure stands through its retry, so its `retry` keeps focus while busy.
   const [incidents, setIncidents] = useState<{key: string; lexical: ApiError | null; hybrid: ApiError | null}>({key, lexical: null, hybrid: null});
   const previousIncidents = incidents.key === key ? incidents : {key, lexical: null, hybrid: null};
@@ -181,14 +211,35 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
   if (incidents.key !== key || incidents.lexical !== phaseIncidents.lexical || incidents.hybrid !== phaseIncidents.hybrid) setIncidents(phaseIncidents);
 
   // remote search reads synchronized projections, including a server copy of authored text.
-  const results = (visit.adopted === null ? [] : selected.items).filter(row => !row.item.authored_by_viewer)
-    .map(row => "matching_passage" in row && row.matching_passage && row.matching_passage.item.authored_by_viewer ? { ...row, matching_passage: null } : row);
+  const incoming = useMemo(() => (visit.adopted === null || withdrawn ? [] : selected.items).filter(row => !row.item.authored_by_viewer)
+    .map(row => "matching_passage" in row && row.matching_passage && row.matching_passage.item.authored_by_viewer ? { ...row, matching_passage: null } : row),
+  [visit.adopted, selected.items, withdrawn]);
+  const presented = useRef(incoming);
+  const results = useMemo(() => {
+    if (motion === "still") return incoming;
+    const previous = presented.current;
+    if (motion !== "travel" || incoming.length <= previous.length
+      || !previous.every((row, index) => incoming[index].item.ref === row.item.ref)) return previous;
+    const additions = incoming.slice(previous.length);
+    if (query.view === "resources") {
+      const lastGroup = previous.reduce((group, row) => Math.max(group, resourceGroup(row) ?? 0), 0);
+      if (additions.some(row => (resourceGroup(row) ?? 0) < lastGroup)) return previous;
+    }
+    return [...previous, ...additions];
+  }, [incoming, motion, query.view]);
+  useLayoutEffect(() => { presented.current = results; }, [results]);
+  const slotHeights = useDiscoverySlotHeights(remoteRows, results, motion !== "still", withdrawn);
+  const remoteRefs = useMemo(() => new Set(results.map(row => row.item.ref)), [results]);
   const localApplies = localSearchApplies(query);
-  const [localPages, setLocalPages] = useState(1);
-  const local = useLocalSearch(localApplies ? query.text.trim() : null, query.requestedKinds, localPages, query.scope);
+  const local = useLocalSearch(localApplies ? query.text.trim() : null, query.requestedKinds, query.scope, visible, remoteRefs);
+  const localRows = useMemo(() => (local.matches ?? []).filter(match => match.resource.authored_by_viewer || !remoteRefs.has(match.resource.ref)), [local.matches, remoteRefs]);
+  const presentedLocal = useRef(localRows);
+  // Scope withdrawal overrides a held presentation.
+  const shownLocal = motion === "still" || local.scopeAvailable === false ? localRows : presentedLocal.current;
+  useLayoutEffect(() => { presentedLocal.current = shownLocal; }, [shownLocal]);
   const list = selected;
   const actionFacts = useFeedActionFacts({ scope: `Search:${key}`,
-    targets: results.flatMap(row => {
+    targets: withdrawn ? [] : results.flatMap(row => {
       const ref = parseResourceRef(row.item.ref);
       return (ref?.scheme === "podcast" || ref?.scheme === "feed") && row.item.preview.body.kind === "named" && !row.item.missing
         ? [{ kind: "Canonical" as const, feed_id: ref.id }] : [];
@@ -206,9 +257,14 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
         : !list.fresh || list.running !== null ? { kind: "Resolving" } : null),
     };
   };
-  const afterRemoval = (following: readonly Row[]) => () => following.map(row =>
-    root.current?.querySelector<HTMLElement>(`[data-resource-ref="${CSS.escape(row.item.ref)}"] [data-row-focusable]`)).find(element => element !== null && element !== undefined)
-    ?? findPaneLandmarkFocusTarget(paneId);
+  const afterRemoval = (group: readonly Row[], index: number) => () => {
+    for (let next = index + 1; next < group.length; next++) {
+      const focus = root.current?.querySelector<HTMLElement>(`[data-resource-ref="${CSS.escape(group[next].item.ref)}"] [data-row-focusable]`);
+      if (focus) return focus;
+    }
+    return findPaneLandmarkFocusTarget(paneId);
+  };
+  const repeatedCursor = selected.failure?.error.code === "E_REPEATED_CURSOR";
   const rejectedCursor = visit.cursorRejected || selected.failure?.error.code === "E_INVALID_CURSOR";
   useLayoutEffect(() => {
     if (selected.failure?.error.code === "E_INVALID_CURSOR" && !visit.cursorRejected) setVisit(current => ({ ...current, cursorRejected: true }));
@@ -229,7 +285,7 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
     if (explicit) {
       latched.current = false;
       const port = root.current?.closest<HTMLElement>("[data-pane-content]");
-      if (port) port.scrollTop = 0;
+      if (port) writeScrollPosition(port, 0);
       window.getSelection()?.removeAllRanges();
       inputRef.current?.focus({ preventScroll: true });
     }
@@ -237,19 +293,19 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
     setRefreshError(null);
   }, [inputRef, key]);
   useLayoutEffect(() => {
-    if (!enabled || candidate === null || !currentCandidate) return;
+    if (!enabled || candidate === null || !currentCandidate || motion !== "still") return;
     const replacingSame = staged?.key === candidate.key && visit.adopted?.phase === candidate.phase;
     if (staged?.key === candidate.key && (replacingSame || !latched.current)) {
       adopt(candidate, true);
     } else if (visit.adopted === null || (!returning.current && !latched.current && !visit.cursorRejected && phaseRank[candidate.phase] > phaseRank[visit.adopted.phase])) {
       adopt(candidate, false);
     }
-  }, [adopt, candidate, currentCandidate, enabled, staged, visit.adopted, visit.cursorRejected]);
+  }, [adopt, candidate, currentCandidate, enabled, motion, staged, visit.adopted, visit.cursorRejected]);
   useEffect(() => {
     if (refreshPhase === null) return;
     const list = refreshPhase === "hybrid" ? hybrid : lexical;
     if (list.failure === null || list.running !== null) return;
-    setRefreshError({ phase: refreshPhase, error: list.failure.error, shownStamp: list.shownStale ?? stamp, failedStamp: stamp });
+    setRefreshError({ phase: refreshPhase, error: list.failure.error, shownStamp: list.shownStale ?? stamp, failedStamp: stamp, withdrawn: list.failure.withdrawn });
     setRefreshPhase(null);
   }, [refreshPhase, lexical, hybrid, stamp]);
 
@@ -316,21 +372,31 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
   const unfixable = [visit.adopted?.phase === "hybrid" ? undefined : lexical.failure?.error, hybrid.failure?.error, refreshError?.error].find(error => error !== undefined && UNFIXABLE.includes(error.code));
   const prefixFailure = visit.adopted !== null && failure !== null;
   const pending = enabled && visit.adopted?.phase !== "hybrid" && (lexicalState === "pending" || hybridState === "pending");
-  const count = results.length;
+  const count = results.length + shownLocal.length;
+  const canContinue = enabled && visit.adopted !== null && selected.current && !selected.complete
+    && selected.failure === null && !rejectedCursor && refreshPhase === null;
+  const forward = (port: HTMLElement) => {
+    if (canContinue && nearDiscoveryTail(port, remoteTail.current)) { interact(); selected.fetchAhead(); }
+    if (local.canContinue && nearDiscoveryTail(port, localTail.current)) local.fetchAhead();
+  };
+  usePaneForwardTravel(forward);
+  useInitialDiscoveryDemand({ key, current: visit.adopted !== null && selected.current,
+    active: !localApplies && canContinue && selected.active, viewport, run: selected.fetchAhead });
+  const refreshValue = useMemo(() => [results, shownLocal], [results, shownLocal]);
   // Until this key adopts, the last key's rows stand, dimmed and inert.
   const [previous] = useState(() => shown.current?.accountId === accountId && shown.current.view === query.view ? shown.current.rows : []);
   // Text failed, unless related matches are still on their way: then it is a wait.
   const textFailed = visit.adopted === null && phaseIncidents.lexical !== null && !(hybridState === "pending" && phaseIncidents.hybrid === null);
-  const stale = visit.adopted === null && pending && unfixable === undefined && !textFailed;
+  const stale = visit.adopted === null && pending && unfixable === undefined && !textFailed && !withdrawn;
   const rows = stale ? previous : results;
   // Rows, or none where a fact stands instead: what the next key may stand dimmed.
   useLayoutEffect(() => {
-    shown.current = { accountId, view: query.view, rows };
+    shown.current = { accountId, view: query.view, rows: withdrawn ? [] : rows };
   });
   const filtered = query.requestedKinds !== null || query.formats.length + query.authors.length + query.roles.length > 0 || query.scope !== "all";
   const clearFilters: Verbs = [{ label: "clear filters", commandKey: "clear filters", run: () => commit({ ...emptySearchQuery(), text: query.text, view: query.view }) }];
   const noun = query.view === "passages" ? "passages" : "results";
-  const readFeedback = useCollectionReadFeedback({ list: rejectedCursor ? { ...selected, retry: refreshResults } : selected, unit: query.view === "passages" ? { singular: "passage", plural: "passages" } : { singular: "result", plural: "results" }, waiting: false, outcome: null });
+  const readFeedback = useCollectionReadFeedback({ list: repeatedCursor || rejectedCursor || withdrawn ? { ...selected, failure: null } : selected, unit: query.view === "passages" ? { singular: "passage", plural: "passages" } : { singular: "result", plural: "results" }, waiting: false, outcome: null });
   const show = held && candidate !== null && !rejectedCursor && !prefixFailure ? () => { returning.current = false; adopt(candidate, true); } : null;
   usePaneReturnReady(blank || unsupported || visit.adopted !== null || unfixable !== undefined || (lexicalState === "failed" && hybridState !== "pending"));
   usePaneChrome({
@@ -342,19 +408,10 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
         commit({ ...query, view: value });
       },
     },
-    query: { kind: "Collation", collation: { ...collation, words: {
-      ...collation.words,
-      notice: show === null ? null : { kind: "Ready", line: { fact: "results with related matches are ready." },
-        verbs: [{ label: "show", commandKey: "show related matches", run: show }] },
-    } } },
+    query: { kind: "Collation", collation },
     header: { kind: "Section", meta: count ? { kind: "Count", value: count, unit: query.view === "passages" ? "passage" : "result" } : { kind: "None" } },
   });
-  const sections = [
-    { key: "exact", label: "exact matches", rows: rows.filter(row => "section" in row && row.section === "primary" && row.name_match === "exact") },
-    { key: "primary", label: "resources", rows: rows.filter(row => "section" in row && row.section === "primary" && row.name_match !== "exact") },
-    { key: "saved", label: "saved passages", rows: rows.filter(row => "section" in row && row.section === "saved") },
-    { key: "inside", label: "inside sources", rows: rows.filter(row => "section" in row && row.section === "inside") },
-  ];
+  const sections = GROUPS.map((group, index) => ({...group, rows: rows.filter(row => resourceGroup(row) === index)}));
   // Where results stand: the reason there are none, a wait, a failure, or the rows.
   const state = blank ? <Fact line={{ fact: query.view === "passages" ? "type text to find passages in your sources." : "type a name or text to search your nexus." }} />
     : unsupported ? query.view === "passages"
@@ -363,56 +420,79 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
         { label: "any kind", commandKey: "any kind", run: () => commit({ ...query, requestedKinds: null }) },
       ]} />
       : <Fact line={{ fact: "these filters leave no kinds to search." }} verbs={[{ label: "any kind", commandKey: "any kind", run: () => commit({ ...query, requestedKinds: null }) }]} />
+    : withdrawn && !holdingWithdrawal ? <Fact line={{ fact: "this search is no longer available." }} />
     : count > 0 ? null
     : unfixable !== undefined ? <Fact line={{ fact: unfixable.code === "E_INVALID_REQUEST" ? "nexus can’t run this search." : "the item this search is inside isn’t available." }} />
     : textFailed && phaseIncidents.lexical !== null
       ? <Failed error={phaseIncidents.lexical} noun={noun} retry={{ run: retrySearch, busy: lexical.running !== null || hybrid.running !== null }} />
     : visit.adopted === null ? stale && previous.length === 0 ? <Ruling /> : null
     : visit.adopted.phase === "lexical" && hybridState === "pending" ? <Ruling />
-    : visit.adopted.phase === "lexical" && phaseIncidents.hybrid !== null ? <Fact line={{ fact: "no text matches for this search." }} speak={active} />
-    : <Fact line={{ fact: local.matches?.length ? "no other results match this search." : query.view === "passages" ? "no passages match this search." : "no results match this search." }}
-      verbs={filtered ? clearFilters : undefined} speak={active} />;
-  return <div ref={root} data-pane-return-scope="Search.Results" onPointerDownCapture={select} onFocusCapture={select} onKeyDownCapture={interact}>
-    {localApplies ? <LocalResults local={local} remote={results} more={() => setLocalPages(value => value + 1)} /> : null}
+    : selected.complete && failure === null && (!hybridWanted || visit.adopted.phase === "hybrid" || hybrid.complete && hybrid.failure === null && hybrid.items.every(row => row.item.authored_by_viewer))
+      && (!localApplies || local.scopeAvailable === true && local.complete && local.error === null)
+      ? <Fact line={{ fact: query.view === "passages" ? "no passages match this search." : "no results match this search." }}
+        verbs={filtered ? clearFilters : undefined} speak={active} />
+      : null;
+  const renderRow = (row: Row, index: number, group: readonly Row[]) => {
+    const id = `search:${row.item.ref}`;
+    return holdingWithdrawal
+      ? <li key={id} data-collection-row-id={id} style={heldDiscoverySlotStyle(slotHeights.get(id) ?? null)} aria-hidden="true" />
+      : <SearchResult key={id} row={row} selection={visit.selection} podcastSubject={stale ? undefined : podcastFor(row)} afterRemoval={afterRemoval(group, index)} />;
+  };
+  return <PaneRefreshAnchor identity={visit.adopted?.key ?? key} value={refreshValue} ready={enabled && !stale}>
+    <div ref={root} data-pane-return-scope="Search.Results" onPointerDownCapture={select} onFocusCapture={select} onKeyDownCapture={event => {
+      interact();
+      if (!event.shiftKey && ["Tab", "ArrowDown", "PageDown", "End"].includes(event.key)) {
+        const port = viewport();
+        if (port) forward(port);
+      }
+    }}>
+    {localApplies ? <LocalResults local={local} rows={shownLocal} boundary={localTail} /> : null}
     {state}
-    <div key={visit.adopted?.key ?? key} className={stale ? styles.stale : undefined} inert={stale || undefined}>
+    <div ref={remoteRows} key={visit.adopted?.key ?? key} className={stale ? styles.stale : undefined} inert={stale || undefined}>
       {query.view === "resources" ? sections.filter(section => section.rows.length > 0).map(section => <section className={styles.section} key={section.key} aria-label={section.label}>
         <h2 className={styles.sectionHeading}>{section.label}</h2>
         <ResourceList ariaLabel={section.label}>
-          {section.rows.map((row, index) => <SearchResult key={row.item.ref} row={row} selection={visit.selection} podcastSubject={stale ? undefined : podcastFor(row)} afterRemoval={afterRemoval(section.rows.slice(index + 1))} />)}
+          {section.rows.map(renderRow)}
         </ResourceList>
       </section>) : rows.length > 0 ? <ResourceList ariaLabel="Passages">
-        {rows.map((row, index) => <SearchResult key={row.item.ref} row={row} selection={visit.selection} podcastSubject={stale ? undefined : podcastFor(row)} afterRemoval={afterRemoval(rows.slice(index + 1))} />)}
+        {rows.map(renderRow)}
       </ResourceList> : null}
     </div>
+    {show !== null && motion === "still" ? <Fact line={{ fact: "results with related matches are ready." }}
+      verbs={[{ label: "show", commandKey: "show related matches", run: show }]} /> : null}
     {visit.adopted?.phase === "lexical" && phaseIncidents.hybrid !== null && hybrid.failure?.op !== "More" && (unfixable === undefined || count > 0)
       ? <Failed error={phaseIncidents.hybrid} noun="related matches" retry={UNFIXABLE.includes(phaseIncidents.hybrid.code) ? undefined
         : { run: () => { returning.current = false; retryPhase("hybrid"); }, busy: hybrid.running !== null }} />
       : null}
-    {readFeedback.notice}
+    {repeatedCursor ? <Fact line={{ fact: `couldn’t load more ${noun}.`, reason: "the source repeated its continuation." }}
+      verbs={[{ label: "refresh results", commandKey: "refresh results", run: refreshResults, busy: refreshPhase !== null }]} />
+      : rejectedCursor ? <Fact line={{ fact: "the ranking has changed." }}
+        verbs={[{ label: "refresh results", commandKey: "refresh results", run: refreshResults, busy: refreshPhase !== null }]} />
+      : readFeedback.notice}
     {readFeedback.announcement}
-    {visit.adopted !== null && selected.current && !selected.complete && selected.failure === null && !rejectedCursor
-      ? <Button disabled={refreshPhase !== null || selected.running !== null} aria-busy={selected.running === "More" || undefined}
-        onClick={() => { interact(); selected.more(); }}>load more</Button> : null}
-  </div>;
+    <DiscoveryTail boundary={remoteTail} label={`continue searching ${noun}`} action={canContinue ? () => { interact(); selected.more(); } : null}
+      busy={selected.running !== null} show={results.length === 0 || selected.continuationNeedsAction} />
+    </div>
+  </PaneRefreshAnchor>;
 }
 
 /** Literal local matches: canonical label, exact excerpt, exact target. A retained source label
  * yields to the server's own row for the same ref; authored rows are only ever local. */
-function LocalResults({ local, remote, more }: { local: ReturnType<typeof useLocalSearch>; remote: readonly Row[]; more: () => void }) {
+function LocalResults({ local, rows, boundary }: {
+  local: ReturnType<typeof useLocalSearch>; rows: readonly LocalMatch[]; boundary: RefObject<HTMLDivElement | null>;
+}) {
   const runtime = usePaneRuntime();
   if (local.scopeAvailable === false) return <Fact line={{ fact: "can’t search inside this item on this device." }} />;
-  const failure = <AuthoredReadFailure error={local.error} retry={local.retry} pending={local.pending} noun="search results"/>;
-  const remoteRefs = new Set(remote.map(row => row.item.ref));
-  const shown = (local.matches ?? []).filter(match => match.resource.authored_by_viewer || !remoteRefs.has(match.resource.ref));
-  if (!shown.length) return failure;
-  return <>{failure}<section className={styles.section} aria-label="on this device">
+  if (rows.length === 0 && !local.canContinue && local.error === null) return null;
+  return <section className={styles.section} aria-label="on this device" data-pane-return-scope="Search.LocalResults">
     <h2 className={styles.sectionHeading}>on this device</h2>
-    <ResourceList ariaLabel="on this device">
-      {shown.map(match => <LocalResult key={match.resource.ref} match={match} runtime={runtime} />)}
-    </ResourceList>
-    {!local.complete ? <Button aria-busy={local.pending || undefined} onClick={more}>show more from this device</Button> : null}
-  </section></>;
+    {rows.length > 0 ? <ResourceList ariaLabel="on this device">{rows.map(match => <LocalResult key={match.resource.ref} match={match} runtime={runtime} />)}</ResourceList> : null}
+    {local.error instanceof AuthoredContinuationCursorError
+      ? <Fact line={{ fact: "couldn’t load more results on this device.", reason: "the source repeated its continuation." }} />
+      : <AuthoredReadFailure error={local.error} retry={local.retry} pending={local.pending} noun="search results" />}
+    <DiscoveryTail boundary={boundary} label="continue searching on this device" action={local.canContinue && local.error === null ? local.more : null}
+      busy={local.pending} show={rows.length === 0 || local.continuationNeedsAction} />
+  </section>;
 }
 
 function LocalResult({ match, runtime }: { match: LocalMatch; runtime: ReturnType<typeof usePaneRuntime> }) {
@@ -428,7 +508,7 @@ function LocalResult({ match, runtime }: { match: LocalMatch; runtime: ReturnTyp
     {titleProvidesType ? typeLabel : label}
   </ResourceIndexTitle>;
   const activate = (event: Parameters<typeof activateTargetLink>[0]["event"]) => href ? activateTargetLink({ event, runtime, target: { href, labelHint: label } }) : undefined;
-  return <li className={styles.localResult} data-resource-ref={resource.ref}>
+  return <li className={styles.localResult} data-resource-ref={resource.ref} data-collection-row-id={resource.ref}>
     {href ? <a className={styles.localTitle} dir="auto" href={href} aria-label={titleProvidesType ? typeLabel : `${typeLabel}: ${label}`}
       data-workspace-rich-target="true" data-row-focusable onClick={activate} onKeyDown={activate}>{title}</a>
       : <span className={styles.localTitle} dir="auto">{title}</span>}

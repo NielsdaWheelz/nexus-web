@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 from nexus.api.deps import get_generation_catalog
@@ -17,10 +17,11 @@ from nexus.schemas.chat import (
     ChatRunResponse,
     ChatRunRetryRequest,
     ResolveLibrarianAttachmentsRequest,
+    ResolveLibrarianTurnsRequest,
     TimelineOut,
 )
 from nexus.schemas.chat_selection import ChatSelectionOut
-from nexus.schemas.collection_order import OrderRevision
+from nexus.schemas.collection_index import CollectionIndex, parse_index_query
 from nexus.services.chat import admit, reads, references, selection, timeline
 from nexus.services.generation.catalog import Catalog
 from nexus.services.tools.run import Toolbox
@@ -48,23 +49,23 @@ def get_chat_selection(
 
 @router.get("/librarian/messages")
 def get_messages(
+    request: Request,
     viewer: ViewerDep,
     db: RepeatableReadDbSession,
-    before_seq: OrderRevision | None = None,
-    after_seq: OrderRevision | None = None,
     around_message_id: UUID | None = None,
-    limit: Annotated[int, Query(ge=1, le=50)] = 25,
 ) -> Data[TimelineOut]:
+    parse_index_query(request.query_params.multi_items(), domain_keys={"around_message_id"})
     return Data(
-        data=timeline.window(
-            db,
-            viewer_id=viewer.user_id,
-            before_seq=before_seq,
-            after_seq=after_seq,
-            around_message_id=around_message_id,
-            limit=limit,
-        )
+        data=timeline.index(db, viewer_id=viewer.user_id, around_message_id=around_message_id)
     )
+
+
+@router.post("/librarian/turns/resolve")
+def resolve_librarian_turns(
+    body: ResolveLibrarianTurnsRequest, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[CollectionIndex[ChatRunResponse]]:
+    items = timeline.resolve(db, viewer_id=viewer.user_id, run_ids=body.run_ids)
+    return Data(data=CollectionIndex(items=items))
 
 
 @router.post("/chat-runs")

@@ -1085,39 +1085,43 @@ def set_item(
     return retry_serializable(db, "set_library_item", attempt)
 
 
-def library_entry_undo_eligible(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    library_id: UUID,
-    target: EntryTarget,
-    entry_id: UUID,
-    order_revision: int | None,
-) -> bool:
-    """The same exact receipt predicate for assistant history and execution."""
-    if order_revision is None:
-        return False
-    return bool(
-        db.scalar(
-            text(f"""
-        SELECT 1 FROM libraries l
-        JOIN memberships membership ON membership.library_id = l.id
-          AND membership.user_id = :u AND membership.role = 'admin'
-        JOIN library_entries le ON le.library_id = l.id
-        WHERE l.id = :l AND NOT l.is_default AND l.system_key IS NULL
-          AND l.order_revision = :revision AND le.id = :entry
-          AND le.media_id = :target
-          AND NOT {feed_subscription_protected_sql(library_param="l.id", media_param=":target")}
-    """),
-            {
-                "u": viewer_id,
-                "l": library_id,
-                "revision": order_revision,
-                "entry": entry_id,
-                "target": target.id,
-            },
-        )
+@dataclass(frozen=True, slots=True)
+class EntryUndoReceipt:
+    library_id: UUID
+    target_id: UUID
+    entry_id: UUID
+    order_revision: int
+
+
+def eligible_entry_undos(
+    db: Session, viewer_id: UUID, receipts: Sequence[EntryUndoReceipt]
+) -> set[EntryUndoReceipt]:
+    """Prove unchanged named placements for the viewer in one read."""
+    if not receipts:
+        return set()
+    indexes = db.scalars(
+        text(f"""
+            SELECT receipt.ordinality - 1
+            FROM unnest(CAST(:libraries AS uuid[]), CAST(:targets AS uuid[]),
+                        CAST(:entries AS uuid[]), CAST(:revisions AS bigint[]))
+                WITH ORDINALITY AS receipt(library_id, target_id, entry_id, revision, ordinality)
+            JOIN libraries l ON l.id = receipt.library_id AND l.order_revision = receipt.revision
+            JOIN memberships membership ON membership.library_id = l.id
+              AND membership.user_id = :viewer_id AND membership.role = 'admin'
+            JOIN library_entries le ON le.library_id = l.id AND le.id = receipt.entry_id
+              AND le.media_id = receipt.target_id
+            WHERE NOT l.is_default AND l.system_key IS NULL
+              AND NOT {feed_subscription_protected_sql(library_param="l.id", media_param="receipt.target_id")}
+        """),
+        {
+            "viewer_id": viewer_id,
+            "libraries": [item.library_id for item in receipts],
+            "targets": [item.target_id for item in receipts],
+            "entries": [item.entry_id for item in receipts],
+            "revisions": [item.order_revision for item in receipts],
+        },
     )
+    return {receipts[index] for index in indexes}
 
 
 def undo_library_entry_in_current_transaction(
@@ -1138,13 +1142,8 @@ def undo_library_entry_in_current_transaction(
             ApiErrorCode.E_RESOURCE_CONFLICT, "Library changed; filing cannot be undone"
         ) from exc
     require_feed_unfile_allowed(db, library_id=library_id, media_id=target.id)
-    if not library_entry_undo_eligible(
-        db,
-        viewer_id=viewer_id,
-        library_id=library_id,
-        target=target,
-        entry_id=entry_id,
-        order_revision=order_revision,
+    if order_revision is None or not eligible_entry_undos(
+        db, viewer_id, [EntryUndoReceipt(library_id, target.id, entry_id, order_revision)]
     ):
         raise ConflictError(
             ApiErrorCode.E_RESOURCE_CONFLICT, "Library changed; filing cannot be undone"

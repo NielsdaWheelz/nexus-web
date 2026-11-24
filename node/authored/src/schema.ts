@@ -1,6 +1,6 @@
 /** One device schema. Canonical JSON and derived columns commit together; projections
  * are never an independent authority. Both hosts require FTS5 and synchronous FULL. */
-import { PAGE_TITLE_SQL, PAGE_WORK_RANK_SQL } from "./queries.ts";
+import { PAGE_TITLE_SQL, PAGE_WORK_RANK_SQL, WORK_ACTIVE_HABIT, WORK_CAPTURE_ORDER, WORK_DESIGNATED_HABIT, WORK_OPEN_TASK, WORK_HABIT_HISTORY, WORK_HABIT_HISTORY_ONLY, WORK_TASK_DAY, WORK_TASK_HISTORY } from "./queries.ts";
 import { FORMAT_REVISION } from "./types.ts";
 /** Both outboxes read the server's maximum 64 changes in immutable source order;
  * each host then takes the prefix fitting the existing upload byte budget. */
@@ -14,6 +14,7 @@ export const REBUILD_DEVICE_SQL = [
   "DELETE FROM source_stubs",
   "DELETE FROM reference_index",
   "DELETE FROM search_documents",
+  "DELETE FROM literal_fields",
   "DELETE FROM scope_facts",
   "DELETE FROM scope_readings",
   "DELETE FROM scope_intervals",
@@ -30,9 +31,21 @@ export const DEVICE_PRAGMAS = ["PRAGMA foreign_keys = ON", "PRAGMA synchronous =
 export const DEVICE_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS replica_state (singleton INTEGER PRIMARY KEY CHECK(singleton=1), account_id TEXT NOT NULL, replica_id TEXT NOT NULL, command_seq INTEGER NOT NULL, store_revision INTEGER NOT NULL, lamport INTEGER NOT NULL, server_cursor INTEGER NOT NULL, format_revision INTEGER NOT NULL, provisioning_complete INTEGER NOT NULL CHECK(provisioning_complete IN (0,1)))`,
   `CREATE TABLE IF NOT EXISTS resources (ref TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('note','page','highlight')), state_json TEXT NOT NULL, merge_bytes BLOB NOT NULL, projection_json TEXT NOT NULL, visible INTEGER NOT NULL, body_text TEXT, title TEXT, local_date TEXT UNIQUE, source_ref TEXT)`,
+  `CREATE INDEX IF NOT EXISTS resources_visible_refs ON resources(ref) WHERE visible=1`,
+  `CREATE INDEX IF NOT EXISTS resources_daily_pages ON resources(local_date,ref) WHERE kind='page' AND visible=1 AND local_date IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS resources_habit_history ON resources(ref) WHERE ${WORK_HABIT_HISTORY}`,
   `CREATE INDEX IF NOT EXISTS resources_annotations ON resources(source_ref,ref) WHERE visible=1`,
   `CREATE INDEX IF NOT EXISTS resources_register ON resources(${PAGE_TITLE_SQL} COLLATE NOCASE,ref) WHERE kind='page' AND visible=1 AND local_date IS NULL`,
   `CREATE INDEX IF NOT EXISTS resources_worked ON resources(${PAGE_WORK_RANK_SQL},${PAGE_TITLE_SQL} COLLATE NOCASE,ref) WHERE kind='page' AND visible=1 AND local_date IS NULL`,
+  `CREATE TEMP TABLE IF NOT EXISTS captured_index_orders (
+    token TEXT NOT NULL, rank INTEGER NOT NULL, ref TEXT NOT NULL, group_name TEXT NOT NULL,
+    PRIMARY KEY(token,rank), UNIQUE(token,ref)
+  ) WITHOUT ROWID`,
+  `CREATE INDEX IF NOT EXISTS resources_open_tasks ON resources(${WORK_CAPTURE_ORDER}) WHERE ${WORK_OPEN_TASK}`,
+  `CREATE INDEX IF NOT EXISTS resources_task_days ON resources(${WORK_TASK_DAY},${WORK_CAPTURE_ORDER}) WHERE ${WORK_TASK_HISTORY}`,
+  `CREATE INDEX IF NOT EXISTS resources_designated_habits ON resources(${WORK_CAPTURE_ORDER}) WHERE ${WORK_DESIGNATED_HABIT}`,
+  `CREATE INDEX IF NOT EXISTS resources_habit_history_only ON resources(${WORK_CAPTURE_ORDER}) WHERE ${WORK_HABIT_HISTORY_ONLY}`,
+  `CREATE INDEX IF NOT EXISTS resources_active_habits ON resources(${WORK_CAPTURE_ORDER}) WHERE ${WORK_ACTIVE_HABIT}`,
   `CREATE TABLE IF NOT EXISTS links (link_id TEXT PRIMARY KEY, endpoint_a TEXT NOT NULL, endpoint_b TEXT NOT NULL, position_a TEXT, position_b TEXT, visible INTEGER NOT NULL, state_json TEXT NOT NULL, UNIQUE(endpoint_a,endpoint_b), CHECK(endpoint_a<endpoint_b))`,
   `CREATE INDEX IF NOT EXISTS links_a ON links(endpoint_a,position_a,link_id)`,
   `CREATE INDEX IF NOT EXISTS links_b ON links(endpoint_b,position_b,link_id)`,
@@ -43,6 +56,7 @@ export const DEVICE_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS pending_changes (command_seq INTEGER PRIMARY KEY, change_json TEXT NOT NULL, byte_length INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS reference_index (owner_ref TEXT NOT NULL, target_ref TEXT NOT NULL, PRIMARY KEY(owner_ref,target_ref))`,
   `CREATE INDEX IF NOT EXISTS reference_incoming ON reference_index(target_ref,owner_ref)`,
+  `CREATE TABLE IF NOT EXISTS literal_fields (ref TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT NOT NULL,quote TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS search_documents (rowid INTEGER PRIMARY KEY,ref TEXT NOT NULL UNIQUE,text TEXT NOT NULL)`,
   `CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(text,content='search_documents',content_rowid='rowid',tokenize='unicode61 remove_diacritics 2')`,
   `CREATE TRIGGER IF NOT EXISTS search_documents_insert AFTER INSERT ON search_documents BEGIN INSERT INTO search_fts(rowid,text) VALUES(new.rowid,new.text); END`,

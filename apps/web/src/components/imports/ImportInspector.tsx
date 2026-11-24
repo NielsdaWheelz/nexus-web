@@ -1,21 +1,20 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode, type CSSProperties } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
-import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import MetadataResearchActions from "@/components/media/MetadataResearchActions";
 import MetadataResearchResult from "@/components/media/MetadataResearchResult";
 import ButtonLink from "@/components/ui/ButtonLink";
 import Button from "@/components/ui/Button";
+import ResourceList from "@/components/ui/ResourceList";
 import { useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
 import type { ApiError } from "@/lib/api/client";
-import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import { usePaneFreeServerValue, useServerValue, type Visit } from "@/lib/api/serverState";
 import { useObservationDemand } from "@/lib/api/useObservationDemand";
-import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import type { Schema } from "@/lib/api/wire";
 import { SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
-import { fetchImportDetail, fetchImportHistory, type HistoryEntry, type ImportDetail, type ImportItem } from "@/lib/imports/api";
+import { fetchImportDetail, fetchImportHistory, type HistoryEntry, type ImportHistory, type ImportDetail, type ImportItem } from "@/lib/imports/api";
 import { useImportCommands } from "@/lib/imports/commands";
 import { eventLine, importFailureCopy, importLine, momentText, recoveryLine, registerDay, relatedSourceOutcomeLine, speaking, stageLabel, UNAVAILABLE_LINE, UPLOAD_REJECTED_LABEL } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
@@ -25,12 +24,15 @@ import { requirePaneRuntime, usePaneIsActive, usePaneIsPresented, usePaneRuntime
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
-import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
+import { definePaneVisitDataKey, PaneRefreshAnchor } from "@/lib/workspace/paneReturnMemento";
+import { useVariableIndex } from "@/lib/collections/variableIndex";
+import { INDEX_WINDOW_THRESHOLD } from "@/lib/collections/measuredIndexWindow";
 import { assertNever } from "@/lib/assertNever";
 import { ImportCommandControl, ImportObligationActions, useDismissAction } from "./ImportActions";
 import styles from "./ImportInspector.module.css";
 
-const RECORD = definePaneVisitDataKey<ListSnapshot<HistoryEntry>>("Imports.Record");
+const RECORD = definePaneVisitDataKey<Visit<ImportHistory>>("Imports.Record");
+const NO_EVENTS: readonly HistoryEntry[] = [];
 const gone = (error: ApiError | null) => error?.code === "E_IMPORT_NOT_FOUND" || error?.code === "E_INVALID_REQUEST";
 
 function Field({ label, children }: { readonly label: string; readonly children: ReactNode }) {
@@ -44,12 +46,11 @@ function Moment({ value }: { readonly value: string }) {
 
 /** Its surface's lifetime mounts both detail and record; the digest alone wakes them. */
 export default function ImportInspector({ importRef }: { readonly importRef: string }) {
-  const { summary, digest, revision } = useImports();
+  const { digest, revision } = useImports();
   const observing = useObservationDemand(usePaneIsPresented());
-  const detail = usePaneFreeServerValue({ key: digest === null ? null : `/imports/${encodeURIComponent(importRef)}`,
+  const detail = usePaneFreeServerValue({ key: `/imports/${encodeURIComponent(importRef)}`,
     stale: `${revision}:${digest}`, enabled: observing, load: signal => fetchImportDetail(importRef, signal) });
   const active = usePaneIsActive();
-  if (digest === null && summary.status === "failed") return <Failed error={summary.error} noun="imports" retry={{ run: summary.refetch, busy: summary.retrying }} />;
   if (detail.status === "loading") return <Ruling />;
   if (gone(detail.error)) return <Fact line={{ fact: UNAVAILABLE_LINE }} speak={active} />;
   if (detail.status === "failed") return <Failed error={detail.error} noun="import details" retry={{ run: detail.refetch, busy: detail.retrying }} />;
@@ -227,24 +228,47 @@ function attempts(entries: readonly HistoryEntry[]) {
 
 function Record({ importRef }: { readonly importRef: string }) {
   const { digest, revision } = useImports();
-  const active = useObservationDemand(usePaneIsPresented());
-  const history = useServerList({ key: digest === null ? null : `/imports/${importRef}/history`, stale: `${revision}:${digest}`,
-    pageSize: 50, active, visit: RECORD, id: (entry: HistoryEntry) => entry.id,
-    fetchPage: (cursor, limit, signal) => fetchImportHistory(importRef, cursor, limit, signal) });
-  const error = history.failure?.error ?? null;
-  const feedback = useCollectionReadFeedback({ list: history, unit: { singular: "event", plural: "events" }, waiting: false, outcome: null });
+  const observing = useObservationDemand(usePaneIsPresented());
+  const history = useServerValue({ key: `/imports/${encodeURIComponent(importRef)}/history`, stale: `${revision}:${digest}`,
+    enabled: observing, visit: RECORD, load: signal => fetchImportHistory(importRef, signal) });
+  const scope = `ImportRecord:${importRef}`;
+  const readList = useRef<HTMLUListElement>(null);
+  const [focused, setFocused] = useState<string | null>(null);
+  const records = history.status === "ready" && !gone(history.error) ? history.data.entries : NO_EVENTS;
+  const {ids, entries} = useMemo(() => {
+    const entries = new Map<string, string | HistoryEntry>();
+    for (const [id, group] of attempts(records)) {
+      entries.set(`attempt:${id}`, group.label);
+      for (const entry of group.entries) entries.set(entry.id, entry);
+    }
+    return {ids: [...entries.keys()], entries};
+  }, [records]);
+  const pinned = useMemo(() => new Set(focused === null ? [] : [focused]), [focused]);
+  const windowed = records.length > INDEX_WINDOW_THRESHOLD;
+  const index = useVariableIndex({scope, ids, list: readList, estimate: 30, pinned, windowed});
   if (history.status === "loading") return <Ruling />;
-  if (gone(error)) return <Fact line={{ fact: UNAVAILABLE_LINE }} />;
-  if (history.status === "failed") return <Failed error={error} noun="record" retry={{ run: history.retry, busy: history.running !== null }} />;
+  if (gone(history.error)) return <Fact line={{ fact: UNAVAILABLE_LINE }} />;
+  if (history.status === "failed") return <Failed error={history.error} noun="record" retry={{ run: history.refetch, busy: history.retrying }} />;
   return <>
-    {history.failure?.op === "Refetch" ? <Failed error={history.failure.error} noun="updated record" retry={{ run: history.retry, busy: history.running !== null }} /> : null}
-    {history.complete && history.items.length === 0 ? <Fact line={{ fact: "no events recorded." }} /> : null}
-    {attempts(history.items).map(([id, group]) => <section key={id} className={styles.attempt}>
-      <h4>{group.label}</h4><ol className={styles.events}>{group.entries.map(entry => <li key={entry.id}>
-        <span>{eventLine(entry)}</span><Moment value={entry.occurred_at} />
-        <MetadataResearchResult operation={entry.facts.kind === "MetadataOperation" ? entry.facts.operation : null} />
-      </li>)}</ol>
-    </section>)}
-    {feedback.notice}{feedback.announcement}
+    {history.error === null ? null : <Failed error={history.error} noun="updated record" retry={{ run: history.refetch, busy: history.refreshing }} />}
+    {records.length === 0 ? <Fact line={{ fact: "no events recorded." }} /> :
+      <PaneRefreshAnchor identity={scope} value={ids} ready>
+        <div data-pane-return-scope={scope}>
+          <ResourceList ref={readList} ariaLabel="import history" windowed={windowed} height={index.height}>
+            {index.slots.map(({id, rank, top, size}) => {
+              const entry = entries.get(id);
+              const style = top === undefined ? undefined : {position: "absolute", insetInline: 0, top, blockSize: size, overflow: size === undefined ? undefined : "clip"} as CSSProperties;
+              if (entry === undefined) return <li key={id} role="presentation" aria-hidden="true" style={style} />;
+              if (typeof entry === "string") return <li key={id} role="presentation" className={styles.attempt} ref={index.measure} style={style}
+                data-index={rank} data-collection-row-id={id}><h4>{entry}</h4></li>;
+              return <li key={id} className={styles.event} ref={index.measure} style={style} data-index={rank} data-collection-row-id={id}
+                onFocus={() => setFocused(id)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(null); }}>
+                <span>{eventLine(entry)}</span><Moment value={entry.occurred_at} />
+                <MetadataResearchResult operation={entry.facts.kind === "MetadataOperation" ? entry.facts.operation : null} />
+              </li>;
+            })}
+          </ResourceList>
+        </div>
+      </PaneRefreshAnchor>}
   </>;
 }

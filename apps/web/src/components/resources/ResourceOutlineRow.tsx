@@ -35,7 +35,7 @@ import {usePaneRuntime} from "@/lib/panes/paneRuntime";
 import { paneForkLink } from "@/lib/panes/paneForkLink";
 import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import {activateTargetLink} from "@/lib/panes/targetLinkActivation";
-import {type ConnectionMutation, type ConnectionOut} from "@/lib/resourceGraph/links";
+import {type ConnectionMutation, type ResolvedConnection} from "@/lib/resourceGraph/links";
 import {FactRemovalsContext, type FactRemovalCommand} from "@/lib/resourceGraph/useFactRemovals";
 import {hasAuthoredContent, parseResourceRef} from "@/lib/resourceGraph/resourceRef";
 import {resolveResourceItem} from "@/lib/resources/items";
@@ -47,6 +47,8 @@ import {assumeCanonicalResourceRef} from "@/lib/sharing/targets";
 import type {ActionDescriptor} from "@/lib/ui/actionDescriptor";
 import {suppressSelectionActivation, type TargetActivationEvent} from "@/lib/ui/targetActivation";
 import {cx} from "@/lib/ui/cx";
+import {OpenOutlineScopes, ParentOutlineScope} from "@/lib/resourceGraph/openOutlineScopes";
+import {OutlineEmbeddingOccurrence} from "@/lib/notes/editorHost";
 import RemoteConnections, {useRemoteConnections} from "@/components/connections/RemoteConnections";
 import ContextualActionMenu, {type ContextActionSection} from "./ContextualActionMenu";
 import { FullResourceBody } from "./ExcerptDisclosure";
@@ -65,13 +67,13 @@ type Item = Schema<"ResourceItemOut">;
  * failed commit's retry at the outline root, which outlives this row. */
 export type Incoming =
   | {kind: "link"; linkId: string; parentLabel: string; unlink(): void}
-  | {kind: "edge"; edge_id: string; origin: ConnectionOut["origin"]; mutation: ConnectionMutation | null;
-    creation: ConnectionOut["creation"]}
+  | {kind: "edge"; edge_id: string; origin: ResolvedConnection["origin"]; mutation: ConnectionMutation | null;
+    creation: ResolvedConnection["creation"]}
   | null;
 type Shared = {
   occurrenceKey: string;
   incoming: Incoming;
-  connection?: ConnectionOut;
+  connection?: ResolvedConnection;
   occurrenceLabel?: string;
   onChanged?: () => void;
   /** The host shows this passage already: the row is its quote, with no provenance. */
@@ -82,7 +84,7 @@ type Shared = {
   resourceDetails?: ReactNode;
   details?: ReactNode;
   omitResourceActions?: readonly string[];
-  rootProps?: HTMLAttributes<HTMLElement> & {"data-active"?: boolean; "data-selected"?: boolean};
+  rootProps?: HTMLAttributes<HTMLElement> & {"data-active"?: boolean; "data-selected"?: boolean; "data-index"?: number; "data-collection-row-id"?: string};
   rowRef?: Ref<HTMLLIElement>;
   authoredByViewer?: boolean;
   historical?: boolean;
@@ -173,7 +175,7 @@ function remotePresentation(item: Item, props: Shared): Presentation {
   const activation = item.activation, body = item.preview.body;
   const unavailable = activation.unavailable_reason === "location_unavailable" ? "quoted location unavailable"
     : activation.unavailable_reason === "source_unavailable" ? "source unavailable" : null;
-  const content = <FullResourceBody item={item} historical={props.historical}/>;
+  const content = <FullResourceBody item={item} historical={props.historical || props.connection !== undefined}/>;
   const quote = props.inSource && body.kind === "passage" ? body : null;
   const title = item.preview.source?.title?.trim();
   const parts = metadata.parts.filter(({key}) => quote ? key !== "source" && key !== "location"
@@ -197,7 +199,7 @@ function remotePresentation(item: Item, props: Shared): Presentation {
 }
 
 function RemoteRow(props: Shared & {item: Item}) {
-  const item = useResolvedResourceItem(props.item, props.historical);
+  const item = useResolvedResourceItem(props.item, props.historical || props.connection !== undefined);
   return <Occurrence {...props} presentation={remotePresentation(item, props)}/>;
 }
 
@@ -335,6 +337,17 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
     lostArrowFocus.current=false;
   },[hasControl]);
   const childrenId = useId();
+  const openScopes = useContext(OpenOutlineScopes);
+  const embeddingOwner = useContext(OutlineEmbeddingOccurrence);
+  const parentScope = useContext(ParentOutlineScope);
+  const rememberScope = openScopes?.remember;
+  const enteringFact = incoming?.kind === "edge" ? incoming.edge_id : null;
+  useLayoutEffect(() => {
+    if (open && hasChildren && rememberScope) rememberScope(occurrenceKey, {
+      ref, label, owner: embeddingOwner, parent: parentScope, entering: enteringFact,
+      excluded: excludedEdgeIds,
+    });
+  }, [open, hasChildren, rememberScope, occurrenceKey, ref, label, embeddingOwner, parentScope, excludedEdgeIds, enteringFact]);
   // one way, so a row flown past reads none of its children.
   const rested = useRef(false); rested.current ||= outline?.settled(occurrenceKey) ?? true;
   const childrenStarted = useRef(false);
@@ -344,6 +357,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
     if (disclosureDisabled) return;
     if (open && props.beforeCollapse && !await props.beforeCollapse()) return;
     if (open && element.current?.contains(document.activeElement)) arrow.current?.focus({preventScroll: true});
+    if (open) openScopes?.close(occurrenceKey);
     if (outline) outline.toggle(occurrenceKey, !open); else setLocalOpen(!open);
   }
   function removeFact() {
@@ -407,8 +421,8 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
           {sourceContent}
           {presentation.status}
           {resourceDetails}
-          {connection?.snapshot?.rationale ? <div className={styles.details}><MachineText variant="inline" origin={{label: "librarian"}}>
-            {connection.snapshot.rationale}</MachineText></div> : null}
+          {connection?.rationale ? <div className={styles.details}><MachineText variant="inline" origin={{label: "librarian"}}>
+            {connection.rationale}</MachineText></div> : null}
           {details}
 
         </div>
@@ -427,18 +441,19 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
       </div>
       {childrenStarted.current ? <div className={styles.children} data-outline-children="true"><section id={childrenId} aria-label="linked resources">
         <LocalOutline rootRef={ref} occurrencePrefix={occurrenceKey} onControllerReady={presentation.annotation?.editable ? childController : undefined} childrenVisible={open}/>
-        {open && rested.current ? <Children ownerRef={ref} localOwnerRef={compatible?.local_ref??null} occurrenceKey={occurrenceKey}/> : null}</section></div> : null}
+        {open && rested.current ? <Children ownerRef={ref} label={label} localOwnerRef={compatible?.local_ref??null} occurrenceKey={occurrenceKey}/> : null}</section></div> : null}
     </li>
   </ResourceBranch>;
 }
 
 /** An expanded occurrence: its local links, then its separately failable server facts. */
-function Children({ownerRef, localOwnerRef, occurrenceKey}: {ownerRef: string; localOwnerRef:string|null; occurrenceKey: string}) {
+function Children({ownerRef, label, localOwnerRef, occurrenceKey}: {ownerRef: string; label: string; localOwnerRef:string|null; occurrenceKey: string}) {
   const branch=useContext(ResourceBranch);
-  const remote = useRemoteConnections(ownerRef, occurrenceKey, useChangeStamp("Metadata"));
+  const search = useContext(OpenOutlineScopes);
+  const remote = useRemoteConnections(ownerRef, "", !search?.filter);
   return <>
     {localOwnerRef&&localOwnerRef!==ownerRef?<ResourceBranch value={enterOutlineOccurrence({branch,ref:localOwnerRef,target:{kind:"occurrence",key:occurrenceKey},edgeIds:[]})}><LocalOutline rootRef={localOwnerRef} occurrencePrefix={`${occurrenceKey}/owner`}/></ResourceBranch>:null}
-    <RemoteConnections ownerRef={ownerRef} occurrencePrefix={occurrenceKey} list={remote}
+    <RemoteConnections ownerRef={ownerRef} label={label} occurrencePrefix={occurrenceKey} list={remote}
       onChanged={() => void remote.refetch().catch(() => undefined)}/>
   </>;
 }

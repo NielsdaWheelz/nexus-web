@@ -4,17 +4,18 @@ names (``X-Nexus-Device``, I13); no body or query names the caller's device."""
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Request, Response
 
 from nexus.api.deps import DeviceId
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import RepeatableReadDbSession
 from nexus.responses import Data
+from nexus.schemas.collection_index import CollectionIndex, parse_index_query
 from nexus.schemas.consumption_activity import (
     ActivityRecordIn,
     ExcludeSessionIn,
     RecordOut,
-    SittingPageOut,
+    SittingOut,
     WorkRecordOut,
 )
 from nexus.services.consumption import activity, stats
@@ -55,7 +56,7 @@ def get_work(media_id: UUID, db: RepeatableReadDbSession, viewer: ViewerDep) -> 
 def get_sittings(
     db: RepeatableReadDbSession,
     viewer: ViewerDep,
-    cursor: Annotated[str | None, Query(max_length=4000)] = None,
-    limit: Annotated[int, Query(ge=1, le=200)] = 50,
-) -> Data[SittingPageOut]:
-    return Data(data=stats.sitting_page(db, viewer.user_id, cursor=cursor, limit=limit))
+    request: Request,
+) -> Data[CollectionIndex[SittingOut]]:
+    parse_index_query(request.query_params.multi_items(), domain_keys=set())
+    return Data(data=stats.sitting_index(db, viewer.user_id))

@@ -9,7 +9,6 @@ import { bodyHasContent } from "./body.ts";
 import { mergeNote, mergeTitle } from "./documents.ts";
 import { isResourceRef, sortedEndpoints, validateLocalDate } from "./identity.ts";
 import { mergeWork, projectWork } from "./work.ts";
-import { pageTitle, paneFilterText } from "./paneFilterText.ts";
 
 /** The feed republishes this replica's submitted causal change. Its durable
  * command prefix already contains the change, regardless of acknowledgement. */
@@ -55,7 +54,7 @@ export function mergeRegister<T>(a:Register<T>|null,b:Register<T>|null):Register
 }
 function requiredRegister<T>(a:Register<T>|null,b:Register<T>):Register<T> { return mergeRegister(a,b)!; }
 export function projectResource(state:ResourceState):ResourceProjection {
-  const common={excerpt:null,capture_revision:null,authored_by_viewer:true,ref:state.ref,kind:state.kind,visible:isVisible(state.touch_vv,state.delete_vv),body_pm_json:null,body_text:null,title:null,title_key:null,local_date:null,last_work_at_ms:null,source_ref:null,source_publication:null,selection:null,color:null,embedded_refs:[],work:null};
+  const common={excerpt:null,capture_revision:null,authored_by_viewer:true,ref:state.ref,kind:state.kind,visible:isVisible(state.touch_vv,state.delete_vv),body_pm_json:null,body_text:null,title:null,local_date:null,last_work_at_ms:null,source_ref:null,source_publication:null,selection:null,color:null,embedded_refs:[],work:null};
   switch(state.kind) {
     case "note":
     case "highlight": {
@@ -74,15 +73,14 @@ export function projectResource(state:ResourceState):ResourceProjection {
       validatePageWorkTime(state.last_work_at_ms, state.local_date);
       const title = mergeTitle(state.title_state, null).title;
       const listed = common.visible && state.local_date === null;
-      return {...common, title, local_date:state.local_date, title_key:listed ? paneFilterText(pageTitle(title, null)) : null,
-        last_work_at_ms:listed ? state.last_work_at_ms : null};
+      return {...common, title, local_date:state.local_date, last_work_at_ms:listed ? state.last_work_at_ms : null};
     }
   }
 }
 export function projectPassage(state: PassageState): ResourceProjection {
   const excerpt = excerptView(state.capture.value.excerpt, "compact", {kind:"capture"});
   const text = excerpt.kind === "content" ? excerptTextParts(excerpt.body).exact : "table excerpt";
-  return {ref:`passage_anchor:${state.anchor_id}`,kind:"source",authored_by_viewer:true,visible:true,body_pm_json:null,body_text:null,title:text,title_key:null,local_date:null,last_work_at_ms:null,source_ref:state.source_ref,source_publication:state.capture.value.publication,selection:null,color:null,embedded_refs:[],excerpt,capture_revision:captureRevision(state.source_ref,{kind:"passage",value:state.capture.value}),work:null};
+  return {ref:`passage_anchor:${state.anchor_id}`,kind:"source",authored_by_viewer:true,visible:true,body_pm_json:null,body_text:null,title:text,local_date:null,last_work_at_ms:null,source_ref:state.source_ref,source_publication:state.capture.value.publication,selection:null,color:null,embedded_refs:[],excerpt,capture_revision:captureRevision(state.source_ref,{kind:"passage",value:state.capture.value}),work:null};
 }
 function resourceMerge(old:ResourceState|null,patch:ResourcePatch):ResourceState {
   if(!isResourceRef(patch.ref)) throw new TypeError("Invalid resource reference");

@@ -2,7 +2,7 @@
 
 // Native lists share one host visit's folds and reveal scope; ancestry follows occurrences.
 // Structure, selection and editing belong to the outline that renders the rows.
-import {createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode} from "react";
+import {createContext, useCallback, useContext, useMemo, useRef, useState, type ComponentProps, type ReactNode} from "react";
 import {useOutlineChildren,type OutlineChildrenDescriptor} from "@/lib/resourceGraph/useOutlineChildren";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
 import {useSettled} from "@/lib/api/serverState";
@@ -42,6 +42,7 @@ type Props = {
   onRevealRoot?: () => void;
   onRevealOccurrence?: (key: string) => void;
   viewLocked?: boolean;
+  listProps?: ComponentProps<"ul">;
 };
 
 export default function ResourceOutlineList(props: Props) {
@@ -51,7 +52,7 @@ export default function ResourceOutlineList(props: Props) {
   if (parent)
     return (
       <ResourceBranch value={props.branch ?? inherited}>
-        <ul className={styles.list} aria-label={props.ariaLabel}>
+        <ul {...props.listProps} className={styles.list} aria-label={props.ariaLabel}>
           {props.children}
         </ul>
       </ResourceBranch>
@@ -61,7 +62,7 @@ export default function ResourceOutlineList(props: Props) {
 
 function RootList({
   children, ariaLabel, scope, ancestorRef, branch: suppliedBranch,
-  onRevealRoot, onRevealOccurrence, viewLocked = false,
+  onRevealRoot, onRevealOccurrence, viewLocked = false, listProps,
 }: Props) {
   const inherited = useContext(ResourceBranch);
   const root = useRef<HTMLDivElement | null>(null);
@@ -101,7 +102,11 @@ function RootList({
   return <ResourceOutlineContext value={context}>
     <ResourceBranch value={branch}>
       <div ref={root} className={styles.outline} data-pane-return-scope={scope} data-outline-scope={scope}>
-        <ul ref={list} className={styles.list} aria-label={ariaLabel} tabIndex={-1}>
+        <ul {...listProps} ref={node => {
+          list.current = node;
+          if (typeof listProps?.ref === "function") return listProps.ref(node);
+          if (listProps?.ref) listProps.ref.current = node;
+        }} className={styles.list} aria-label={ariaLabel} tabIndex={-1}>
           {children}
         </ul>
       </div>

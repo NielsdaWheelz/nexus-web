@@ -1,16 +1,16 @@
-"""The connections read model: the viewer's live edges around a set of refs, hydrated
-once per page into ``ConnectionOut``. An authored link is undirected and matches either
-way; ``other`` is always the far endpoint and ``mutation`` names the one server command
-that may remove a machine fact. An evidence-owning citation shows its captured words; a
-message citation shows its target as it is now. Remote child availability shares this exact
-predicate and tests complete server-owned facts without hydrating children.
-Authored child existence belongs exclusively to the device's canonical graph."""
+"""Viewer-scoped connection order, visible outline bodies and bounded rich readers.
+
+All three use the same edge ownership and endpoint incidence. An authored link is
+undirected. An ordinal citation displays its admitted frozen evidence; a message
+citation has no frozen snapshot. Child existence checks never hydrate their results.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from itertools import batched
 from typing import Literal, cast
+from unicodedata import normalize
 from uuid import UUID
 
 from sqlalchemy import UUID as SqlUUID
@@ -21,22 +21,27 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from nexus.auth.permissions import highlight_visibility_filter
 from nexus.db.models import Highlight, PassageAnchor, ResourceEdge
-from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.resource_graph import (
     CitationSnapshot,
     ConnectionDirection,
     ConnectionFiltersRequest,
+    ConnectionIndexOut,
     ConnectionOut,
-    ConnectionPageOut,
     ConnectionQueryRequest,
+    ConnectionResolveOut,
+    ConnectionResolveRequest,
+    ConnectionScope,
     EdgeKind,
     EdgeOrigin,
+    RelationQuery,
     RemoteChildrenItem,
     RemoteChildrenOut,
     RemoteChildrenRequest,
     RemoveFactMutation,
+    ResolvedConnectionOut,
 )
-from nexus.schemas.resource_items import CitationSourceTargetKey
+from nexus.schemas.resource_items import CitationSourceTargetKey, ResourceItemOut
+from nexus.services.reader_excerpts import text_parts
 from nexus.services.resource_graph.citations import citation_endpoint_match, edge_readable_filter
 from nexus.services.resource_graph.edges import Pair
 from nexus.services.resource_graph.liveness import AUTHORED_LINK_ORIGINS, edge_live_sql
@@ -56,16 +61,12 @@ def _connection_statement(
     db: Session,
     *,
     viewer_id: UUID,
-    query: ConnectionQueryRequest,
+    query: ConnectionScope,
     visible: set[str] | None = None,
 ) -> Select[tuple[ResourceEdge, bool, bool]] | None:
     refs = {ref.uri: ref for ref in map(require_ref, query.refs)}
     if visible is None:
-        visible = {
-            item.ref
-            for item in resource_items_out(db, viewer_id=viewer_id, refs=list(refs.values()))
-            if not item.missing
-        }
+        visible = visible_refs(db, viewer_id=viewer_id, refs=list(refs.values()))
     refs = {uri: ref for uri, ref in refs.items() if uri in visible}
     if not refs:
         return None
@@ -184,41 +185,148 @@ def _connection_statement(
         reverse.append(ResourceEdge.source_scheme.in_(filters.target_schemes))
     if forward:
         stmt = stmt.where(or_(and_(*forward), and_(link, *reverse)))
-    if query.cursor is not None:
-        created_at, edge_id = _decode_cursor(query.cursor)
-        stmt = stmt.where(
-            or_(
-                ResourceEdge.created_at < created_at,
-                and_(ResourceEdge.created_at == created_at, ResourceEdge.id < edge_id),
-            )
-        )
     return stmt
 
 
-def query_connections(
+def index_connections(
     db: Session, *, viewer_id: UUID, query: ConnectionQueryRequest
-) -> ConnectionPageOut:
-    """One page, newest first; unknown or invisible refs match nothing."""
+) -> ConnectionIndexOut:
+    stmt = _connection_statement(db, viewer_id=viewer_id, query=query)
+    match_text = query.match_text
+    if stmt is None:
+        return ConnectionIndexOut(edge_ids=[], matching_edge_ids=None if match_text is None else [])
+    ordered = stmt.order_by(ResourceEdge.created_at.desc(), ResourceEdge.id.desc())
+    if match_text is None:
+        return ConnectionIndexOut(
+            edge_ids=list(db.scalars(ordered.with_only_columns(ResourceEdge.id))),
+            matching_edge_ids=None,
+        )
+
+    # The filter searches only the words the outline can show, after the same
+    # current admission and excerpt clipping as a visible occurrence.
+    query_text = normalize("NFC", match_text).lower()
+    edge_ids: list[UUID] = []
+    matching: list[UUID] = []
+    for batch in db.execute(ordered.execution_options(yield_per=100)).tuples().partitions():
+        others = _outline_others(db, viewer_id, batch, query.direction)
+        quotes = {
+            item: other.preview.body.excerpt.body
+            for item, other in enumerate(others)
+            if other.preview.body.kind == "passage" and other.preview.body.excerpt.kind == "content"
+        }
+        exact = dict(
+            zip(quotes, (parts.exact for parts in text_parts(list(quotes.values()))), strict=True)
+        )
+        for i, ((edge, _, _), other) in enumerate(zip(batch, others, strict=True)):
+            edge_ids.append(edge.id)
+            if not other.missing and any(
+                query_text in normalize("NFC", value).lower()
+                for value in (other.label, exact.get(i, ""))
+            ):
+                matching.append(edge.id)
+    return ConnectionIndexOut(edge_ids=edge_ids, matching_edge_ids=matching)
+
+
+def resolve_connections(
+    db: Session, *, viewer_id: UUID, request: ConnectionResolveRequest
+) -> ConnectionResolveOut:
+    stmt = _connection_statement(db, viewer_id=viewer_id, query=request)
+    if stmt is None:
+        return ConnectionResolveOut(items=[])
+    selected = {
+        row[0].id: row
+        for row in db.execute(stmt.where(ResourceEdge.id.in_(request.edge_ids))).tuples()
+    }
+    rows = [selected[id_] for id_ in request.edge_ids if id_ in selected]
+    others = _outline_others(db, viewer_id, rows, request.direction)
+    provenance = assistant_writes.edge_provenance(
+        db, viewer_id, [edge.id for edge, _, _ in rows if edge.origin == "assistant"]
+    )
+    return ConnectionResolveOut(
+        items=[
+            ResolvedConnectionOut(
+                edge_id=edge.id,
+                origin=cast(EdgeOrigin, edge.origin),
+                ordinal=edge.ordinal,
+                creation=provenance.get(edge.id),
+                mutation=RemoveFactMutation()
+                if edge.origin in ("discovery", "assistant")
+                else None,
+                other=other,
+                rationale=CitationSnapshot.model_validate(edge.snapshot).rationale
+                if edge.origin in ("discovery", "assistant") and edge.snapshot is not None
+                else None,
+            )
+            for (edge, _, _), other in zip(rows, others, strict=True)
+        ]
+    )
+
+
+def _outline_others(
+    db: Session,
+    viewer_id: UUID,
+    rows: Sequence[tuple[ResourceEdge, bool, bool]],
+    direction: ConnectionDirection,
+) -> list[ResourceItemOut]:
+    refs = {}
+    sides = []
+    captures = []
+    captured_ids = []
+    for edge, source_matches, target_matches in rows:
+        incoming = (
+            target_matches and not source_matches
+            if direction == "both" or edge.origin in AUTHORED_LINK_ORIGINS
+            else direction == "incoming"
+        )
+        ref = assert_resource_ref(
+            f"{edge.source_scheme}:{edge.source_id}"
+            if incoming
+            else f"{edge.target_scheme}:{edge.target_id}"
+        )
+        sides.append((ref.uri, incoming))
+        if not incoming and edge.origin == "citation" and edge.snapshot is not None:
+            evidence = CitationSnapshot.model_validate(edge.snapshot).evidence
+            assert evidence is not None
+            captures.append(
+                (ref, evidence, CitationSourceTargetKey(edge_id=edge.id, side="target"))
+            )
+            captured_ids.append(edge.id)
+        else:
+            refs[ref.uri] = ref
+    endpoints = {
+        item.ref: item
+        for item in resource_items_out(db, viewer_id=viewer_id, refs=list(refs.values()))
+    }
+    captured = dict(
+        zip(
+            captured_ids, evidence_items(db, viewer_id=viewer_id, occurrences=captures), strict=True
+        )
+    )
+    items = []
+    for (edge, _, _), (ref, incoming) in zip(rows, sides, strict=True):
+        if edge.id in captured:
+            items.append(captured[edge.id])
+        else:
+            item = endpoints[ref]
+            items.append(_source_occurrence(item, edge) if incoming else item)
+    return items
+
+
+def list_relations(db: Session, *, viewer_id: UUID, query: RelationQuery) -> list[ConnectionOut]:
+    """The tools' bounded rich read, newest first."""
     stmt = _connection_statement(db, viewer_id=viewer_id, query=query)
     if stmt is None:
-        return ConnectionPageOut(items=[], next_cursor=None)
+        return []
     rows = db.execute(
-        stmt.order_by(ResourceEdge.created_at.desc(), ResourceEdge.id.desc()).limit(query.limit + 1)
+        stmt.order_by(ResourceEdge.created_at.desc(), ResourceEdge.id.desc()).limit(query.limit)
     ).all()
-    page = [row[0] for row in rows[: query.limit]]
-    next_cursor = None
-    if len(rows) > query.limit:
-        next_cursor = f"{page[-1].created_at.isoformat()}|{page[-1].id}"
     matched: set[Pair] = set()
-    for edge, source_matches, target_matches in rows[: query.limit]:
+    for edge, source_matches, target_matches in rows:
         if source_matches:
             matched.add(cast(Pair, (edge.source_scheme, edge.source_id)))
         if target_matches:
             matched.add(cast(Pair, (edge.target_scheme, edge.target_id)))
-    return ConnectionPageOut(
-        items=hydrate_connections(db, viewer_id, page, matched, query.direction),
-        next_cursor=next_cursor,
-    )
+    return hydrate_connections(db, viewer_id, [row[0] for row in rows], matched, query.direction)
 
 
 def query_remote_children(
@@ -251,24 +359,25 @@ def query_remote_children(
         items.append(RemoteChildrenItem(has_children=None, local_ref=local_ref))
     probes = []
     for index, item in enumerate(request.occurrences):
-        query = ConnectionQueryRequest(
+        query = ConnectionScope(
             refs=[item.resource_ref],
             direction="both",
             rollup="owner",
             filters=ConnectionFiltersRequest(
                 origins=["citation", "discovery", "assistant", "document_embed"]
             ),
-            limit=1,
-            cursor=None,
         )
         stmt = _connection_statement(db, viewer_id=viewer_id, query=query, visible=visible)
         if stmt is None:
             continue
         if item.excluded_edge_ids:
             stmt = stmt.where(ResourceEdge.id.not_in(item.excluded_edge_ids))
-        probes.append(select(literal(index).label("index"), stmt.exists().label("present")))
-    if probes:
-        for index, present in db.execute(union_all(*probes)):
+        exists = stmt.with_only_columns(literal(1)).exists()
+        probes.append(select(literal(index).label("index"), exists.label("present")))
+    # Each incidence plan includes the full admission and citation-owner joins.
+    # Bound planner memory while keeping every probe in the same read snapshot.
+    for batch in batched(probes, 8):
+        for index, present in db.execute(union_all(*batch)):
             items[index].has_children = present
     return RemoteChildrenOut(items=items)
 
@@ -343,19 +452,7 @@ def hydrate_connections(
             source_matches = (row.source_scheme, row.source_id) in matched or extra_source
             target_matches = (row.target_scheme, row.target_id) in matched or extra_target
             incoming = target_matches and not source_matches
-        source_item = endpoints[source]
-        if row.ordinal is not None and source_item.activation.kind == "route":
-            activation = source_item.activation
-            assert activation.href is not None
-            source_item = source_item.model_copy(
-                update={
-                    "activation": activation.model_copy(
-                        update={
-                            "href": activation.href.split("#", 1)[0] + f"#citation-source-{row.id}"
-                        }
-                    )
-                }
-            )
+        source_item = _source_occurrence(endpoints[source], row)
         creation = provenance.get(row.id) if row.origin == "assistant" else None
         mutation = RemoveFactMutation() if row.origin in ("discovery", "assistant") else None
         items.append(
@@ -381,11 +478,15 @@ def hydrate_connections(
     return items
 
 
-def _decode_cursor(raw: str) -> tuple[datetime, UUID]:
-    created_at, separator, edge_id = raw.partition("|")
-    try:
-        if separator:
-            return datetime.fromisoformat(created_at), UUID(edge_id)
-    except ValueError:
-        pass
-    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid cursor")
+def _source_occurrence(item: ResourceItemOut, edge: ResourceEdge) -> ResourceItemOut:
+    activation = item.activation
+    if edge.ordinal is None or activation.kind != "route":
+        return item
+    assert activation.href is not None
+    return item.model_copy(
+        update={
+            "activation": activation.model_copy(
+                update={"href": activation.href.split("#", 1)[0] + f"#citation-source-{edge.id}"}
+            )
+        }
+    )

@@ -83,7 +83,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
   let failure: SyncFailure = null;
   let replication: ReturnType<typeof scheduleReplication> | null = null;
   const waiting = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
-  const queries = new Set<(corpusChanged: boolean, dailyIndexChanged: boolean, resourceRefs: readonly string[] | null, onlyTitles: boolean, ownsCommit: boolean) => void>();
+  const queries = new Set<(corpusChanged: boolean, resourceRefs: readonly string[] | null, ownsCommit: boolean) => void>();
   const evidence = new Set<() => void>();
   const closedWaiters = new Set<() => void>();
   const statuses = new Set<(status: SyncStatus, detail: string | null, failure: SyncFailure) => void>();
@@ -114,7 +114,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
       if (terminalFailure !== null) return;
       status = data.status; detail = data.detail ?? null; failure = data.failure;
       for (const listener of statuses) listener(status, detail, failure);
-      for (const query of queries) query(data.corpus_changed, data.daily_index_changed, data.resource_refs, data.only_titles, data.owns_commit);
+      for (const query of queries) query(data.corpus_changed, data.resource_refs, data.owns_commit);
     } else if (data.kind === "evidence_changed") {
       if (terminalFailure === null) for (const listener of evidence) listener();
     } else if (data.kind === "retired") {
@@ -145,6 +145,19 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
   }
   status = hello.status; detail = hello.detail; failure = hello.failure;
   replication = scheduleReplication(refresh => call<SyncStep>("sync_step", { refresh, online: navigator.onLine }), () => failPort("the local notes store stopped responding. keep this page open and copy unfinished writing before restarting nexus."));
+  const leaving = (event: PageTransitionEvent) => {if (!event.persisted) close();};
+  function close() {
+    window.removeEventListener("pagehide", leaving);
+    if (closed) return;
+    replication?.close();
+    port.postMessage({id: ++sequence, op: "close"});
+    closed = true;
+    for (const pending of waiting.values()) pending.reject(new Error("authored store closed"));
+    waiting.clear();
+    for (const cancel of closedWaiters) cancel();
+    closedWaiters.clear(); queries.clear(); statuses.clear(); evidence.clear(); port.close();
+  }
+  window.addEventListener("pagehide", leaving);
   return {
     withCommand: work => navigator.locks.request(`nexus-authored-command-${accountId}`, async () => {
       if (closed) throw new Error("authored store closed");
@@ -175,22 +188,19 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
     subscribe: (query, listener, failed) => {
       let active = true;
       let generation = 0;
-      let observed: QueryResult | null = null;
-      const read = (corpusChanged: boolean, dailyIndexChanged: boolean, resourceRefs: readonly string[] | null, onlyTitles: boolean) => {
-        if (!invalidatesQuery(query, corpusChanged, dailyIndexChanged, resourceRefs, onlyTitles, observed)) return;
-        observed = null;
+      const read = (corpusChanged: boolean, resourceRefs: readonly string[] | null) => {
+        if (!invalidatesQuery(query, corpusChanged, resourceRefs)) return;
         const current = ++generation;
         void call<QueryResult>("query", { query }).then(value => {
           if (!active || generation !== current) return;
-          if (query.kind === "outline_windows") observed = value;
           listener(value);
         }, error => { if (active && generation === current) failed(error); });
       };
-      queries.add(read); read(true, true, null, false);
+      queries.add(read); read(true, null);
       return () => { active = false; queries.delete(read); };
     },
     onResourceChange: (ref, listener) => {
-      const notify = (corpus: boolean, _index: boolean, refs: readonly string[] | null, _titles: boolean, ownsCommit: boolean) => {
+      const notify = (corpus: boolean, refs: readonly string[] | null, ownsCommit: boolean) => {
         if (corpus && !ownsCommit && (refs === null || refs.includes(ref))) listener();
       };
       queries.add(notify);
@@ -198,13 +208,6 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
     },
     evidence_changed: listener => { evidence.add(listener); return () => { evidence.delete(listener); }; },
     sync_status: listener => { statuses.add(listener); listener(status, detail, failure); return () => { statuses.delete(listener); }; },
-    close: async () => {
-      if (closed) return;
-      replication?.close();
-      port.postMessage({ id: ++sequence, op: "close" });
-      closed = true;
-      for (const pending of waiting.values()) pending.reject(new Error("authored store closed"));
-      waiting.clear(); for (const cancel of closedWaiters) cancel(); closedWaiters.clear(); queries.clear(); statuses.clear(); evidence.clear(); port.close();
-    },
+    close: async () => close(),
   };
 }

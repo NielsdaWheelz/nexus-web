@@ -85,8 +85,3 @@ class AssistantWriteOut(_Out):
     created_refs: list[CreatedRefOut]
     reverted_at: datetime | None
     undo_allowed: bool
-
-
-class AssistantWritePage(_Out):
-    items: list[AssistantWriteOut]
-    next_cursor: UUID | None

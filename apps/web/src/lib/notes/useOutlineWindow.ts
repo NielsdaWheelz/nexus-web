@@ -10,7 +10,7 @@ import type {WritingRuntime} from "./runtime";
 export interface OutlineWindow {
   readonly ref: string;
   readonly branch: OutlineBranch;
-  data: Pick<QueryResult, "store_revision" | "scope_available"> & Pick<OutlineWindowSlice, "next_cursor" | "previous_cursor"> & {hasRawRows: boolean};
+  data: Pick<QueryResult, "store_revision" | "scope_available"> & Pick<OutlineWindowSlice, "total" | "start_rank" | "next_cursor" | "previous_cursor"> & {hasRawRows: boolean};
   rows: QueryRow[];
   beforeEdge: LinkState | null;
   afterEdge: LinkState | null;
@@ -18,6 +18,7 @@ export interface OutlineWindow {
   childAvailability: ReadonlyMap<string, boolean | null>;
   rootResource: ResourceProjection | null;
   editableRefs: ReadonlySet<string>;
+  oversizedRefs: ReadonlySet<string>;
 }
 type OutlineQuery = Omit<Extract<AuthoredQuery, {kind: "outline_windows"}>, "kind">;
 export function useOutlineWindows(query: OutlineQuery, branch: OutlineBranch, runtime: WritingRuntime | null) {
@@ -38,20 +39,25 @@ export function projectOutlineWindow(result: QueryResult, ref: string, branch: O
   // justify-service-invariant-check: the closed query owns slice completeness and raw-row alignment.
   const slice = result.outline_windows?.[index];
   if (!slice) throw new Error("outline window slice is missing");
-  const {proof, next_cursor, previous_cursor} = slice;
+  const {proof, total, start_rank, next_cursor, previous_cursor} = slice;
   if (slice.children.length !== slice.rows.length) throw new Error("outline availability result length mismatch");
   const rows: QueryRow[] = [];
   const childAvailability = new Map<string, boolean | null>();
   const editableRefs = new Set<string>();
+  const oversizedRefs = new Set(proof.oversized_refs);
   for (const [index, row] of slice.rows.entries()) {
     if (row.link === null) throw new Error("outline row is missing its link");
     const kind = classifyOutlineOccurrence({branch, targetRef: row.resource.ref, edgeId: row.link.link_id}).kind;
     if (kind === "omit") continue;
     rows.push(row);
     childAvailability.set(row.link.link_id, slice.children[index]!);
-    if (kind === "resource" && (row.resource.kind === "note" || row.resource.kind === "page")) editableRefs.add(row.resource.ref);
+    if (kind === "resource" && (row.resource.kind === "note" || row.resource.kind === "page") && !oversizedRefs.has(row.resource.ref))
+      editableRefs.add(row.resource.ref);
   }
-  const data = {store_revision: result.store_revision, scope_available: result.scope_available, next_cursor, previous_cursor, hasRawRows: slice.rows.length > 0};
+  if (start_rank === null ? rows.length !== 0 : rows.length === 0 || start_rank + rows.length > total)
+    throw new Error("outline slice ranks disagree with admitted rows");
+  const data = {store_revision: result.store_revision, scope_available: result.scope_available, total, start_rank,
+    next_cursor, previous_cursor, hasRawRows: slice.rows.length > 0};
   return {ref, branch, data, rows, beforeEdge: proof.before, afterEdge: proof.after, tailEdge: proof.tail,
-    childAvailability, rootResource: proof.root, editableRefs};
+    childAvailability, rootResource: proof.root, editableRefs, oversizedRefs};
 }

@@ -11,7 +11,6 @@ history inside that transition and must not raise for a code.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -170,32 +169,18 @@ def history_entries(
     ]
 
 
-def read_history_page(
+def read_history(
     db: Session,
     *,
     viewer_id: UUID,
     session_id: UUID | None,
     media_id: UUID | None,
-    before: tuple[datetime, str] | None,
-    limit: int,
 ) -> list[HistoryEntry]:
-    """An import's entries newest first by (`occurred_at`, `id`), strictly before `before`."""
+    """An import's entries newest first by time and id."""
     relation = events_of_import_sql(session_id_expr=":session_id", media_id_expr=":media_id")
-    keyset = "" if before is None else "WHERE (occurred_at, id) < (:before_at, :before_id)"
-    before_at, before_id = before or (None, None)
     rows = db.execute(
-        text(
-            f"SELECT * FROM ({relation}) entries {keyset}"
-            " ORDER BY occurred_at DESC, id DESC LIMIT :limit"
-        ),
-        {
-            "viewer_id": viewer_id,
-            "session_id": session_id,
-            "media_id": media_id,
-            "before_at": before_at,
-            "before_id": before_id,
-            "limit": limit,
-        },
+        text(f"SELECT * FROM ({relation}) entries ORDER BY occurred_at DESC, id DESC"),
+        {"viewer_id": viewer_id, "session_id": session_id, "media_id": media_id},
     ).mappings()
     return history_entries(db, viewer_id=viewer_id, rows=list(rows))
 

@@ -212,8 +212,3 @@ class SittingOut(_Row):
     from_place: float | None
     to_place: float | None
     exclusion_id: UUID | None
-
-
-class SittingPageOut(Closed):
-    items: list[SittingOut]
-    next_cursor: str | None

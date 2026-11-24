@@ -8,10 +8,10 @@ import { createHash } from "node:crypto";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { Features } from "lightningcss";
-import { compileQuery, compileOutlineWindows, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, SEARCH_READ_SQL, SEARCH_MATCH_SQL } from "../../node/authored/src/queries";
+import { compileQuery, compileOutlineWindows, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, SEARCH_READ_SQL, SEARCH_MATCH_SQL, LITERAL_SOURCE_SQL, LITERAL_MISSING_SQL, LITERAL_WRITE_SQL } from "../../node/authored/src/queries";
 import { SCOPE_SQL } from "../../node/authored/src/scope";
 import { nativeQueryPlans } from "./src/lib/authored/nativeQuery";
-import type { AuthoredQuery } from "../../node/authored/src/types";
+import type { AuthoredQuery, CapturedIndexSource } from "../../node/authored/src/types";
 import { DEVICE_PRAGMAS, DEVICE_SCHEMA, PENDING_CHANGES_SQL, REBUILD_DEVICE_SQL } from "../../node/authored/src/schema";
 import { appCsp } from "./src/lib/security/csp";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
@@ -51,17 +51,42 @@ export default defineConfig({
           pragmas: DEVICE_PRAGMAS, create: DEVICE_SCHEMA, rebuild: REBUILD_DEVICE_SQL,
         }));
         const cursor = JSON.stringify(["a0", ""]);
-        const workCursors = [null, JSON.stringify(["1", "22222222-2222-4222-8222-222222222222", "note_block:33333333-3333-4333-8333-333333333333"])];
+        const index = {start: 0, limit: 100, expected_revision: null};
         type PackagedQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;
+        const workDate = "2026-11-11";
+        const capturedSamples = (source: CapturedIndexSource): PackagedQuery[] => [
+          {...source, at: {kind: "describe"}, expected_revision: null},
+          {...source, at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
+          {...source, at: {kind: "locate", refs: []}, expected_revision: "0"},
+          {...source, at: {kind: "retain", token: ""}, expected_revision: "0"},
+          {...source, at: {kind: "held", token: "", start: 0, limit: 1}, expected_revision: "0"},
+          {...source, at: {kind: "successor", token: "", ref: null}, expected_revision: "0"},
+          {...source, at: {kind: "landing", token: "", rank: 0}, expected_revision: "0"},
+          {...source, at: {kind: "release", token: ""}, expected_revision: null},
+        ];
         const samples: Record<PackagedQuery["kind"], PackagedQuery[]> = {
-          daily_index: [{kind: "daily_index"}],
-          work_pending: workCursors.map(cursor => ({kind: "work_pending", local_date: "2026-11-11", cursor, limit: 100})),
-          work_completed: workCursors.map(cursor => ({kind: "work_completed", local_date: "2026-11-11", cursor, limit: 100})),
-          habits: workCursors.map(cursor => ({kind: "habits", cursor, limit: 100})),
+          page_register: (["worked", "title"] as const).flatMap(order =>
+            ["", "words"].flatMap(text => capturedSamples({kind: "page_register", text, order}))),
+          register_label: [{kind: "register_label", ref: ""}],
+          outline_filter: [{kind: "outline_filter", parent_ref: "", text: "words", start: 0, limit: 1, expected_revision: null}],
+          daily_index: [
+            {kind: "daily_index", arrival: "2026-11-11", retained: [], at: {kind: "describe"}, expected_revision: null},
+            {kind: "daily_index", arrival: "2026-11-11", retained: [], at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
+            {kind: "daily_index", arrival: "2026-11-11", retained: [], at: {kind: "locate", dates: []}, expected_revision: "0"},
+          ],
+          work_pending: [...capturedSamples({kind:"work_pending", local_date:workDate}),
+            {kind: "work_pending", local_date: workDate, at: {kind: "place", rows: []}, expected_revision: "0"}],
+          work_completed: capturedSamples({kind:"work_completed", local_date:workDate}),
+          work_row: [{kind: "work_row", ref: "", local_date: workDate}],
+          habits: capturedSamples({kind: "habits"}),
+          habit_days: [{kind: "habit_days", ref: "", year: 2026}],
+          latest_habit_date: [{kind: "latest_habit_date"}],
+          mentions: capturedSamples({kind: "mentions", ref: ""}),
           outline_windows: [
-            {kind: "outline_windows", ref: "", ranges: [{cursor: null, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
-            {kind: "outline_windows", ref: "", ranges: [{cursor, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
-            {kind: "outline_windows", ref: "", ranges: [{cursor: null, anchor_link_id: "", limit: 48}], excluded_link_ids: [], entering_link_id: null},
+            {kind: "outline_windows", ref: "", ranges: [{start_rank: null, cursor: null, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
+            {kind: "outline_windows", ref: "", ranges: [{start_rank: null, cursor, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
+            {kind: "outline_windows", ref: "", ranges: [{start_rank: null, cursor: null, anchor_link_id: "", limit: 48}], excluded_link_ids: [], entering_link_id: null},
+            {kind: "outline_windows", ref: "", ranges: [{start_rank: 1, cursor: null, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
           ],
           binding: [{ kind: "binding", key: { kind: "daily", local_date: "" } }, { kind: "binding", key: { kind: "link", endpoint_a: "", endpoint_b: "" } }, { kind: "binding", key: { kind: "passage", source_ref: "", normalized_exact: "", prefix: "", suffix: "" } }],
           outline_children: [{ kind: "outline_children", occurrences: [] }],
@@ -69,9 +94,6 @@ export default defineConfig({
           excerpt: [{kind:"excerpt",ref:"",reading_ref:null}],
           source_alias: [{ kind: "source_alias", ref: "" }],
           daily: [{ kind: "daily", local_date: "" }],
-          pages: (["worked", "title"] as const).flatMap(order =>
-            [null, order === "worked" ? JSON.stringify([-1, "a", ""]) : cursor].flatMap(cursor =>
-              ["", "filter"].map(title_filter => ({ kind: "pages", order, title_filter, cursor, limit: 100 })))),
           annotations: [{ kind: "annotations", source_ref: "", cursor: null, limit: 100 }],
           backlinks: [{ kind: "backlinks", ref: "", cursor: null, limit: 100 }],
           search: [{ kind: "search", text: "", link_from: null, cursor: null, limit: 100, scopes: [{kind: "all", id: null}], families: null }],
@@ -79,7 +101,8 @@ export default defineConfig({
           positions: [{ kind: "positions", ref: "", exclude_link_id: null, at: { kind: "tail" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "neighbors", link_id: "", side: "before" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "neighbors", link_id: "", side: "after" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "bounds", position: "a0" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "tie", position: "a0", cursor: null, limit: 100 } }],
           resolve: Array.from({ length: 101 }, (_, count) => ({ kind: "resolve", refs: Array(count).fill("") })),
         };
-        const statements: Record<string, string> = { pending_changes: PENDING_CHANGES_SQL, search_index: SEARCH_INDEX_SQL, search_remove: SEARCH_REMOVE_SQL, ...SCOPE_SQL, ...SEARCH_MATCH_SQL };
+        const statements: Record<string, string> = { pending_changes: PENDING_CHANGES_SQL, search_index: SEARCH_INDEX_SQL, search_remove: SEARCH_REMOVE_SQL,
+          literal_source: LITERAL_SOURCE_SQL, literal_missing: LITERAL_MISSING_SQL, literal_write: LITERAL_WRITE_SQL, ...SCOPE_SQL, ...SEARCH_MATCH_SQL };
         for (const sql of SEARCH_READ_SQL) statements[`search_read:${createHash("sha256").update(sql).digest("hex")}`] = sql;
         for (const query of Object.values(samples).flat()) {
           const compiled = query.kind === "outline_windows" ? compileOutlineWindows(query) : [compileQuery(query)];

@@ -4,10 +4,15 @@ import type {LinkState, OutlineRange} from "@nexus/authored/types";
 import type {OutlineWindow} from "./useOutlineWindow";
 
 /** `height` is a measurement of the mounted row, or null: an unmeasured item takes the estimate when read. */
-interface Item {link: string; position: string; height: number | null}
-interface Branch {items: Item[]; first: boolean; last: boolean; joined: Set<string>}
-export type BranchPart = {kind: "row"; link: string} | {kind: "gap"; key: string; height: number; range: OutlineRange; direction: "before" | "after"; waiting?: true};
+export type BranchPart = {kind: "row"; link: string} | {
+  kind: "gap"; key: string; height: number; range: OutlineRange; direction: "before" | "after";
+  links?: readonly string[]; ranks?: {start: number; end: number}; waiting?: true;
+};
 export interface RowMetric {id: string; anchor: string | null; parent: string | null; link: string | null; top: number; height: number; measured: boolean; gap: boolean}
+
+function rangeAroundRank(total: number, rank: number, limit: number): OutlineRange {
+  return {start_rank: Math.max(0, Math.min(total - limit, rank - Math.floor(limit / 2))), cursor: null, anchor_link_id: null, limit};
+}
 
 function position(link: LinkState, ref: string): string {return (link.endpoint_a === ref ? link.position_a : link.position_b)?.value ?? "";}
 function ordered(a: {position: string; link: string}, b: {position: string; link: string}): number {
@@ -33,7 +38,9 @@ export function mergeOutlineWindows(windows: readonly OutlineWindow[]): OutlineW
   const first = windows[0];
   if (!first || windows.some(window => window.ref !== first.ref || window.branch !== first.branch || window.data.store_revision !== first.data.store_revision || window.data.scope_available !== first.data.scope_available))
     throw new Error("outline windows must share one branch and revision");
+  if (windows.length === 1) return first;
   const childAvailability = new Map(windows.flatMap(window => [...window.childAvailability]));
+  const oversizedRefs = new Set(windows.flatMap(window => [...window.oversizedRefs]));
   const rows = [...new Map(windows.flatMap(window => window.rows.map(row => [row.link!.link_id, row] as const))).values()]
     .sort((a, b) => ordered({link: a.link!.link_id, position: position(a.link!, first.ref)}, {link: b.link!.link_id, position: position(b.link!, first.ref)}));
   const parts = [...windows].sort((a, b) => {
@@ -41,14 +48,17 @@ export function mergeOutlineWindows(windows: readonly OutlineWindow[]): OutlineW
     return left && right ? ordered({link: left.link_id, position: position(left, first.ref)}, {link: right.link_id, position: position(right, first.ref)}) : 0;
   });
   const head = parts[0]!, tail = parts.at(-1)!;
-  return {...first, rows, childAvailability, editableRefs: new Set(windows.flatMap(window => [...window.editableRefs])),
+  return {...first, rows, childAvailability, oversizedRefs, editableRefs: new Set(windows.flatMap(window => [...window.editableRefs])),
     beforeEdge: head.beforeEdge, afterEdge: tail.afterEdge, tailEdge: tail.tailEdge,
-    data: {...first.data, hasRawRows: windows.some(window => window.data.hasRawRows),
+    // Each original slice owns its rank. The command view can join disjoint slices.
+    data: {...first.data, start_rank: null, hasRawRows: windows.some(window => window.data.hasRawRows),
       previous_cursor: head.data.previous_cursor, next_cursor: tail.data.next_cursor}};
 }
 
 export class OutlineViewport {
-  private readonly branches = new Map<string, Branch>();
+  private branches: ReadonlyMap<string, readonly string[]> | null = null;
+  private readonly ranked = new Map<string, {revision: string; branch: OutlineWindow["branch"]; total: number; ranks: Map<string, number>}>();
+  private readonly branchHeights = new Map<string, Map<string, number>>();
   private readonly heights = new Map<string, number>();
   private committed: readonly RowMetric[] = [];
   private version = 0;
@@ -65,92 +75,123 @@ export class OutlineViewport {
   get height(): number {const last = this.committed.at(-1); return last ? last.top + last.height : 0;}
   invalidateMeasurements(): void {
     this.heights.clear(); this.smallest = null;
-    for (const branch of this.branches.values()) for (const item of branch.items) item.height = null;
+    this.branchHeights.clear();
+  }
+  setBranches(branches: ReadonlyMap<string, readonly string[]> | null): boolean {
+    if (branches === this.branches) return false;
+    if (branches !== null && branches.size === this.branches?.size && [...branches].every(([parent, ids]) => {
+      const previous = this.branches?.get(parent);
+      return previous?.length === ids.length && ids.every((id, rank) => previous[rank] === id);
+    })) return false;
+    this.branches = branches;
+    if (branches !== null) for (const [parent, sizes] of this.branchHeights) {
+      const links = branches.get(parent);
+      if (!links) {this.branchHeights.delete(parent); continue;}
+      const remaining = new Set(links);
+      for (const link of sizes.keys()) if (!remaining.has(link)) sizes.delete(link);
+    }
+    return true;
   }
   estimatedHeight(parent: string): number {
-    const branch = this.branches.get(parent);
-    return branch ? (branch.items.length + (branch.first ? 0 : 24) + (branch.last ? 0 : 24)) * this.estimate : 0;
+    if (this.branches !== null)
+      return (this.branches.get(parent) ?? []).reduce((height, link) => height + this.rowHeight(parent, link), 0);
+    return this.rankedHeight(parent, 0, this.ranked.get(parent)?.total ?? 0);
   }
-  admit(parent: string, windows: readonly OutlineWindow[]): void {
-    const sample = windows[0]!;
-    if (!sample.data.scope_available) {this.branches.delete(parent); return;}
-    const prior = this.branches.get(parent) ?? {items: [], first: false, last: false, joined: new Set<string>()};
-    const live = new Set(windows.flatMap(window => window.rows.map(row => row.link!.link_id)));
-    const items = new Map(prior.items.map(item => [item.link, item]));
-    for (const window of windows) {
-      const head = window.rows[0]?.link, tail = window.rows.at(-1)?.link;
-      if (provesEmptyOutline(window)) {items.clear(); prior.joined.clear(); prior.first = true; prior.last = true;}
-      if (head && tail) for (const item of items.values()) {
-        const afterStart = window.beforeEdge === null || ordered(item, {link: head.link_id, position: position(head, sample.ref)}) >= 0;
-        const beforeEnd = window.afterEdge === null || ordered(item, {link: tail.link_id, position: position(tail, sample.ref)}) <= 0;
-        if (afterStart && beforeEnd && !live.has(item.link)) items.delete(item.link);
-      }
-      for (const link of [...window.rows.map(row => row.link!), ...[window.beforeEdge, window.afterEdge, window.tailEdge].flatMap(edge => edge ? [edge] : [])])
-        items.set(link.link_id, {link: link.link_id, position: position(link, sample.ref), height: items.get(link.link_id)?.height ?? null});
-      if (window.beforeEdge === null && window.rows.length) prior.first = true;
-      if (window.afterEdge === null && window.rows.length) prior.last = true;
+  forgetBranch(parent: string): void {
+    this.ranked.delete(parent);
+    this.branchHeights.delete(parent);
+  }
+  private rankedHeight(parent: string, start: number, end: number): number {
+    let height = (end - start) * this.estimate;
+    for (const [link, rank] of this.ranked.get(parent)?.ranks ?? []) {
+      if (rank >= start && rank < end) height += this.rowHeight(parent, link) - this.estimate;
     }
-    for (const window of windows) {
-      const links = [...(window.beforeEdge ? [window.beforeEdge.link_id] : []), ...window.rows.map(row => row.link!.link_id), ...(window.afterEdge ? [window.afterEdge.link_id] : [])];
-      for (let index = 1; index < links.length; index++) prior.joined.add(`${links[index - 1]}/${links[index]}`);
-    }
-    prior.items = [...items.values()].sort(ordered); this.branches.set(parent, prior);
+    return height;
+  }
+  rowHeight(parent: string, link: string): number {
+    return this.branchHeights.get(parent)?.get(link) ?? this.estimate;
   }
   layout(parent: string, windows: readonly OutlineWindow[]): readonly BranchPart[] {
-    const branch = this.branches.get(parent);
-    if (!branch) return [];
-    const shown = new Set(windows.flatMap(window => window.rows.map(row => row.link!.link_id)));
-    const connected = branch.joined;
-    const result: BranchPart[] = [];
-    const items = branch.items;
-    const gap = (from: number, to: number, unknown: boolean) => {
-      if (to <= from && !unknown) return;
-      const prior = items[from - 1], next = items[to];
-      const direction = prior ? "after" : "before";
-      const anchor = items[from + Math.floor(Math.max(0, to - from - 1) / 2)]?.link ?? next?.link ?? prior?.link ?? null;
-      const range = {cursor: null, anchor_link_id: anchor, limit: 48};
-      result.push({kind: "gap", key: `${parent}:${prior?.link ?? "start"}:${next?.link ?? "end"}`, direction, range,
-        height: items.slice(from, to).reduce((height, item) => height + (item.height ?? this.estimate), unknown ? 24 * this.estimate : 0)});
-    };
-    let from = 0;
-    for (let index = 0; index < items.length; index++) {
-      if (!shown.has(items[index]!.link)) continue;
-      const previous = result.findLast(part => part.kind === "row");
-      const unknown = index === 0 ? !branch.first : previous?.kind === "row" ? !connected.has(`${previous.link}/${items[index]!.link}`) && from === index :
-        !branch.first || items.slice(from, index + 1).some((item, at, all) => at > 0 && !connected.has(`${all[at - 1]!.link}/${item.link}`));
-      gap(from, index, unknown);
-      result.push({kind: "row", link: items[index]!.link}); from = index + 1;
-    }
-    const trailing = items.slice(from);
-    const unknown = !branch.last || trailing.some((item, index) => index > 0 && !connected.has(`${trailing[index - 1]!.link}/${item.link}`));
-    gap(from, items.length, unknown);
-    return result;
-  }
-  coalesce(parent: string, ranges: readonly OutlineRange[]): OutlineRange[] {
-    const branch = this.branches.get(parent);
-    const result: OutlineRange[] = [];
-    for (const range of ranges) {
-      if (result.some(candidate => JSON.stringify(candidate) === JSON.stringify(range))) continue;
-      let merged = false;
-      if (branch && range.cursor === null) for (const [index, candidate] of result.entries()) {
-        if (candidate.cursor !== null) continue;
-        const left = candidate.anchor_link_id === null ? 0 : branch.items.findIndex(item => item.link === candidate.anchor_link_id);
-        const right = range.anchor_link_id === null ? 0 : branch.items.findIndex(item => item.link === range.anchor_link_id);
-        if (left < 0 || right < 0 || branch.items.slice(Math.min(left, right), Math.max(left, right) + 1).some((item, at, all) => at > 0 && !branch.joined.has(`${all[at - 1]!.link}/${item.link}`))) continue;
-        const from = Math.min(candidate.anchor_link_id === null ? 0 : Math.max(0, left - Math.floor(candidate.limit / 2)), range.anchor_link_id === null ? 0 : Math.max(0, right - Math.floor(range.limit / 2)));
-        const to = Math.max(candidate.anchor_link_id === null ? candidate.limit : left + Math.ceil(candidate.limit / 2), range.anchor_link_id === null ? range.limit : right + Math.ceil(range.limit / 2));
-        if (to - from > 48) continue;
-        const anchor = from === 0 && branch.first ? null : branch.items[from + Math.floor((to - from) / 2)]?.link;
-        if (anchor === undefined) continue;
-        result[index] = {cursor: null, anchor_link_id: anchor, limit: to - from}; merged = true; break;
+    if (this.branches === null) {
+      const window = windows[0];
+      if (window === undefined) return [];
+      const first = window.data;
+      let observed = this.ranked.get(parent);
+      if (observed?.revision !== first.store_revision || observed.branch !== window.branch) {
+        observed = {revision: first.store_revision, branch: window.branch, total: first.total, ranks: new Map()};
+        this.ranked.set(parent, observed);
       }
-      if (!merged) result.push(range);
+      const shown = new Map<number, string>();
+      for (const {data, rows} of windows) if (data.start_rank !== null) {
+        for (const [index, row] of rows.entries()) {
+          const link = row.link!.link_id, rank = data.start_rank + index;
+          observed.ranks.set(link, rank);
+          shown.set(rank, link);
+        }
+      }
+      const parts: BranchPart[] = [];
+      let from = 0;
+      const gap = (to: number) => {
+        if (to <= from) return;
+        parts.push({kind: "gap", key: `${parent}:${from}:${to}`, direction: from === 0 ? "before" : "after",
+          height: this.rankedHeight(parent, from, to), ranks: {start: from, end: to},
+          range: rangeAroundRank(first.total, Math.floor((from + to - 1) / 2), 48)});
+      };
+      for (const [rank, link] of [...shown].sort(([left], [right]) => left - right)) {
+        gap(rank);
+        parts.push({kind: "row", link});
+        from = rank + 1;
+      }
+      gap(first.total);
+      return parts;
     }
+    const items = this.branches.get(parent) ?? [];
+    const shown = new Set(windows.flatMap(window => window.rows.map(row => row.link!.link_id)));
+    const result: BranchPart[] = [];
+    let from = 0;
+    const gap = (to: number) => {
+      if (to <= from) return;
+      const prior = items[from - 1], next = items[to];
+      const links = items.slice(from, to);
+      result.push({kind: "gap", key: `${parent}:${prior ?? "start"}:${next ?? "end"}`,
+        direction: prior ? "after" : "before", links,
+        range: {start_rank: null, cursor: null, anchor_link_id: links[Math.floor((links.length - 1) / 2)], limit: 48},
+        height: links.reduce((height, link) => height + this.rowHeight(parent, link), 0)});
+    };
+    for (let index = 0; index < items.length; index++) {
+      if (!shown.has(items[index]!)) continue;
+      gap(index);
+      result.push({kind: "row", link: items[index]!});
+      from = index + 1;
+    }
+    gap(items.length);
     return result;
   }
   measured(parent: string, link: string, height: number): void {
-    const item = this.branches.get(parent)?.items.find(item => item.link === link);
-    if (item && height > 0) item.height = height;
+    if (height <= 0) return;
+    let sizes = this.branchHeights.get(parent);
+    if (!sizes) {sizes = new Map(); this.branchHeights.set(parent, sizes);}
+    sizes.set(link, height);
+  }
+  rangeAt(parent: string, gap: Extract<BranchPart, {kind: "gap"}>, offset: number, limit: number): OutlineRange {
+    if (gap.ranks !== undefined) {
+      const {start, end} = gap.ranks;
+      let lo = start, hi = end - 1;
+      while (lo < hi) {
+        const middle = Math.floor((lo + hi) / 2);
+        if (this.rankedHeight(parent, start, middle + 1) <= offset) lo = middle + 1;
+        else hi = middle;
+      }
+      const total = this.ranked.get(parent)!.total;
+      return rangeAroundRank(total, lo, limit);
+    }
+    let anchor_link_id = gap.range.anchor_link_id;
+    for (const link of gap.links ?? []) {
+      anchor_link_id = link;
+      offset -= this.rowHeight(parent, link);
+      if (offset < 0) break;
+    }
+    return {...gap.range, anchor_link_id, limit};
   }
   publish(rows: readonly {id: string; anchor: string | null; parent: string | null; link: string | null; gapHeight: number | null}[], elements: ReadonlyMap<string, HTMLElement>): void {
     let top = 0;
@@ -173,9 +214,13 @@ export class OutlineViewport {
     this.version++;
   }
   rangeFor(parent: string, fraction: number): OutlineRange | null {
-    const items = this.branches.get(parent)?.items;
+    if (this.branches === null) {
+      const total = this.ranked.get(parent)?.total ?? 0;
+      return total === 0 ? null : rangeAroundRank(total, Math.floor(fraction * total), 48);
+    }
+    const items = this.branches.get(parent);
     if (!items?.length) return null;
     const index = Math.max(0, Math.min(items.length - 1, Math.floor(fraction * items.length)));
-    return {cursor: null, anchor_link_id: items[index]!.link, limit: 48};
+    return {start_rank: null, cursor: null, anchor_link_id: items[index]!, limit: 48};
   }
 }

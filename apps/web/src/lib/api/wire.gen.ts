@@ -828,8 +828,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Opml Imports */
-        get: operations["list_opml_imports_feed_opml_imports_get"];
+        get?: never;
         put?: never;
         /** Create Opml Import */
         post: operations["create_opml_import_feed_opml_imports_post"];
@@ -1094,6 +1093,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/imports/recent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Recent Imports */
+        get: operations["get_recent_imports_imports_recent_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/imports/summary": {
         parameters: {
             query?: never;
@@ -1344,6 +1360,23 @@ export interface paths {
         get: operations["get_messages_librarian_messages_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/librarian/turns/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Librarian Turns */
+        post: operations["resolve_librarian_turns_librarian_turns_resolve_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1664,10 +1697,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List Invitations
-         * @description Pending invitations, newest first.
-         */
+        /** List Invitations */
         get: operations["list_invitations_libraries__library_id__invites_get"];
         put?: never;
         /** Create Invitation */
@@ -3088,6 +3118,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/resource-graph/connections/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Connections */
+        post: operations["resolve_connections_resource_graph_connections_resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/resource-graph/facts/{edge_id}": {
         parameters: {
             query?: never;
@@ -3524,13 +3571,6 @@ export interface components {
             /** Undo Allowed */
             undo_allowed: boolean;
         };
-        /** AssistantWritePage */
-        AssistantWritePage: {
-            /** Items */
-            items: components["schemas"]["AssistantWriteOut"][];
-            /** Next Cursor */
-            next_cursor: string | null;
-        };
         /** AtlasEdgeOut */
         AtlasEdgeOut: {
             /**
@@ -3727,22 +3767,14 @@ export interface components {
             /** Max Pdf Bytes */
             max_pdf_bytes: number;
         };
-        /** CapturedEvidence */
-        CapturedEvidence: {
-            /** Completion Ref */
-            completion_ref: string | null;
-            quote: components["schemas"]["CapturedQuote"] | null;
-            source: components["schemas"]["CapturedSource"];
-            /** Target */
-            target: components["schemas"]["CapturedResourceTarget"] | components["schemas"]["CapturedPassageTarget"] | components["schemas"]["CapturedUnavailableTarget"];
-        };
         /** CapturedPassageTarget */
         CapturedPassageTarget: {
             /** Field */
             field: "annotation" | null;
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * Kind
+             * @default passage
+             * @constant
              */
             kind: "passage";
             /** Locator */
@@ -3756,56 +3788,6 @@ export interface components {
             precision: "exact" | "approximate" | "page" | "time";
             /** Source Identity */
             source_identity: string | null;
-        };
-        /** CapturedQuote */
-        CapturedQuote: {
-            /** Color */
-            color: ("yellow" | "green" | "blue" | "pink" | "purple") | null;
-            /** Exact */
-            exact: string;
-            excerpt: components["schemas"]["FrozenExcerpt-Output"];
-            /** Prefix */
-            prefix: string | null;
-            /** Suffix */
-            suffix: string | null;
-        };
-        /** CapturedResourceTarget */
-        CapturedResourceTarget: {
-            /** Field */
-            field: "annotation" | null;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "resource";
-            /** Owner Ref */
-            owner_ref: string;
-        };
-        /** CapturedSource */
-        CapturedSource: {
-            /** Attribution Text */
-            attribution_text: string | null;
-            /** Contributors */
-            contributors: components["schemas"]["ContributorCreditOut"][] | null;
-            /** Location Label */
-            location_label: string | null;
-            media_kind: components["schemas"]["MediaKind"] | null;
-            /** Ref */
-            ref: string | null;
-            /** Title */
-            title: string | null;
-        };
-        /** CapturedUnavailableTarget */
-        CapturedUnavailableTarget: {
-            /** Field */
-            field: "annotation" | null;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "unavailable";
-            /** Owner Ref */
-            owner_ref: string | null;
         };
         /** CatalogArticleOut */
         CatalogArticleOut: {
@@ -4160,18 +4142,6 @@ export interface components {
             /** Ordinal */
             ordinal: number;
         };
-        /**
-         * CitationSnapshot
-         * @description Exactly one captured citation evidence or machine relationship rationale.
-         *
-         *     Imported and oracle citations own captured evidence. A message citation is a live
-         *     projection of its retrieval target and stores no snapshot at all.
-         */
-        CitationSnapshot: {
-            evidence: components["schemas"]["CapturedEvidence"] | null;
-            /** Rationale */
-            rationale: string | null;
-        };
         /** CitationSourceTargetKey */
         CitationSourceTargetKey: {
             /**
@@ -4267,15 +4237,50 @@ export interface components {
             /** Items */
             items: (components["schemas"]["MediaContributorWorkItemOut"] | components["schemas"]["PodcastContributorWorkItemOut"] | components["schemas"]["ExternalContributorWorkItemOut"])[];
         };
+        /** CollectionIndex[AssistantWriteOut] */
+        CollectionIndex_AssistantWriteOut_: {
+            /** Items */
+            items: components["schemas"]["AssistantWriteOut"][];
+        };
+        /** CollectionIndex[ChatRunResponse] */
+        CollectionIndex_ChatRunResponse_: {
+            /** Items */
+            items: components["schemas"]["ChatRunResponse"][];
+        };
         /** CollectionIndex[FeedIndexItemOut] */
         CollectionIndex_FeedIndexItemOut_: {
             /** Items */
             items: components["schemas"]["FeedIndexItemOut"][];
         };
+        /** CollectionIndex[ImportItem] */
+        CollectionIndex_ImportItem_: {
+            /** Items */
+            items: components["schemas"]["ImportItem"][];
+        };
+        /** CollectionIndex[LibraryInvitationOut] */
+        CollectionIndex_LibraryInvitationOut_: {
+            /** Items */
+            items: components["schemas"]["LibraryInvitationOut"][];
+        };
+        /** CollectionIndex[LibraryMemberOut] */
+        CollectionIndex_LibraryMemberOut_: {
+            /** Items */
+            items: components["schemas"]["LibraryMemberOut"][];
+        };
         /** CollectionIndex[LibraryOut] */
         CollectionIndex_LibraryOut_: {
             /** Items */
             items: components["schemas"]["LibraryOut"][];
+        };
+        /** CollectionIndex[SittingOut] */
+        CollectionIndex_SittingOut_: {
+            /** Items */
+            items: components["schemas"]["SittingOut"][];
+        };
+        /** CollectionIndex[ViewerInvitationOut] */
+        CollectionIndex_ViewerInvitationOut_: {
+            /** Items */
+            items: components["schemas"]["ViewerInvitationOut"][];
         };
         /** CollectionLecternOut */
         CollectionLecternOut: {
@@ -4303,27 +4308,6 @@ export interface components {
             /** Media Ids */
             media_ids: string[];
             target: components["schemas"]["CollectionTarget"];
-        };
-        /** CollectionPage[LibraryInvitationOut] */
-        CollectionPage_LibraryInvitationOut_: {
-            /** Items */
-            items: components["schemas"]["LibraryInvitationOut"][];
-            /** Next Cursor */
-            next_cursor: string | null;
-        };
-        /** CollectionPage[LibraryMemberOut] */
-        CollectionPage_LibraryMemberOut_: {
-            /** Items */
-            items: components["schemas"]["LibraryMemberOut"][];
-            /** Next Cursor */
-            next_cursor: string | null;
-        };
-        /** CollectionPage[ViewerInvitationOut] */
-        CollectionPage_ViewerInvitationOut_: {
-            /** Items */
-            items: components["schemas"]["ViewerInvitationOut"][];
-            /** Next Cursor */
-            next_cursor: string | null;
         };
         CollectionSelection: components["schemas"]["FeedCollectionSelection"] | components["schemas"]["LibraryCollectionTarget"];
         CollectionTarget: components["schemas"]["FeedCollectionTarget"] | components["schemas"]["LibraryCollectionTarget"];
@@ -4386,70 +4370,47 @@ export interface components {
             /** Target Schemes */
             target_schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "message" | "oracle_reading" | "oracle_passage_anchor" | "external_snapshot" | "contributor" | "podcast" | "feed" | "reader_apparatus_item" | "passage_anchor")[] | null;
         };
-        /**
-         * ConnectionOut
-         * @description One fact seen from a queried ref: ``other`` is the far endpoint, an authored link is
-         *     ``undirected``, and ``mutation`` names the one server command that may remove it; an
-         *     authored link has none, because only the local authored store unlinks it. A citation
-         *     has none either: it dies with its source. A message citation carries no snapshot.
-         */
-        ConnectionOut: {
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            creation: components["schemas"]["ConnectionCreationOut"] | null;
-            /**
-             * Direction
-             * @enum {string}
-             */
-            direction: "incoming" | "outgoing" | "undirected";
-            /**
-             * Edge Id
-             * Format: uuid
-             */
-            edge_id: string;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "context" | "supports" | "contradicts";
-            mutation: components["schemas"]["RemoveFactMutation"] | null;
-            /** Ordinal */
-            ordinal: number | null;
-            /**
-             * Origin
-             * @enum {string}
-             */
-            origin: "user" | "citation" | "note_body" | "discovery" | "document_embed" | "assistant";
-            other: components["schemas"]["ResourceItemOut"];
-            snapshot: components["schemas"]["CitationSnapshot"] | null;
-            source: components["schemas"]["ResourceItemOut"];
-            target: components["schemas"]["ResourceItemOut"];
-        };
-        /** ConnectionPageOut */
-        ConnectionPageOut: {
-            /** Items */
-            items: components["schemas"]["ConnectionOut"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+        /** ConnectionIndexOut */
+        ConnectionIndexOut: {
+            /** Edge Ids */
+            edge_ids: string[];
+            /** Matching Edge Ids */
+            matching_edge_ids: string[] | null;
         };
         /** ConnectionQueryRequest */
         ConnectionQueryRequest: {
-            /** Cursor */
-            cursor?: string | null;
             /**
              * Direction
              * @enum {string}
              */
             direction: "incoming" | "outgoing" | "both";
             filters?: components["schemas"]["ConnectionFiltersRequest"];
+            /** Match Text */
+            match_text: string | null;
+            /** Refs */
+            refs: string[];
             /**
-             * Limit
-             * @default 100
+             * Rollup
+             * @default exact
+             * @enum {string}
              */
-            limit: number;
+            rollup: "exact" | "owner";
+        };
+        /** ConnectionResolveOut */
+        ConnectionResolveOut: {
+            /** Items */
+            items: components["schemas"]["ResolvedConnectionOut"][];
+        };
+        /** ConnectionResolveRequest */
+        ConnectionResolveRequest: {
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "incoming" | "outgoing" | "both";
+            /** Edge Ids */
+            edge_ids: string[];
+            filters?: components["schemas"]["ConnectionFiltersRequest"];
             /** Refs */
             refs: string[];
             /**
@@ -4922,10 +4883,6 @@ export interface components {
             /** Data */
             data: components["schemas"]["UploadRequired"] | components["schemas"]["Published"] | components["schemas"]["Rejected"];
         };
-        /** Data[AssistantWritePage] */
-        Data_AssistantWritePage_: {
-            data: components["schemas"]["AssistantWritePage"];
-        };
         /** Data[AtlasOut] */
         Data_AtlasOut_: {
             data: components["schemas"]["AtlasOut"];
@@ -4978,9 +4935,37 @@ export interface components {
         Data_CollectionIndex_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____: {
             data: components["schemas"]["CollectionIndex_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
         };
+        /** Data[CollectionIndex[AssistantWriteOut]] */
+        Data_CollectionIndex_AssistantWriteOut__: {
+            data: components["schemas"]["CollectionIndex_AssistantWriteOut_"];
+        };
+        /** Data[CollectionIndex[ChatRunResponse]] */
+        Data_CollectionIndex_ChatRunResponse__: {
+            data: components["schemas"]["CollectionIndex_ChatRunResponse_"];
+        };
+        /** Data[CollectionIndex[ImportItem]] */
+        Data_CollectionIndex_ImportItem__: {
+            data: components["schemas"]["CollectionIndex_ImportItem_"];
+        };
+        /** Data[CollectionIndex[LibraryInvitationOut]] */
+        Data_CollectionIndex_LibraryInvitationOut__: {
+            data: components["schemas"]["CollectionIndex_LibraryInvitationOut_"];
+        };
+        /** Data[CollectionIndex[LibraryMemberOut]] */
+        Data_CollectionIndex_LibraryMemberOut__: {
+            data: components["schemas"]["CollectionIndex_LibraryMemberOut_"];
+        };
         /** Data[CollectionIndex[LibraryOut]] */
         Data_CollectionIndex_LibraryOut__: {
             data: components["schemas"]["CollectionIndex_LibraryOut_"];
+        };
+        /** Data[CollectionIndex[SittingOut]] */
+        Data_CollectionIndex_SittingOut__: {
+            data: components["schemas"]["CollectionIndex_SittingOut_"];
+        };
+        /** Data[CollectionIndex[ViewerInvitationOut]] */
+        Data_CollectionIndex_ViewerInvitationOut__: {
+            data: components["schemas"]["CollectionIndex_ViewerInvitationOut_"];
         };
         /** Data[CollectionLecternOut] */
         Data_CollectionLecternOut_: {
@@ -4990,25 +4975,17 @@ export interface components {
         Data_CollectionLecternPreparedOut_: {
             data: components["schemas"]["CollectionLecternPreparedOut"];
         };
-        /** Data[CollectionPage[LibraryInvitationOut]] */
-        Data_CollectionPage_LibraryInvitationOut__: {
-            data: components["schemas"]["CollectionPage_LibraryInvitationOut_"];
-        };
-        /** Data[CollectionPage[LibraryMemberOut]] */
-        Data_CollectionPage_LibraryMemberOut__: {
-            data: components["schemas"]["CollectionPage_LibraryMemberOut_"];
-        };
-        /** Data[CollectionPage[ViewerInvitationOut]] */
-        Data_CollectionPage_ViewerInvitationOut__: {
-            data: components["schemas"]["CollectionPage_ViewerInvitationOut_"];
-        };
         /** Data[ConnectionDiscoveryScanOut] */
         Data_ConnectionDiscoveryScanOut_: {
             data: components["schemas"]["ConnectionDiscoveryScanOut"];
         };
-        /** Data[ConnectionPageOut] */
-        Data_ConnectionPageOut_: {
-            data: components["schemas"]["ConnectionPageOut"];
+        /** Data[ConnectionIndexOut] */
+        Data_ConnectionIndexOut_: {
+            data: components["schemas"]["ConnectionIndexOut"];
+        };
+        /** Data[ConnectionResolveOut] */
+        Data_ConnectionResolveOut_: {
+            data: components["schemas"]["ConnectionResolveOut"];
         };
         /** Data[ConsumptionOverrideOut] */
         Data_ConsumptionOverrideOut_: {
@@ -5102,17 +5079,17 @@ export interface components {
         Data_GenerationCatalog_: {
             data: components["schemas"]["GenerationCatalog"];
         };
-        /** Data[HistoryPage] */
-        Data_HistoryPage_: {
-            data: components["schemas"]["HistoryPage"];
-        };
         /** Data[ImportDetail] */
         Data_ImportDetail_: {
             data: components["schemas"]["ImportDetail"];
         };
-        /** Data[ImportPage] */
-        Data_ImportPage_: {
-            data: components["schemas"]["ImportPage"];
+        /** Data[ImportHistory] */
+        Data_ImportHistory_: {
+            data: components["schemas"]["ImportHistory"];
+        };
+        /** Data[ImportIndex] */
+        Data_ImportIndex_: {
+            data: components["schemas"]["ImportIndex"];
         };
         /** Data[ImportSummary] */
         Data_ImportSummary_: {
@@ -5181,10 +5158,6 @@ export interface components {
         /** Data[OpmlImportOut] */
         Data_OpmlImportOut_: {
             data: components["schemas"]["OpmlImportOut"];
-        };
-        /** Data[OpmlImportsOut] */
-        Data_OpmlImportsOut_: {
-            data: components["schemas"]["OpmlImportsOut"];
         };
         /** Data[OpmlPreviewOut] */
         Data_OpmlPreviewOut_: {
@@ -5333,10 +5306,6 @@ export interface components {
         /** Data[SectionPreparationAdmission] */
         Data_SectionPreparationAdmission_: {
             data: components["schemas"]["SectionPreparationAdmission"];
-        };
-        /** Data[SittingPageOut] */
-        Data_SittingPageOut_: {
-            data: components["schemas"]["SittingPageOut"];
         };
         /** Data[SourceAdmission] */
         Data_SourceAdmission_: {
@@ -6616,28 +6585,26 @@ export interface components {
             feed: components["schemas"]["FeedDetailOut"];
             /** Items */
             items: components["schemas"]["FeedEntryListItemOut"][];
-            /** Next Cursor */
-            next_cursor: string | null;
         };
         /** FeedEntryListItemOut */
         FeedEntryListItemOut: {
-            /**
-             * Entry Id
-             * Format: uuid
-             */
-            entry_id: string;
-            /** Entry Url */
-            entry_url: string | null;
+            /** Can Play */
+            can_play: boolean;
             /**
              * Id
              * Format: uuid
              */
             id: string;
-            media_summary: components["schemas"]["MediaSummaryOut"];
-            /** Published At */
-            published_at: string | null;
-            /** Published On */
-            published_on: string | null;
+            media_kind: components["schemas"]["MediaKind"];
+            /** Other Filter Fields */
+            other_filter_fields: string[];
+            /**
+             * Processing Status
+             * @enum {string}
+             */
+            processing_status: "pending" | "extracting" | "ready_for_reading" | "failed" | "suspended";
+            /** Title */
+            title: string;
             transcript_state: components["schemas"]["TranscriptState"] | null;
         };
         /** FeedEntryRemovalDestinationOut */
@@ -7554,13 +7521,6 @@ export interface components {
             /** Stage */
             stage: ("Upload" | "Validate" | "Extract" | "Finalize" | "SourceProcessing" | "Index" | "Metadata") | null;
         };
-        /** HistoryPage */
-        HistoryPage: {
-            /** Entries */
-            entries: components["schemas"]["HistoryEntry"][];
-            /** Next Cursor */
-            next_cursor: string | null;
-        };
         /** ImagesResourceBodyOut */
         ImagesResourceBodyOut: {
             /** Alts */
@@ -7572,6 +7532,32 @@ export interface components {
              * @enum {string}
              */
             kind: "images";
+        };
+        /**
+         * ImportArrival
+         * @description An accepted arrival names a media occurrence; its body loads only when visible.
+         */
+        ImportArrival: {
+            /**
+             * Arrived At
+             * Format: date-time
+             */
+            arrived_at: string;
+            /**
+             * Classification
+             * @constant
+             */
+            classification: "Complete";
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            media_kind: components["schemas"]["MediaKind"];
+            /** Ref */
+            ref: string;
+            /** Title */
+            title: string;
         };
         /** ImportDetail */
         ImportDetail: {
@@ -7604,6 +7590,18 @@ export interface components {
             through: string;
         };
         ImportFailureCode: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_EMBEDDING_NOT_CONFIGURED" | "E_FORBIDDEN" | "E_FEED_PRIVATE_SOURCE" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PART_SOURCE_PINNED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_ARTICLE_BODY_UNAVAILABLE" | "E_X_ARTICLE_IDENTITY_CHANGED" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | components["schemas"]["MetadataFailureCode"];
+        /** ImportHistory */
+        ImportHistory: {
+            /** Entries */
+            entries: components["schemas"]["HistoryEntry"][];
+        };
+        /** ImportIndex */
+        ImportIndex: {
+            /** Batches */
+            batches: components["schemas"]["OpmlImportSummaryOut"][];
+            /** Items */
+            items: (components["schemas"]["ImportItem"] | components["schemas"]["ImportArrival"])[];
+        };
         /** ImportItem */
         ImportItem: {
             /**
@@ -7687,13 +7685,6 @@ export interface components {
             metadata: components["schemas"]["MetadataEnrichmentView"] | null;
             search: components["schemas"]["ImportObligation"] | null;
             source: components["schemas"]["ImportObligation"] | null;
-        };
-        /** ImportPage */
-        ImportPage: {
-            /** Items */
-            items: components["schemas"]["ImportItem"][];
-            /** Next Cursor */
-            next_cursor: string | null;
         };
         /** ImportSummary */
         ImportSummary: {
@@ -9650,11 +9641,6 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
-        };
-        /** OpmlImportsOut */
-        OpmlImportsOut: {
-            /** Items */
-            items: components["schemas"]["OpmlImportSummaryOut"][];
         };
         /** OpmlPreviewOut */
         OpmlPreviewOut: {
@@ -12382,6 +12368,11 @@ export interface components {
             /** Attachments */
             attachments: (components["schemas"]["ReferenceAttachmentIn"] | components["schemas"]["SelectionAttachmentIn"])[];
         };
+        /** ResolveLibrarianTurnsRequest */
+        ResolveLibrarianTurnsRequest: {
+            /** Run Ids */
+            run_ids: string[];
+        };
         /** ResolveMediaObservationsIn */
         ResolveMediaObservationsIn: {
             /** Media Ids */
@@ -12398,6 +12389,26 @@ export interface components {
             reading_media_id: string | null;
             /** Target */
             target: components["schemas"]["ResourceSourceTargetKey"] | components["schemas"]["CitationSourceTargetKey"] | components["schemas"]["LiveReferenceSourceTargetKey"] | components["schemas"]["XPostSourceTargetKey"];
+        };
+        /** ResolvedConnectionOut */
+        ResolvedConnectionOut: {
+            creation: components["schemas"]["ConnectionCreationOut"] | null;
+            /**
+             * Edge Id
+             * Format: uuid
+             */
+            edge_id: string;
+            mutation: components["schemas"]["RemoveFactMutation"] | null;
+            /** Ordinal */
+            ordinal: number | null;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "user" | "citation" | "note_body" | "discovery" | "document_embed" | "assistant";
+            other: components["schemas"]["ResourceItemOut"];
+            /** Rationale */
+            rationale: string | null;
         };
         /** ResolvedMediaObservationsOut */
         ResolvedMediaObservationsOut: {
@@ -13231,13 +13242,6 @@ export interface components {
             /** To Place */
             to_place: number | null;
         };
-        /** SittingPageOut */
-        SittingPageOut: {
-            /** Items */
-            items: components["schemas"]["SittingOut"][];
-            /** Next Cursor */
-            next_cursor: string | null;
-        };
         /** SittingRecordOut */
         SittingRecordOut: {
             /** Active Ms */
@@ -13943,10 +13947,34 @@ export interface components {
         };
         /** TimelineOut */
         TimelineOut: {
-            after_seq: components["schemas"]["OrderRevision"] | null;
-            before_seq: components["schemas"]["OrderRevision"] | null;
             /** Items */
             items: components["schemas"]["ChatRunResponse"][];
+            /** Order */
+            order: components["schemas"]["TimelineTurnOut"][];
+        };
+        /** TimelineTurnOut */
+        TimelineTurnOut: {
+            /**
+             * Assistant Message Id
+             * Format: uuid
+             */
+            assistant_message_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * User Message Id
+             * Format: uuid
+             */
+            user_message_id: string;
+            user_seq: components["schemas"]["OrderRevision"];
         };
         /**
          * TooManyNotes
@@ -15190,10 +15218,7 @@ export type $defs = Record<string, never>;
 export interface operations {
     list_assistant_writes_assistant_writes_get: {
         parameters: {
-            query?: {
-                generation_id?: string | null;
-                before?: string | null;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -15206,16 +15231,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_AssistantWritePage_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["Data_CollectionIndex_AssistantWriteOut__"];
                 };
             };
         };
@@ -16185,10 +16201,7 @@ export interface operations {
     };
     get_sittings_consumption_sittings_get: {
         parameters: {
-            query?: {
-                cursor?: string | null;
-                limit?: number;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -16201,16 +16214,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_SittingPageOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["Data_CollectionIndex_SittingOut__"];
                 };
             };
         };
@@ -16803,26 +16807,6 @@ export interface operations {
             };
         };
     };
-    list_opml_imports_feed_opml_imports_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_OpmlImportsOut_"];
-                };
-            };
-        };
-    };
     create_opml_import_feed_opml_imports_post: {
         parameters: {
             query?: never;
@@ -17187,12 +17171,7 @@ export interface operations {
     };
     list_entries_feeds__feed_id__entries_get: {
         parameters: {
-            query?: {
-                state?: "all" | "unread" | "in_progress" | "finished";
-                sort?: "newest" | "oldest" | "duration_asc" | "duration_desc";
-                cursor?: string | null;
-                limit?: number;
-            };
+            query?: never;
             header?: never;
             path: {
                 feed_id: string;
@@ -17293,12 +17272,7 @@ export interface operations {
     };
     list_imports_imports_get: {
         parameters: {
-            query: {
-                view: "Register" | "Recent";
-                from?: string | null;
-                cursor?: string | null;
-                limit?: number;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -17311,16 +17285,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_ImportPage_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["Data_ImportIndex_"];
                 };
             };
         };
@@ -17352,6 +17317,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_recent_imports_imports_recent_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_CollectionIndex_ImportItem__"];
                 };
             };
         };
@@ -17409,10 +17394,7 @@ export interface operations {
     };
     get_import_history_imports__ref__history_get: {
         parameters: {
-            query?: {
-                cursor?: string | null;
-                limit?: number;
-            };
+            query?: never;
             header?: never;
             path: {
                 ref: string;
@@ -17427,7 +17409,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_HistoryPage_"];
+                    "application/json": components["schemas"]["Data_ImportHistory_"];
                 };
             };
             /** @description Validation Error */
@@ -17791,10 +17773,7 @@ export interface operations {
     get_messages_librarian_messages_get: {
         parameters: {
             query?: {
-                before_seq?: components["schemas"]["OrderRevision"] | null;
-                after_seq?: components["schemas"]["OrderRevision"] | null;
                 around_message_id?: string | null;
-                limit?: number;
             };
             header?: never;
             path?: never;
@@ -17809,6 +17788,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_TimelineOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_librarian_turns_librarian_turns_resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveLibrarianTurnsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_CollectionIndex_ChatRunResponse__"];
                 };
             };
             /** @description Validation Error */
@@ -17897,10 +17909,7 @@ export interface operations {
     };
     list_viewer_invitations_libraries_invites_get: {
         parameters: {
-            query?: {
-                cursor?: string | null;
-                limit?: number;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -17913,16 +17922,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_CollectionPage_ViewerInvitationOut__"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["Data_CollectionIndex_ViewerInvitationOut__"];
                 };
             };
         };
@@ -18446,10 +18446,7 @@ export interface operations {
     };
     list_invitations_libraries__library_id__invites_get: {
         parameters: {
-            query?: {
-                cursor?: string | null;
-                limit?: number;
-            };
+            query?: never;
             header?: never;
             path: {
                 library_id: string;
@@ -18464,7 +18461,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_CollectionPage_LibraryInvitationOut__"];
+                    "application/json": components["schemas"]["Data_CollectionIndex_LibraryInvitationOut__"];
                 };
             };
             /** @description Validation Error */
@@ -18551,10 +18548,7 @@ export interface operations {
     };
     list_members_libraries__library_id__members_get: {
         parameters: {
-            query?: {
-                cursor?: string | null;
-                limit?: number;
-            };
+            query?: never;
             header?: never;
             path: {
                 library_id: string;
@@ -18569,7 +18563,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_CollectionPage_LibraryMemberOut__"];
+                    "application/json": components["schemas"]["Data_CollectionIndex_LibraryMemberOut__"];
                 };
             };
             /** @description Validation Error */
@@ -21307,7 +21301,40 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_ConnectionPageOut_"];
+                    "application/json": components["schemas"]["Data_ConnectionIndexOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_connections_resource_graph_connections_resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectionResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ConnectionResolveOut_"];
                 };
             };
             /** @description Validation Error */

@@ -33,7 +33,7 @@ import { useObservationDemand } from "@/lib/api/useObservationDemand";
 
 interface ImportsContextValue {
   readonly summary: ServerValue<ImportSummary>;
-  /** Null until the first successful summary admits dependent reads. */
+  /** Null until the first summary observes the register. */
   readonly digest: string | null;
   /** Intake's source/readiness owner retries failed truth reads on this clock. */
   readonly observation: string;

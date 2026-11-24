@@ -10,8 +10,10 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
 from nexus.schemas.resource_graph import (
-    ConnectionPageOut,
+    ConnectionIndexOut,
     ConnectionQueryRequest,
+    ConnectionResolveOut,
+    ConnectionResolveRequest,
     RemoteChildrenOut,
     RemoteChildrenRequest,
 )
@@ -25,9 +27,16 @@ router = APIRouter(tags=["resource-graph"])
 
 @router.post("/resource-graph/connections/query")
 def query_connections(
-    body: ConnectionQueryRequest, viewer: ViewerDep, db: DbSession
-) -> Data[ConnectionPageOut]:
-    return Data(data=connections.query_connections(db, viewer_id=viewer.user_id, query=body))
+    body: ConnectionQueryRequest, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[ConnectionIndexOut]:
+    return Data(data=connections.index_connections(db, viewer_id=viewer.user_id, query=body))
+
+
+@router.post("/resource-graph/connections/resolve")
+def resolve_connections(
+    body: ConnectionResolveRequest, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[ConnectionResolveOut]:
+    return Data(data=connections.resolve_connections(db, viewer_id=viewer.user_id, request=body))
 
 
 @router.post("/resource-graph/connections/children/query")

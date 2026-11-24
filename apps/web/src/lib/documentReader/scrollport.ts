@@ -3,6 +3,7 @@
 // reader's own movement; everything else (positioning, reflow) is not.
 import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
 import type { Placement } from "./model";
+import { isScrollportPress } from "@/lib/collections/scrollMotion";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
 import type { ReaderRuntime } from "./runtime";
 
@@ -250,13 +251,7 @@ export function useScrollport(
     };
     // Scrollbar presses target the scrollport itself; a press that moves nothing settles as Unchanged.
     const pointerDown = (event: PointerEvent) => {
-      if (
-        !event.isTrusted ||
-        event.button !== 0 ||
-        event.pointerType === "touch"
-      )
-        return;
-      if (event.target !== port) return;
+      if (!isScrollportPress(event, port)) return;
       const op = runtime.seek();
       if (op) seek = { op, top: port.scrollTop };
     };

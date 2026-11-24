@@ -5,7 +5,7 @@
  * plus an ephemeral port lease; a delayed retired port cannot borrow a new holder.
  * An already admitted SQL commit finishes before the next queued preparation read.
  * This needs no cross-port ordering assumption or durable mutation ledger. */
-import { changedResourceRefs, changesDailyIndex } from "@nexus/authored/queries";
+import { changedResourceRefs } from "@nexus/authored/queries";
 import { FORMAT_REVISION, type CommitFrame, type AuthoredQuery, type StateSelection } from "@nexus/authored/types";
 import { ApiError, readResponse } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
@@ -18,6 +18,7 @@ import { syncStatus } from "./status";
 interface WorkerScope { onconnect: ((event: MessageEvent) => void) | null; close(): void }
 const scope = self as unknown as WorkerScope;
 const ports = new Set<MessagePort>();
+const indexOrders = new WeakMap<MessagePort, Set<string>>();
 let persistence: Persistence | null = null;
 let sync: Sync | null = null;
 let account: string | null = null;
@@ -31,9 +32,9 @@ function serialize<T>(operation: () => Promise<T>): Promise<T> {
   queue = next.catch(() => undefined);
   return next;
 }
-function changed(corpusChanged = false, dailyIndexChanged = false, resourceRefs: readonly string[] | null = null, onlyTitles = false, commandOwner: MessagePort | null = null) {
-  for (const port of ports) port.postMessage({ kind: "changed", corpus_changed: corpusChanged, daily_index_changed: dailyIndexChanged,
-    resource_refs: resourceRefs, only_titles: onlyTitles, owns_commit: port === commandOwner,
+function changed(corpusChanged = false, resourceRefs: readonly string[] | null = null, commandOwner: MessagePort | null = null) {
+  for (const port of ports) port.postMessage({ kind: "changed", corpus_changed: corpusChanged,
+    resource_refs: resourceRefs, owns_commit: port === commandOwner,
     status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.detail ?? null, failure: sync?.facts.failure ?? null });
 }
 /** `readResponse` takes any abort for its caller's, and here the caller may not have aborted:
@@ -99,7 +100,15 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
     }
     return { wire_revision: WIRE_REVISION, format_revision: FORMAT_REVISION, status: syncStatus(sync!.facts), detail: sync!.detail, failure: sync!.facts.failure };
   }
-  if (op === "close") { ports.delete(port); port.close(); return null; }
+  if (op === "close") {
+    ports.delete(port);
+    port.close();
+    const orders = indexOrders.get(port);
+    indexOrders.delete(port);
+    if (orders?.size) await persistence?.db.run(
+      "DELETE FROM captured_index_orders WHERE token IN (SELECT value FROM json_each(?))", [JSON.stringify([...orders])]);
+    return null;
+  }
   if (!persistence || retired) throw new Error("authored account is closed");
   switch (op) {
     case "pause_commands": {
@@ -123,15 +132,33 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
     case "read_snapshot": return persistence.readSnapshot(input.selection as unknown as StateSelection);
     case "replica": return persistence.replica();
     case "states": return persistence.states(input.selection as unknown as StateSelection);
-    case "query": return persistence.query(input.query as unknown as AuthoredQuery);
+    case "query": {
+      const query = input.query as unknown as AuthoredQuery;
+      if ((query.kind !== "page_register" && query.kind !== "habits" && query.kind !== "mentions" &&
+        query.kind !== "work_pending" && query.kind !== "work_completed") ||
+        !("token" in query.at)) return persistence.query(query);
+      const {kind, token} = query.at;
+      const orders = indexOrders.get(port) ?? new Set<string>();
+      if (kind === "retain") {
+        indexOrders.set(port, orders);
+        orders.add(token);
+      } else if (!orders.has(token)) {
+        if (kind === "release") return null;
+        throw new Error("captured index order has retired");
+      }
+      const result = await persistence.query(query);
+      const captured = query.kind === "work_pending" || query.kind === "work_completed" ? result.work_index : result[query.kind];
+      if (kind === "release" || kind === "retain" && captured?.kind !== "retained") orders.delete(token);
+      return result;
+    }
     case "commit": {
       const held = (await navigator.locks.query()).held?.find(lock => lock.name === `nexus-authored-command-${account}`);
       if (preparation?.port !== port || preparation.lease !== input.lease || held?.clientId !== preparation.holder) throw new Error("authored preparation retired before local commit");
       sync!.facts.saving = true; changed();
       try {
         const frame = input.frame as unknown as CommitFrame;
-        const { only_titles: onlyTitles, ...result } = await persistence.commit(frame);
-        if (result.kind === "committed") changed(true, changesDailyIndex(frame.change), changedResourceRefs([frame.change]), onlyTitles, port);
+        const result = await persistence.commit(frame);
+        if (result.kind === "committed") changed(true, changedResourceRefs([frame.change]), port);
         sync!.facts.pending = await persistence.hasPending();
         return result;
       } finally { sync!.facts.saving = false; changed(); }

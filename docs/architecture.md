@@ -1678,8 +1678,9 @@ The URL is requested state; the pane's list hook owns everything after it
 ### 8.12 Lists
 
 finite saved indexes are complete ordered observations: libraries, library contents,
-followed podcasts, episodes, chats, author works and lectern. authored pages use
-the local title/ref keyset query and bounded rendering described in §8.7. selected get
+followed podcasts, episodes, chats, author works, imports and lectern. authored
+indexes read complete ordered keys at one local revision. search and external
+browse continue near their admitted tail after forward input. selected get
 routes reject unknown/repeated query keys and `limit`/`cursor`. `CollectionIndex`
 contains only `items`; library entries add their library, podcast section and
 nullable manual-order revision; episodes add their show detail. all parts and
@@ -1690,7 +1691,8 @@ and bibliography; detail/catalog capabilities keep their full representations.
 
 `useServerValue` holds these complete results. a changed query immediately hides
 old rows, metadata and targets. same-query refresh retains its accepted snapshot
-until atomic replacement or failure. `fresh` requires live data and the accepted
+until atomic replacement. authoritative denial withdraws the affected value.
+`fresh` requires live data and the accepted
 invalidation token to match the requested token; commands additionally require
 no running read other than a passive observation, no failure, and their domain
 authority. strict `refetch()` is

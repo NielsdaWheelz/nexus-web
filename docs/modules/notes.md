@@ -5,23 +5,36 @@ one account-scoped authored graph. the same local query and commit owners serve
 writing online and offline. source downloads, chat, imports and account operations
 retain their separate owners.
 
+## page register
+
+large notes registers keep an identity-only order in the account's open
+sqlite connection before presenting a sparse description. a reachable visit
+retains its captured order. if the saved row disappears, back resolves the
+next surviving captured row, then the preceding one, against the current
+description. current membership authorizes the returned identity. visit and
+document retirement release their observations.
+
 ## journal
 
 `/daily` resolves the account's current civil date; `/daily/:date` opens the
 continuous journal at that date. newest dates precede older dates; writing keeps
 each page's own relationship order. `/pages/:id` is a separate standalone view.
-the local `daily_index` unions visible daily pages and recorded work dates.
-completion-only dates have a null page ref; empty authored pages remain indexed.
-only the requested unwritten date adds a presentation section. reading, focus and scrolling create or restore nothing; canonical daily
-bindings, including historical refs, remain authoritative.
+the local `daily_index` orders visible daily pages, recorded work dates, the
+requested arrival and any presented retained editors. civil date is the key.
+completion-only and unwritten dates may have a null page ref. reading, focus
+and scrolling leave storage unchanged. canonical daily bindings, including
+historical refs, remain authoritative.
 
-one pane coordinates date geometry and explicit placement. each day owns its
-writing and work. one article and heading keep their identity while its local
-reads open, succeed or fail. date geometry uses a measured extent or a 320 px
-reservation. native travel can freeze reservations above the reading line
-until it settles. idle changes preserve the live measured occurrence.
-explicit reveals need the band or date heading. back can also demand the
-previously held outline row. workspace recents describe the arrival date.
+one pane coordinates date geometry and explicit placement through the common
+memento. one article and heading keep their identity while their local reads
+open, succeed or fail. the date window uses a measured extent or a 320 px
+reservation, refined by the date's admitted writing. idle changes retain the
+measured reading line. native holds keep their captured order and extent
+until release. end on the focused pane scrollport reveals the oldest civil
+date. explicit reveals need the band or date heading. back can also demand
+the previously held outline row; resume restores the saved visit. workspace
+labels and recents describe the arrival date without title reads or rewriting
+the destination to a standalone page.
 
 one passive cold day opens at a time per visit, selected at the reading edge
 across two frames. the completed-work read can start alongside binding and
@@ -61,23 +74,31 @@ may revisit a live preview. fresh admission follows the captured neighbor's
 identity, or its surviving order after deletion. concurrent insertions or moves
 may require revisiting the day; a reading hold is not an archive snapshot.
 
-the complete index and visited geometry cost `o(days)`. a viewport lookup
-costs `o(log days + mounted)`. unseen heights are
-estimates; active selections and rich bodies have no hard total-memory bound.
-android's existing 16-mib result cap applies to the compact index and compound
-windows. the ui, worker and packaged native plans share the same closed query
-contract. provisioning and changes that can affect dated-page or work membership
-invalidate the index. note invalidation is conservative because body edits can
-revive a deleted work note. link and status changes leave membership intact.
+small date orders return their keys in the description. a large description
+gives the total extent, the first dates, the ranks of the requested dates
+and a 31-bit occupancy mask per occupied civil month. the masks cover the
+full order, so their size grows with occupied months. page refs and writing
+arrive by bounded rank ranges. a saved date can be located at the same
+revision.
+
+a native hold keeps the captured date order and measured extent. when the
+account advances, the current register supplies details for surviving
+dates by their new rank. a date awaiting a current detail occupies its full
+reserved block as a heading. only admitted days may resolve a page binding
+or refine their estimate. the memento expands the captured order when it
+needs saved anchor keys. active selections and rich bodies have no hard
+total-memory bound.
+
+the ui, worker and packaged native plans share the same closed query contract
+and android's 16-mib result limit. ranked and compound reads observe each
+corpus revision so their ranges and admission proofs use one revision.
 
 direct resource subscriptions wake for the refs a commit or feed application
 can change. provisioning and bulk scope publication can invalidate the whole
-store. a commit or feed batch that only changes titles of already visible pages
-wakes an outline when its root or a raw row uses one of those pages. an outline
-admission reads causal state for newly held documents at the slice's store
-revision and retries when another commit advances that revision first. an open
-writing document installs its exact local receipt and reads causal state on a
-change from outside its own writer.
+store. an outline admission reads causal state for newly held documents at the
+slice's store revision and retries when another commit advances that revision
+first. an open writing document installs its exact local receipt and reads
+causal state on a change from outside its own writer.
 
 the first daily title edit submits immediately. edits from the same occurrence
 can join the last queued daily title command while it waits for its turn.
@@ -101,8 +122,27 @@ both typed histories and the winning designation controls current behavior. disa
 tracking retains dates. unlink changes placement; deletion hides work and restoration
 returns it. text always uses the note's current wording.
 
-`work_pending`, `work_completed` and `habits` query visible notes before cursor
-pagination. unfinished tasks and today's unchecked habits share one capture order.
+`work_pending`, `work_completed` and `habits` describe the complete order of
+one local revision. large registers load visible rank ranges and resolve saved
+occurrences directly. unfinished tasks and today's unchecked habits share
+numeric capture order, with replica and ref ties. the pending view places
+retained editors and completion receipts at the matching gap in that order.
+an already retained task refreshes its label and action facts through
+`work_row`. the editor reads its own canonical writing separately.
+large completed days keep seekable rows inside the journal. register items
+carry bounded labels. a mounted row reads an elided label on demand, using
+already-open writing when available. the habit register carries whether
+repetition is active. its visible rows read positive checks for the selected year.
+configured habits and non-configured notes with positive habit history
+contribute keys from separate partial indexes.
+
+large work and habit registers retain their order in the account's local
+sqlite connection through native motion. the pane positions a remembered
+line from its captured occurrence or ordinal. work translates a displayed
+ordinal through its local receipt and editor placements before resolving
+the current survivor. historical sections publish the revision of their
+own civil-date register.
+
 the journal agenda ends with `add a task`, which opens its capture form in
 place. a completion fills the sign immediately. after 600ms from the press,
 its receipt replaces the row. an active menu or an editor still in use keeps
@@ -151,9 +191,9 @@ last habit. the header title yields while the paper heading is visible.
 activating a date opens that date
 in the existing correction dialog; month navigation never writes. year and month
 each use one roving keyboard stop. a normal history button remains available on
-small screens. stopped habits retain editable history. full positive date arrays
-travel in resource projections: simple existing subscriptions cost about 5 kb per
-fully checked habit-year and retain the hosts' existing result limits.
+small screens. stopped habits retain editable history. the store derives the
+latest recorded date across all habits. visible rows read positive dates for
+the chosen year.
 
 ## ownership
 
@@ -261,6 +301,13 @@ deleting a page, note or highlight never consumes an independent related note.
 a highlight owns its single annotation body; ordinary note links confer no
 annotation meaning. pdf resizing preserves the highlight id, annotation and links.
 
+the connections companion ranks distinct incoming mention owners by ref. its
+large register retains old ranks on the local sqlite connection. a held slice
+admits only owners that still mention the target and remain visible. the
+companion resolves the captured landing in the current register and mounts
+that row before restoring its line on the companion scrollport. later input
+and closing the companion retire the placement.
+
 source stubs retain literal references when a source disappears, including a
 deleted conversation. source deletion does not unlink the authored graph; a
 captured label grants no source access.
@@ -280,13 +327,25 @@ observed tie run. receiving and indexing never manufacture a touch.
 
 notes opens the continuous journal at the account's current day. the separate
 add action appends and focuses one tail bullet. the local register lists each
-visible undated page once, including untitled pages. title filtering covers the
-whole register with literal unicode-normalized substring matching. dates use the
-account's calendar. the default order is greatest writing time, then display
-title under sqlite `NOCASE`, then ref. unknown times sort last. title order uses
-the same title and ref keys. indexed keyset pages establish continuation with one
-lookahead. back retains still-matching row identities and focus against one
-current store revision. a fresh visit ranks again.
+visible undated page once, including untitled pages. the default order is
+greatest writing time, then display title under sqlite `NOCASE`, then ref.
+unknown times sort last. title order uses the title and ref keys and groups
+consecutive rows by the uppercased first code point. a filter matches every
+title by unicode-15 nfc/lower/substring. dates use the account's calendar.
+
+through 200 rows, the description returns the full lean order. beyond that it
+returns the total, title-group lengths where applicable, and a 24-row head.
+the viewport reads bounded ranks and locates saved references at that revision.
+long titles retain their register slot and resolve only when mounted.
+`new page` opens an empty focused title on the paper. back retains the reading
+line and still-matching focus against the current store revision. a fresh visit
+ranks again.
+
+while the register is moving, its captured ranks and heading positions stay
+fixed. bounded slices join that order to current visible pages and paint their
+current titles. unread or withdrawn rows keep their extent without controls.
+release resolves the captured ordinal against current membership before placing
+the new view, even when that row was never read during the movement.
 
 each effective authored edit credits its outer undated writing page at the
 originating device's time. explicitly targeted tool appends use their call time.
@@ -704,27 +763,33 @@ menus retain the same native control and focus target. retaining an open empty
 input does not establish child
 availability. they disclose authored local links, excluding relationships
 already traversed by that occurrence. a bounded batched local query proves child
-availability. one `outline_windows` query reads a coherent set of bounded raw
-pages, root and
-boundary projections, adjacent and absolute tail relationships, and aligned child
-proofs through indexed sql statements in one serialized store operation. every
-slice has the same outer revision and scope availability; a failed slice fails
-the whole read. sql emits ordered graph records and each
-bounded resource projection once; host adapters assemble the closed response.
+availability. unfiltered outline windows prove sibling count and starting rank
+after traversed-edge omission. the viewport sizes gaps from that count and
+requests rich windows directly at the measured rank. explicit `outline_filter`
+observes all adjacent link ids at one revision for each disclosed parent.
+the outline joins them by occurrence path, omits traversed links, and keeps
+matches and ancestors. the local literal fields derive from canonical
+title, text and quote. explicit filtering also checks disclosed server scopes
+through current admitted labels and quotes. failed scopes keep their paths and
+individual retries. one `outline_windows` query reads a coherent set of bounded
+raw pages, a root projection, adjacent and absolute tail links, and aligned
+child proofs in one serialized store operation. every slice shares one outer
+revision and scope availability; a failed slice fails the whole read. sql
+emits ordered graph records and resource projections for the root and selected
+raw rows. host adapters assemble the closed response.
 projection construction never feeds back into graph or cursor derivation.
 each endpoint arm selects a bounded range;
 it never materializes the complete incident graph. raw cursors and child proofs
 precede traversal omission; neighbors surround the first and last remaining
 rows, while the absolute tail excludes only the entering relationship. full
 resource projections retain literal rendering, filtering and copy behavior.
-the native bridge's existing 16 mib aggregate output cap also applies to this
-complete set. an extreme set may fail where separate reads previously
-fit; the existing read error and explicit retry retain writing without truncating,
-shrinking or partially publishing the proof. the root admits and retains all
-note/title documents together. its admission snapshot also supplies the actual
-initial note/page state for missing runtime documents. the existing per-ref
-reservation wins for live, loading and prepared documents; supplied state never
-replaces them. absent states retain ordinary loading and latent-page preludes.
+android partitions outline records and their document admission snapshot into
+byte-bounded native results at one store revision. a changed revision discards
+the incomplete observation. an individual projection too large for one transfer
+keeps its link, position and child proof and reports a failure on its row. the
+root reads the admission snapshot only for note and title documents it has
+yet to acquire. it retries a snapshot from a different store revision. the
+existing per-ref reservation wins for live, loading and prepared documents. absent states retain ordinary loading and latent-page preludes.
 newer subscriptions merge through the existing initial-revision catch-up.
 graph proofs share a store revision; unknown data
 never means absent. first entry waits for

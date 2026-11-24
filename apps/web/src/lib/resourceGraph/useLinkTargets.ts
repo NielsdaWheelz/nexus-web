@@ -1,25 +1,25 @@
 "use client";
 
-// Target admission owns ten-row pages. Results are selectable only for the exact
-// settled query; active identity belongs to the input, never to presentation.
-// `loading` and `error` speak for the remote search only while no snapshot answers its
-// query, so a refresh over shown or empty matches paints nothing.
+// The picker combines two independently admitted sources. Only the exact
+// settled query's results may be selected.
 import { useOptionalNoteEditorHost } from "@/lib/notes/editorHost";
-import { useAuthoredPages } from "@/lib/notes/hooks";
 import { localResourceHref } from "@/lib/resources/localResource";
 import { authoredItem } from "@/lib/notes/presentation";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiFetch } from "@/lib/api/client";
 import { useSettled } from "@/lib/api/serverState";
 import { usePaneFreeServerList } from "@/lib/api/useServerList";
+import { useLocalDiscovery } from "@/lib/search/localDiscovery";
 import { SEARCH_READ_TIMEOUT_MS } from "@/lib/search/policy";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+
 export type LinkTargetResult =
   | Schema<"ResourceTargetResourceOut">
   | Schema<"ResourceTargetPassageOut">;
+
 export const targetKey = (target: LinkTargetResult): string =>
   target.kind === "resource" ? target.item.ref : target.candidate_ref;
-const EMPTY: readonly LinkTargetResult[] = [];
+
 export function useLinkTargets(
   raw: string,
   sourceRef: string | null,
@@ -29,24 +29,25 @@ export function useLinkTargets(
   remoteSource: string | null = sourceRef,
 ) {
   const host = useOptionalNoteEditorHost();
-  const query = raw.slice(1).trim();
-  const settled = useSettled(raw, 200);
-  const settledQuery = settled.slice(1).trim();
+  const query = raw.slice(1).trim().normalize("NFC");
+  const settled = useSettled(query, 200);
   const stale = useChangeStamp("Notes", "NoteBodies", "Metadata");
-  const admitted = enabled && query.length >= 2;
+  const minimum = Array.from(query).length < 2;
+  const admitted = enabled && !minimum && query === settled;
+  const remote = host?.references !== "local";
   const exclusions = [...new Set([excludeRef, sourceRef].filter((ref): ref is string => ref !== null))];
+  const isRemoteTarget = (target: LinkTargetResult) => !/^(note_block|page|highlight):/u.test(target.item.ref);
   const list = usePaneFreeServerList<LinkTargetResult>({
-    key:
-      admitted && settledQuery.length >= 2 && host?.references !== "local"
-        ? `/resource-items/targets/search?${new URLSearchParams({ q: settledQuery, source_ref: JSON.stringify(remoteSource), exclude_refs: JSON.stringify(exclusions) })}`
-        : null,
+    key: admitted && remote
+      ? JSON.stringify(["reference", query, remoteSource, exclusions])
+      : null,
     stale,
     // The endpoint fixes its page size; no limit parameter is supported.
-    pageSize: 10,
-    readPolicy: "search:target-picker-prefix",
-    retry: "capacity",
+    pageSize: 10, readPolicy: "search:target-picker-prefix", retry: "capacity",
+    cursorRecovery: "manual",
     prefixTimeoutMs: pages => SEARCH_READ_TIMEOUT_MS.hybrid * (pages ?? 101),
-    active: active && raw === settled,
+    active: active && admitted,
+    continuation: item => isRemoteTarget(item) && !localKeys.has(targetKey(item)),
     id: targetKey,
     fetchPage: async (cursor, _limit, signal) => {
       const { data } = await apiFetch<
@@ -55,7 +56,7 @@ export function useLinkTargets(
         method: "POST",
         signal,
         body: JSON.stringify({
-          q: settledQuery,
+          q: query,
           reading_media_id: null,
           source_ref: remoteSource,
           exclude_refs: exclusions,
@@ -65,26 +66,51 @@ export function useLinkTargets(
       return { items: data.targets, next_cursor: data.next_cursor };
     },
   });
-  const local = useAuthoredPages(admitted && settledQuery.length >= 2 ? { kind: "search", text: settledQuery, link_from: sourceRef, cursor: null, limit: 100, scopes: [{ kind: "all", id: null }], families: null } : null);
-  const localTargets: LinkTargetResult[] = (local.data?.rows ?? []).filter(row => !exclusions.includes(row.resource.ref) && row.resource.kind !== "highlight").map(row => ({ kind: "resource", item: authoredItem(row.resource, row.activation_ref, localResourceHref(row.resource, { activationRef: row.activation_ref })), existing_link_id: row.link?.link_id ?? null }));
-  const current = admitted && raw === settled && local.data !== null;
-  const remoteTargets = list.current ? list.items.filter(target => !/^(note_block|page|highlight):/u.test(target.item.ref)) : [];
+  const remoteTargets = list.current ? list.items.filter(isRemoteTarget) : [];
+  const remoteKeys = new Set(remoteTargets.map(targetKey));
+  const localTarget = ({ resource }: { resource: { ref: string; kind: string } }) =>
+    !exclusions.includes(resource.ref) && resource.kind !== "highlight";
+  const local = useLocalDiscovery(admitted ? { kind: "search", text: query, link_from: sourceRef, cursor: null, limit: 100,
+    scopes: [{ kind: "all", id: null }], families: null } : null, active,
+  row => localTarget(row) && !remoteKeys.has(row.resource.ref));
+  const localTargets: LinkTargetResult[] = (local.data?.rows ?? [])
+    .filter(localTarget)
+    .map(({ resource, activation_ref, link }) => ({ kind: "resource", item: authoredItem(resource, activation_ref,
+      localResourceHref(resource, { activationRef: activation_ref })), existing_link_id: link?.link_id ?? null }));
+  const localKeys = new Set(localTargets.map(targetKey));
   const seen = new Set<string>();
-  const items = [...localTargets, ...remoteTargets].filter(target => { const key = targetKey(target); if (seen.has(key)) return false; seen.add(key); return true; });
+  const items = [...localTargets, ...remoteTargets].filter(target => {
+    const key = targetKey(target);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const current = admitted && (local.data !== null || list.current);
+  const localCanContinue = current && local.data !== null && local.data.next_cursor !== null && local.error === null;
+  const remoteCanContinue = current && list.current && !list.complete && list.failure === null;
   return {
-    items: current ? items : EMPTY,
+    items: current ? items : [],
     current,
-    querySettled: raw === settled,
-    minimum: query.length < 2,
-    loading: admitted && (raw !== settled || local.data === null && local.error === null || list.requestedKey !== null && list.status === "loading"),
+    querySettled: query === settled,
+    minimum,
+    loading: enabled && !minimum && (!admitted || local.pending || remote && list.status === "loading"),
+    complete: current && local.data?.next_cursor === null && local.error === null && (!remote || list.complete && list.failure === null),
     localError: local.error,
-    localOccurrence: local.occurrence,
     localPending: local.pending,
     retryLocal: local.retry,
-    localComplete: local.data?.next_cursor === null,
+    localCanContinue,
+    localNeedsAction: local.continuationNeedsAction,
     moreLocal: local.more,
-    error: admitted && raw === settled && list.status === "failed" ? list.failure?.error ?? null : null,
+    remoteCanContinue,
+    error: admitted ? list.failure?.error ?? null : null,
     list,
-    retry: list.retry,
+    retry: () => {
+      if (list.failure?.error.code === "E_INVALID_CURSOR") void list.refetch().catch(() => {});
+      else list.retry();
+    },
+    fetchAhead() {
+      if (localCanContinue) local.fetchAhead();
+      if (remoteCanContinue) list.fetchAhead();
+    },
   };
 }

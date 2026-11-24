@@ -14,24 +14,27 @@ import { validateBindings } from "@nexus/authored/identity";
 import { isLocalFeedEcho, mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
 import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, REBUILD_DEVICE_SQL } from "@nexus/authored/schema";
-import { bindingQueries, compileQuery, compileOutlineWindows, excerptQuery, searchQuery, sourceAliasQuery, titleOnlyChanges, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
+import { bindingQueries, compileQuery, compileOutlineWindows, excerptQuery, searchQuery, sourceAliasQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, LITERAL_MISSING_SQL, LITERAL_SOURCE_SQL, LITERAL_WRITE_SQL, foldedFields } from "@nexus/authored/queries";
 import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange, type LinkState, type OutlineWindowProof, type OutlineWindowSlice, type ResourceProjection } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
 import { SCOPE_SQL, type ScopeInputsPage, type ScopeProgress, type ScopeTextPage, type ScopeNormalizationInterval, type ScopeRawChunk, type ScopeNormalizationObservation, type NormalizedScopeChunk } from "@nexus/authored/scope";
 
-function decodeOutlineWindow(raw: Record<string, unknown>[], rootRef: string): OutlineWindowSlice {
+export function decodeOutlineWindow(raw: Record<string, unknown>[], rootRef: string): OutlineWindowSlice {
   const resources = new Map<string, ResourceProjection>();
+  const oversized_refs: string[] = [];
+  const value = <T,>(record: Record<string, unknown>) => (typeof record.value_json === "string" ? JSON.parse(record.value_json) : record.value_json) as T;
   for (const record of raw) if (record.part === "resource") {
-    const resource: ResourceProjection = JSON.parse(String(record.value_json));
+    const resource = value<ResourceProjection>(record);
     resources.set(resource.ref, resource);
+    if (record.oversized === true) oversized_refs.push(resource.ref);
   }
   const meta = raw.find(record => record.part === "meta");
   if (!meta) throw new Error("outline window metadata is missing");
   const rows: QueryResult["rows"] = [], children: QueryResult["children"] = [];
-  const proof: OutlineWindowProof = {root: resources.get(rootRef) ?? null, before: null, after: null, tail: null};
+  const proof: OutlineWindowProof = {root: resources.get(rootRef) ?? null, oversized_refs, before: null, after: null, tail: null};
   for (const record of raw) {
     if (record.part === "resource" || record.part === "meta") continue;
-    const link: LinkState = JSON.parse(String(record.value_json));
+    const link = value<LinkState>(record);
     if (record.part === "raw") {
       const resource = resources.get(String(record.ref));
       if (!resource) throw new Error("outline row resource is missing from its proven revision");
@@ -40,7 +43,11 @@ function decodeOutlineWindow(raw: Record<string, unknown>[], rootRef: string): O
     } else if (record.part === "before" || record.part === "after" || record.part === "tail") proof[record.part] = link;
     else throw new Error("unknown outline window record");
   }
-  return {rows, children, proof, next_cursor: meta.next_cursor === null ? null : String(meta.next_cursor),
+  const total = Number(meta.total), start_rank = meta.start_rank === null ? null : Number(meta.start_rank);
+  if (!Number.isSafeInteger(total) || total < 0 ||
+      start_rank !== null && (!Number.isSafeInteger(start_rank) || start_rank < 0 || start_rank >= total))
+    throw new Error("outline window has invalid ranks");
+  return {rows, children, proof, total, start_rank, next_cursor: meta.next_cursor === null ? null : String(meta.next_cursor),
     previous_cursor: meta.previous_cursor === null ? null : String(meta.previous_cursor)};
 }
 
@@ -65,7 +72,18 @@ export class Persistence {
       for (const sql of DEVICE_SCHEMA) await this.db.run(sql);
       await this.db.run("INSERT OR IGNORE INTO replica_state VALUES (1,?,?,0,0,0,0,?,0)", [accountId, crypto.randomUUID(), FORMAT_REVISION]);
       if (rebuild) for (const sql of REBUILD_DEVICE_SQL) await this.db.run(sql);
+      // Format 7 devices can gain the derived table without reprovisioning local edits.
+      for (;;) {
+        const missing = await this.db.all(LITERAL_MISSING_SQL);
+        if (!missing.length) break;
+        for (const row of missing) await this.indexLiteral(String(row.ref));
+      }
     });
+  }
+  private async indexLiteral(ref: string) {
+    const [source] = await this.db.all(LITERAL_SOURCE_SQL, [ref]);
+    if (source) await this.db.run(LITERAL_WRITE_SQL, [ref, ...foldedFields(source)]);
+    else await this.db.run("DELETE FROM literal_fields WHERE ref=?", [ref]);
   }
   async readSnapshot(selection: StateSelection): Promise<{ replica: ReplicaState; states: Corpus }> {
     return { replica: await this.replica(), states: await this.states(selection) };
@@ -103,6 +121,42 @@ export class Persistence {
     // The worker keeps this revision fixed across every statement of the query.
     const { provisioning_complete, store_revision } = await this.replica();
     if (!provisioning_complete) throw new Error("authored corpus is still preparing");
+    if ("expected_revision" in query || query.kind === "work_row" || query.kind === "register_label" || query.kind === "habit_days" || query.kind === "latest_habit_date") {
+      const result: QueryResult = {store_revision, rows: [], children: [], next_cursor: null, previous_cursor: null,
+        binding_id: null, canonical_source_ref: null, positions: [], scope_available: true, outline_windows: null,
+        daily_index: null, page_register: null, register_label: null, outline_filter: null, work_index: null, habits: null, mentions: null, habit_days: null, latest_habit_date: null};
+      const plan = compileQuery(query);
+      if ("expected_revision" in query && query.expected_revision !== null && store_revision !== query.expected_revision) {
+        const field = query.kind === "work_pending" || query.kind === "work_completed" ? "work_index" : query.kind;
+        result[field] = {kind: "changed"};
+        return result;
+      }
+      const rows = await this.db.all(plan.sql, plan.params);
+      const [record] = rows;
+      if ((query.kind === "page_register" || query.kind === "habits" || query.kind === "mentions" ||
+        query.kind === "work_pending" || query.kind === "work_completed") &&
+        (query.at.kind === "retain" || query.at.kind === "release")) {
+        const field = query.kind === "work_pending" || query.kind === "work_completed" ? "work_index" : query.kind;
+        if (query.at.kind === "retain") result[field] = {kind: "retained"};
+        return result;
+      }
+      if (query.kind === "habit_days") {
+        result.habit_days = rows.map(row => String(row.local_date));
+      } else if (query.kind === "latest_habit_date") {
+        result.latest_habit_date = typeof record?.local_date === "string" ? record.local_date : null;
+      } else if (query.kind === "register_label") {
+        result.register_label = record ? {label: typeof record.label === "string" ? record.label : null, oversized: Number(record.oversized) === 1} : null;
+      } else if (query.kind === "page_register" || query.kind === "habits" || query.kind === "mentions" || query.kind === "daily_index") {
+        result[query.kind] = JSON.parse(String(record!.register));
+      } else if (query.kind === "work_pending" || query.kind === "work_completed" || query.kind === "work_row") {
+        result.work_index = JSON.parse(String(record!.register));
+      } else {
+        const total = Number(record!.total), start = query.start;
+        const raw: [string,string,number][] = JSON.parse(String(record!.items));
+        result.outline_filter = {kind: "range", start, total, items: raw.map(([link_id,other_ref,matched]) => ({link_id,other_ref,matched: matched === 1}))};
+      }
+      return result;
+    }
     if (query.kind === "excerpt") {
       const result = await excerptQuery(plan => this.db.all(plan.sql,plan.params),query);
       return {store_revision,...result};
@@ -126,35 +180,29 @@ export class Persistence {
     if (query.kind === "outline_windows") {
       const windows: OutlineWindowSlice[] = [];
       for (const compiled of compileOutlineWindows(query)) windows.push(decodeOutlineWindow(await this.db.all(compiled.sql, compiled.params), query.ref));
-      return {store_revision, rows: [], children: [], outline_windows: windows, daily_index: null,
+      return {store_revision, rows: [], children: [], page_register: null, register_label: null, outline_filter: null, work_index: null, habits: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: windows, daily_index: null,
         next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], scope_available: true};
     }
     const compiled = compileQuery(query);
     const raw = await this.db.all(compiled.sql, compiled.params);
-    if (query.kind === "daily_index") return {store_revision,
-      daily_index: raw.map(row => ({local_date: String(row.local_date), ref: row.ref === null ? null : String(row.ref)})),
-      rows: [], children: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null,
-      positions: [], scope_available: true, outline_windows: null};
     if (query.kind === "outline_children") return {
       store_revision, rows: [], next_cursor: null,
       previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [],
-      children: raw.map(row => row.child_available === null ? null : Number(row.child_available) === 1), scope_available: true, daily_index: null, outline_windows: null,
+      children: raw.map(row => row.child_available === null ? null : Number(row.child_available) === 1), scope_available: true, daily_index: null, page_register: null, register_label: null, outline_filter: null, work_index: null, habits: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null,
     };
-    if (query.kind === "binding") return { store_revision, rows: [], children: [], next_cursor: null, previous_cursor: null, positions: [], binding_id: raw[0] ? String(raw[0].binding_id) : null, canonical_source_ref: null, scope_available: true, daily_index: null, outline_windows: null };
+    if (query.kind === "binding") return { store_revision, rows: [], children: [], next_cursor: null, previous_cursor: null, positions: [], binding_id: raw[0] ? String(raw[0].binding_id) : null, canonical_source_ref: null, scope_available: true, daily_index: null, page_register: null, register_label: null, outline_filter: null, work_index: null, habits: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null };
     if (query.kind === "positions") {
       const positions = raw.map(row => JSON.parse(String(row.position_json)));
-      return { store_revision, rows: [], children: [], positions, next_cursor: query.at.kind === "tie" && positions.length === Math.min(100, query.at.limit) ? String(raw.at(-1)?.cursor_json) : null, previous_cursor: null, binding_id: null, canonical_source_ref: null, scope_available: true, daily_index: null, outline_windows: null };
+      return { store_revision, rows: [], children: [], positions, next_cursor: query.at.kind === "tie" && positions.length === Math.min(100, query.at.limit) ? String(raw.at(-1)?.cursor_json) : null, previous_cursor: null, binding_id: null, canonical_source_ref: null, scope_available: true, daily_index: null, page_register: null, register_label: null, outline_filter: null, work_index: null, habits: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null };
     }
-    const pageLimit = query.kind === "pages" ? Math.max(1, Math.min(100, Math.floor(query.limit))) : null;
-    const records = pageLimit === null ? raw : raw.slice(0, pageLimit);
-    const rows = records.map(row => ({ resource: JSON.parse(String(row.projection_json)), link: row.link_json === null ? null : JSON.parse(String(row.link_json)), match_text: null, activation_ref: null, matched_field: null, activation_field: null }));
+    const rows = raw.map(row => ({ resource: JSON.parse(String(row.projection_json)), link: row.link_json === null ? null : JSON.parse(String(row.link_json)), match_text: null, activation_ref: null, matched_field: null, activation_field: null }));
     const last = rows.at(-1);
     let next: string | null = null;
-    if (last && (pageLimit !== null ? raw.length > pageLimit : "limit" in query && rows.length === Math.min(100, query.limit))) {
-      const cursor = records.at(-1)?.cursor_json;
+    if (last && "limit" in query && rows.length === Math.min(100, query.limit)) {
+      const cursor = raw.at(-1)?.cursor_json;
       next = typeof cursor === "string" ? cursor : last.resource.ref;
     }
-    return { store_revision, rows, next_cursor: next, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, outline_windows: null };
+    return { store_revision, rows, next_cursor: next, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, page_register: null, register_label: null, outline_filter: null, work_index: null, habits: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null };
   }
   async write(states: MergeResult) {
     for (const state of states.resources) {
@@ -178,20 +226,21 @@ export class Persistence {
     for (const state of states.source_stubs) await this.db.run("INSERT INTO source_stubs VALUES(?,?) ON CONFLICT(source_ref) DO UPDATE SET state_json=excluded.state_json", [state.source_ref, JSON.stringify(state)]);
     const indexed = new Set([...states.resources.map(state => state.ref), ...states.passages.map(state => `passage_anchor:${state.anchor_id}`), ...states.source_stubs.map(state => state.source_ref)]);
     for (const ref of indexed) {
+      await this.indexLiteral(ref);
       await this.db.run(SEARCH_REMOVE_SQL, [ref]);
       await this.db.run(SEARCH_INDEX_SQL, [ref]);
     }
   }
-  async commit(frame: CommitFrame): Promise<CommitResult & { only_titles: boolean }> {
+  async commit(frame: CommitFrame): Promise<CommitResult> {
     const bytes = JSON.stringify(frame.change);
     if (new TextEncoder().encode(bytes).byteLength > MAX_COMMAND_BYTES) throw new Error("authored command exceeds 2 mib");
     return this.db.transaction(async () => {
       const current = await this.replica();
       if (!current.provisioning_complete) throw new Error("authored corpus is still preparing");
       if (frame.replica_id !== current.replica_id) throw new Error("wrong authored replica");
-      if (BigInt(frame.change.command_seq) <= BigInt(current.command_seq)) return { kind: "committed", command_seq: frame.change.command_seq, store_revision: current.store_revision, only_titles: false };
+      if (BigInt(frame.change.command_seq) <= BigInt(current.command_seq)) return { kind: "committed", command_seq: frame.change.command_seq, store_revision: current.store_revision };
       if (BigInt(frame.change.command_seq) !== BigInt(current.command_seq) + BigInt(1)) throw new Error("authored command sequence gap");
-      if (frame.expected_store_revision !== current.store_revision) return { kind: "stale", store_revision: current.store_revision, states: await this.changeStates(frame.change), only_titles: false };
+      if (frame.expected_store_revision !== current.store_revision) return { kind: "stale", store_revision: current.store_revision, states: await this.changeStates(frame.change) };
       const states = await this.changeStates(frame.change);
       await validateBindings(current.account_id, states, [frame.change]);
       const merged = mergeChanges(states, [frame.change]);
@@ -199,17 +248,16 @@ export class Persistence {
       await this.db.run("INSERT INTO pending_changes VALUES(?,?,?)", [BigInt(frame.change.command_seq), bytes, new TextEncoder().encode(bytes).byteLength]);
       const revision = (BigInt(current.store_revision) + BigInt(1)).toString();
       await this.db.run("UPDATE replica_state SET command_seq=?,store_revision=?,lamport=MAX(lamport,?) WHERE singleton=1", [BigInt(frame.change.command_seq), BigInt(revision), BigInt(frame.change.lamport)]);
-      return { kind: "committed", command_seq: frame.change.command_seq, store_revision: revision, only_titles: titleOnlyChanges([frame.change], states, merged) };
+      return { kind: "committed", command_seq: frame.change.command_seq, store_revision: revision };
     });
   }
-  async applyRemote(entries: FeedChange[], nextCursor: string): Promise<{ replica: ReplicaState; applied: Change[]; only_titles: boolean }> {
+  async applyRemote(entries: FeedChange[], nextCursor: string): Promise<{ replica: ReplicaState; applied: Change[] }> {
     return this.db.transaction(async () => {
       const current = await this.replica();
       if (!current.provisioning_complete) throw new Error("authored corpus is still preparing");
       let cursor = BigInt(current.server_cursor);
       let lamport = BigInt(current.lamport);
       const applied: Change[] = [];
-      let onlyTitles = true;
       for (const entry of entries) {
         const sequence = BigInt(entry.server_seq);
         if (sequence <= cursor) continue;
@@ -222,19 +270,18 @@ export class Persistence {
         const states = await this.changeStates(change);
         await validateBindings(current.account_id, states, [change]);
         const merged = mergeChanges(states, [change]);
-        onlyTitles &&= titleOnlyChanges([change], states, merged);
         await this.write(merged);
         applied.push(change);
       }
       if (cursor.toString() !== nextCursor) throw new Error("authored feed cursor disagrees with applied commands");
-      if (current.server_cursor === nextCursor) return { replica: current, applied, only_titles: false };
+      if (current.server_cursor === nextCursor) return { replica: current, applied };
       await this.db.run("UPDATE replica_state SET server_cursor=?,store_revision=store_revision+?,lamport=? WHERE singleton=1", [cursor, applied.length, lamport]);
-      return { replica: await this.replica(), applied, only_titles: applied.length > 0 && onlyTitles };
+      return { replica: await this.replica(), applied };
     });
   }
   async resetProvisioning() {
     await this.db.transaction(async () => {
-      for (const table of ["resources", "links", "passages", "source_stubs", "reference_index", "search_documents"]) await this.db.run(`DELETE FROM ${table}`);
+      for (const table of ["resources", "links", "passages", "source_stubs", "reference_index", "search_documents", "literal_fields"]) await this.db.run(`DELETE FROM ${table}`);
     });
   }
   async stage(states: MergeResult) { await this.db.transaction(() => this.write(states)); }

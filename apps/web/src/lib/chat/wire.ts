@@ -9,6 +9,7 @@ import { CHOICE_UNAVAILABLE } from "./selection";
 // Chat's names for the generated FastAPI wire (docs/local-rules/typed-wire.md).
 export type Message = Schema<"MessageOut">;
 export type Timeline = Schema<"TimelineOut">;
+export type TurnKey = Timeline["order"][number];
 export type Turn = Schema<"ChatRunResponse">;
 export type RunRead = ApiJson<"/chat-runs/{run_id}", "get">["data"];
 /** Create and repeat answer the same receipt. */

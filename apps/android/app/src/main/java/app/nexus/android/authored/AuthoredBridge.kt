@@ -2,6 +2,7 @@ package app.nexus.android.authored
 
 import android.net.Uri
 import android.util.Base64
+import android.util.Log
 import android.webkit.WebView
 import app.nexus.android.AppRouter
 import app.nexus.android.BuildConfig
@@ -47,6 +48,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
     private val requests = mutableMapOf<Long, Job>()
     private val uploads = mutableMapOf<String, Pair<Int, ByteArrayOutputStream>>()
     private val outputs = mutableMapOf<String, ByteArray>()
+    private val indexOrders = mutableSetOf<String>()
     private var snapshot: File? = null
     private var lease: String? = null
     private var documentOwner: Pair<OwnedWebMessage, UUID>? = null
@@ -75,6 +77,15 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
     fun onPageStarted() {
         for (request in requests.values.toList()) request.cancel()
         requests.clear()
+        val account = boundAccount
+        val tokens = indexOrders.toList()
+        indexOrders.clear()
+        if (account != null && tokens.isNotEmpty()) orderRetirement.launch {
+            commands.withLock {
+                runCatching { store?.takeIf { it.account == account }?.releaseIndexOrders(tokens) }
+                    .onFailure { Log.w("AuthoredBridge", "could not release a retired index order", it) }
+            }
+        }
         boundAccount = null
         documentOwner = null
         framing.onDocumentStarted(); uploads.clear(); outputs.clear()
@@ -109,8 +120,8 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
             val reply = try {
                 val result = when (frame.getString("op")) {
                     "begin" -> {
-                        val size = frame.getInt("byte_count"); require(size in 0..(16 * 1024 * 1024))
-                        require(uploads.size < 8 && uploads.values.sumOf { it.first } + size <= 16 * 1024 * 1024)
+                        val size = frame.getInt("byte_count"); require(size in 0..(AUTHORED_TRANSFER_BYTES))
+                        require(uploads.size < 8 && uploads.values.sumOf { it.first } + size <= AUTHORED_TRANSFER_BYTES)
                         uploads[frame.getString("transfer_id")] = size to ByteArrayOutputStream(); JSONObject()
                     }
                     "chunk" -> {
@@ -127,7 +138,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                         val request = if (inlineRequest) {
                             val bytes = Base64.decode(frame.getString("base64"), Base64.NO_WRAP)
                             require(bytes.size <= 24 * 1024)
-                            require(uploads.size < 8 && uploads.values.sumOf { it.first } + bytes.size <= 16 * 1024 * 1024)
+                            require(uploads.size < 8 && uploads.values.sumOf { it.first } + bytes.size <= AUTHORED_TRANSFER_BYTES)
                             JSONObject(String(bytes, Charsets.UTF_8))
                         } else {
                             val transfer = uploads[transferId] ?: error("no authored upload")
@@ -142,6 +153,17 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                             require(request.has("account_id"))
                             if (!request.isNull("account_id") && request.getString("account_id") != account.toString())
                                 throw NexusOriginError(403, "E_ACCOUNT_MISMATCH")
+                        }
+                        val query = if (operation == "query") request.optJSONObject("query") else null
+                        val indexKind = query?.optString("kind")
+                        val order = if (indexKind in listOf("page_register", "habits", "mentions", "work_pending", "work_completed"))
+                            query?.optJSONObject("at") else null
+                        val indexField = if (indexKind == "work_pending" || indexKind == "work_completed") "work_index" else indexKind
+                        val token = order?.takeIf { it.has("token") }?.getString("token")
+                        val orderOperation = order?.optString("kind")
+                        if (token != null) when (orderOperation) {
+                            "retain" -> indexOrders.add(token)
+                            "held", "successor", "landing", "release" -> require(token in indexOrders)
                         }
                         remoteOperation = operation in setOf("register", "push", "pull", "snapshot", "scope_inputs", "scope_text_remote")
                         if (remoteOperation && foreground && session.remoteAdmission == "Unavailable") {
@@ -183,9 +205,11 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                             }
                         }
                         require(current(message, account))
+                        if (token != null && (orderOperation == "release" || orderOperation == "retain" &&
+                                result.optJSONObject(indexField)?.optString("kind") == "changed")) indexOrders.remove(token)
                         if (operation == "hello") { boundAccount = account; documentOwner = message to account; result.put("wire_revision", BuildConfig.NEXUS_WIRE).put("foreground", foreground).put("foreground_revision", foregroundRevision.toString()) }
                         val bytes = result.toString().toByteArray(Charsets.UTF_8)
-                        require(bytes.size <= 16 * 1024 * 1024 && outputs.size < 8)
+                        require(bytes.size <= AUTHORED_TRANSFER_BYTES && outputs.size < 8)
                         if (inlineRequest && bytes.size <= 24 * 1024) {
                             JSONObject().put("kind", "inline").put("byte_count", bytes.size).put("base64", Base64.encodeToString(bytes, Base64.NO_WRAP))
                         } else {
@@ -236,9 +260,14 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
         require(current(message, account))
         return when (request.getString("op")) {
             "hello", "replica" -> store!!.replica()
-            "read_snapshot" -> store!!.readSnapshot(request.getJSONObject("selection"))
+            "read_snapshot" -> store!!.readSnapshot(request)
             "states" -> store!!.states(request.getJSONObject("selection"))
             "query" -> store!!.query(request.getJSONObject("query"), request.getJSONArray("plans"))
+            "outline_read" -> store!!.outlineRead(request)
+            "literal_inputs" -> store!!.literalInputs()
+            "literal_piece" -> store!!.literalPiece(request)
+            "literal_install" -> { store!!.literalInstall(request); JSONObject() }
+            "literal_part" -> JSONObject().put("accepted", store!!.literalPart(request))
             "search_read" -> store!!.searchRead(request.getJSONArray("params"), request.getString("plan_key"))
             "search_match" -> store!!.searchMatch(request.getString("text"), request.getString("expression"))
             "scope_progress" -> store!!.scopeProgress()
@@ -257,13 +286,13 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
             "scope_normalized" -> JSONObject().put("accepted", store!!.scopeNormalized(request))
             "scope_text_complete" -> JSONObject().put("accepted", store!!.scopeTextComplete(request.getString("revision"), request.getString("reading_ref")))
             "scope_publish" -> JSONObject().put("accepted", store!!.scopePublish(request.getString("revision"), request.getString("expected_store_revision")))
-            "commit" -> { require(lease != null && lease == request.getString("lease") && preparations.holdsLock(lease!!)); store!!.commit(request.getJSONObject("frame")) }
+            "commit" -> { require(lease != null && lease == request.getString("lease") && preparations.holdsLock(lease!!)); store!!.commit(request.getJSONObject("frame"), request.optJSONArray("literal_fields")) }
             "uploaded" -> JSONObject().put("uploaded", store!!.uploaded(request.getString("command_seq")))
             "pending" -> JSONObject().put("changes", store!!.pending())
             "acknowledge" -> { store!!.acknowledge(request.getString("sequence")); JSONObject() }
             "apply_remote" -> store!!.applyRemote(request)
             "reset_provisioning" -> { store!!.resetProvisioning(); JSONObject() }
-            "stage" -> { store!!.stage(request.getJSONObject("states")); JSONObject() }
+            "stage" -> { store!!.stage(request.getJSONObject("states"), request.optJSONArray("literal_fields")); JSONObject() }
             "finish_provisioning" -> { store!!.finishProvisioning(request.getString("cursor"), request.getJSONObject("counts"), request.getString("lamport")); JSONObject() }
             "register" -> JSONObject().put("data", origin.authoredRegister(account, request.getJSONObject("body")))
             "push" -> JSONObject().put("data", origin.authoredPush(account, request.getJSONObject("body")))
@@ -277,6 +306,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
         private var foregroundOwner: AuthoredBridge? = null
         private val preparations = Mutex()
         private val commands = Mutex()
+        private val orderRetirement = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         private var store: AuthoredStore? = null
         private fun bound(context: android.content.Context, account: UUID): AuthoredStore {
             val current = store

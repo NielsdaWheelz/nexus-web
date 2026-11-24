@@ -2,6 +2,7 @@
 
 // Reference intent is visit-owned draft state above prose persistence. Acceptance
 // freezes identity and placement; only the queue head seals its causal version.
+import { useDiscoveryOptions } from "@/lib/search/discoveryBoundary";
 import { useEffect, useId, useRef } from "react";
 import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
 import { capturePassageLocator } from "@nexus/authored/capture";
@@ -21,6 +22,8 @@ import { useEditorDraft } from "@/lib/notes/editorHost";
 
 export type ReferenceInputHost = {
   source_ref: string | null;
+  /** A latent authored destination has placement and self-exclusion but no hosted link lookup. */
+  source_materialized?: boolean;
   label: string;
   onActiveChange?(active: boolean): void;
 } & (
@@ -56,10 +59,14 @@ export function useReferenceQuery(input: {
 }) {
   const listId = `reference-${useId().replaceAll(":", "")}`;
   const search = useLinkTargets(input.raw, input.source, input.enabled, input.open, input.excludeRef, input.remoteSource);
+  const context = JSON.stringify([input.context, input.source, input.remoteSource, input.excludeRef]);
   const admitted = input.open && search.querySettled && !search.minimum && search.current;
   const items = admitted ? search.items : [];
-  const options = items.map(item => ({key: targetKey(item), disabledReason: input.disabled}));
-  const reconciled = reconcileSearchActive({context: input.context, admitted, options,
+  const viewport = useRef<HTMLDivElement>(null);
+  const {slots, holding} = useDiscoveryOptions({ key: context, viewport, open: input.open, rows: items,
+    id: targetKey, forward: search.fetchAhead });
+  const options = slots.flatMap(slot => slot.row === null ? [] : [{key: slot.id, disabledReason: input.disabled}]);
+  const reconciled = reconcileSearchActive({context, admitted, options,
     initialKey: options[0]?.key ?? null, active: input.active});
   const selected = admitted ? reconciled?.key ?? null : null;
   useEffect(() => {
@@ -69,9 +76,9 @@ export function useReferenceQuery(input: {
     const target = items.find(item => targetKey(item) === key);
     if (target && input.disabled === null) input.choose(target);
   };
-  const bindings = useSearchOptions({listId, label: `link from ${input.label}`, open: input.open, options,
-    activeKey: selected, onActiveChange: key => input.setActive({context: input.context, key}), onActivate: accept});
-  return {search: {...search, items}, bindings, selected, acceptSelected() { if (selected !== null) accept(selected); }};
+  const bindings = useSearchOptions({listId, label: `link from ${input.label}`, open: input.open, viewport, options,
+    activeKey: selected, onActiveChange: key => input.setActive({context, key}), onActivate: accept, onForward: search.fetchAhead});
+  return {search: {...search, items}, slots, holding, bindings, selected, acceptSelected() { if (selected !== null) accept(selected); }};
 }
 
 export function useReferenceInput(
@@ -94,9 +101,11 @@ export function useReferenceInput(
   const active = state !== null;
   const hasHost = host !== null;
   const set = draft.set;
+  const source = state?.host.source_ref ?? null;
+  const ownsField = state !== null && state.row_id === row_id;
   const query = useReferenceQuery({
-    raw: state?.raw ?? "", source: state?.host.source_ref ?? null, label: state?.host.label ?? "editor",
-    enabled: active, open: pickerOpen && active && state.row_id === row_id,
+    raw: state?.raw ?? "", source, remoteSource: state?.host.source_materialized === false ? null : source,
+    label: state?.host.label ?? "editor", enabled: ownsField, open: pickerOpen && ownsField,
     context: JSON.stringify([draft.owner, state?.context, state?.raw]), active: state?.active ?? null,
     disabled: state?.message ?? null,
     setActive(next) {

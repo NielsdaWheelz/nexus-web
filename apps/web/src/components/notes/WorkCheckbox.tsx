@@ -1,6 +1,6 @@
 "use client";
 
-import type {ResourceProjection} from "@nexus/authored/types";
+import type {ResourceProjection, WorkIndexItem} from "@nexus/authored/types";
 import type {OutlineHistory} from "@/lib/notes/structure";
 import {useWorkCheck, type WorkIntent} from "@/lib/notes/work";
 import {localResourceLabel} from "@/lib/resources/localResource";
@@ -17,14 +17,15 @@ export interface WorkCompletion { intent: WorkIntent; keyboard: boolean; at: num
  * `presentDone`: the host's presentation of a completion its projection has not shown yet. The sign is drawn
  * done, is named for what it shows (`completed: {line}`), and takes no press. */
 export default function WorkCheckbox({resource,today,history,presentDone = false,onComplete}: {
-  resource:ResourceProjection; today:string|null; history:OutlineHistory; presentDone?:boolean;
+  resource:WorkIndexItem | ResourceProjection; today:string|null; history:OutlineHistory; presentDone?:boolean;
   onComplete?:(completion:WorkCompletion)=>void;
 }) {
-  const check = useWorkCheck(resource,today,history);
+  const label = "label" in resource ? (resource.label ?? "note") || "empty note" : localResourceLabel(resource);
+  const check = useWorkCheck({...resource, label},today,history);
   if (check === null) return null;
   const checked = presentDone || check.checked;
   return <button type="button" role="checkbox" className={styles.checkbox} aria-checked={checked} aria-disabled={presentDone || check.busy || check.disabled}
-    aria-label={presentDone ? `completed: ${localResourceLabel(resource)}` : check.label} data-row-focusable="true"
+    aria-label={presentDone ? `completed: ${label}` : check.label} data-row-focusable="true"
     onPointerDown={event => {if (event.button === 0) event.preventDefault(); event.stopPropagation();}}
     onKeyDown={event => {check.onKeyDown(event); event.stopPropagation();}} onClick={event => {
       event.stopPropagation();

@@ -128,12 +128,14 @@ its review during ordinary revalidation; the review's fresh guards still admit
 every write. cold, unknown and failed facts remain blocked. source-state wire values are `unread | in_progress | finished`;
 podcast controls retain their existing played/unplayed wording.
 
-source entries use bounded keyset pages with explicit load-more. local text filtering
-reports matches among the loaded prefix; catalogue counts remain whole-source facts.
-refresh replaces the loaded prefix. pages are live ordered observations, not a frozen
-archive snapshot. a visible observation lane follows source/import/transcript work;
-hidden panes initiate no polling. [offline catalogue](offline-catalog.md) supplies
-complete saved metadata without bodies, new authority or offline source writes.
+source entries return the complete ordered index and listening stamps in one
+viewer-scoped repeatable read. the state and sort choose its membership and order.
+title filtering covers the index. the reader and entry descriptor share the read.
+mounted rows resolve bibliography through media summaries; the playback order,
+coverage and provisioning facts come from the index. scrolling causes no source
+acquisition. a visible observation lane follows source/import/transcript work.
+[offline catalogue](offline-catalog.md) supplies the same covered index from a dated
+snapshot. current live data replaces the snapshot atomically.
 
 `lib/feeds/commands.tsx` freezes request bytes and client ids before admission.
 unknown outcomes keep exact replay and loss guards after presentation closes;

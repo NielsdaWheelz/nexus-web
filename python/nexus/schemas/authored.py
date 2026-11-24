@@ -241,7 +241,6 @@ class ResourceProjection(Closed):
     body_pm_json: dict[str, object] | None
     body_text: str | None
     title: str | None
-    title_key: str | None
     local_date: str | None
     last_work_at_ms: PageWorkTime | None
     source_ref: str | None

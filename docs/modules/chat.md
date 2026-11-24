@@ -59,9 +59,12 @@ own existing data contracts.
   acceptance carries the current turn, read through the ordinary turn projection
   in a fresh repeatable-read session after admission commits. a failed projection
   is a defect, never a refusal of an already committed question.
-- `GET /librarian/messages`: latest window or one exclusive before/after cursor or
-  message anchor, default twenty-five turns and maximum fifty. chronological whole
-  pairs; absent anchor is 404. sequence values are decimal strings.
+- `GET /librarian/messages`: complete paired order by numeric user sequence,
+  with up to 25 bodies seeded at latest or around either message id in a pair.
+  an absent explicit anchor returns `E_MESSAGE_NOT_FOUND`.
+- `POST /librarian/turns/resolve`: 1–25 distinct run ids. recheck visibility and
+  return available turns in requested order. a missing turn triggers one order read.
+  a retired before/after pane link has an explicit open-latest action.
 - `POST /librarian/attachments/resolve`: 1–16 reference or selection attachments, proven and presented
   in order in one authenticated repeatable-read snapshot; private/no-store.
   this read writes and adopts nothing.
@@ -254,7 +257,7 @@ no adopted turn or navigation obligation for that departed visit.
 `IndexPaneEntry` starts the librarian's timeline and catalog reads while its lazy
 code loads; a search visit starts only the catalog read. the body claims those
 exact descriptors through `PaneEntryReads`;
-subsequent cursor changes belong to the mounted hooks. active entry starts saved
+subsequent visible turn reads belong to the mounted transcript. active entry starts saved
 selection recall once per activation. dispatch rechecks that recall's current
 freshness for an uninitialized selection; explicit draft selections bypass it.
 messages remain visible during refresh and expose retry if refresh fails.

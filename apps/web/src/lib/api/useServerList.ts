@@ -74,7 +74,7 @@ export interface ServerList<T, M = null> {
   /** Current-key metadata from the committed traversal (`foldMetadata`), including an empty page. */
   readonly metadata: M | null;
   readonly running: Op | null;
-  readonly failure: { readonly op: Op; readonly error: ApiError } | null;
+  readonly failure: { readonly op: Op; readonly error: ApiError; readonly withdrawn: boolean } | null;
   /** Input activity and document visibility; admitted reads may finish inactive. */
   readonly active: boolean;
   readonly revalidate: () => void;
@@ -82,6 +82,9 @@ export interface ServerList<T, M = null> {
   readonly retry: () => void;
   readonly refetch: () => Promise<void>;
   readonly more: () => void;
+  /** Visible forward travel; a sparse demand that spent its allowance needs an explicit action. */
+  readonly fetchAhead: () => void;
+  readonly continuationNeedsAction: boolean;
 }
 
 interface Waiter {
@@ -120,6 +123,8 @@ interface ListInput<T, M> extends ReadPolicy {
   /** Complete live snapshots reread to exhaustion; false rereads only their loaded pages.
    * Catalog snapshots remain whole-corpus reads and revalidate to exhaustion. */
   readonly refreshComplete?: boolean;
+  /** Discovery: continue on demand until a new presentable item appears. */
+  readonly continuation?: (item: T) => boolean;
   /** Search replacement keeps the last committed prefix visible while a new key loads. */
   readonly retainPreviousKey?: boolean;
   readonly id: (item: T) => string;
@@ -176,8 +181,11 @@ function useList<T, M>(
   const [visible, setVisible] = useState(isVisible);
   const flight = useRef<AbortController | null>(null);
   const waiters = useRef<Waiter[]>([]);
+  const discovery = input.continuation !== undefined;
+  const demand = useRef<{ pages: number; remainingMs: number | undefined } | null>(null);
+  const [continuationNeedsAction, setContinuationNeedsAction] = useState(false);
 
-  const owner = useReadOwner(key, `list:${input.retry ?? "retry3"}:cursor=${input.cursorRecovery ?? "fresh"}:timeout=${input.timeoutMs ?? "none"}:pageSize=${input.pageSize}:refreshComplete=${input.refreshComplete ?? true}:${input.readPolicy ?? ""}`, stale, () => {
+  const owner = useReadOwner(key, `list:${input.retry ?? "retry3"}:cursor=${input.cursorRecovery ?? "fresh"}:timeout=${input.timeoutMs ?? "none"}:pageSize=${input.pageSize}:refreshComplete=${input.refreshComplete ?? true}:discovery=${discovery}:${input.readPolicy ?? ""}`, stale, () => {
     if (latest.current.key === null) return;
     waiters.current.push({ resolve() {}, reject() {} });
     run("Refetch");
@@ -191,11 +199,18 @@ function useList<T, M>(
         earlier === null || later === null || foldMetadata === undefined ? later : foldMetadata(earlier, later);
       let base = shownRef.current?.key === key ? shownRef.current : null;
       if (latestAccount.current !== accountId || key === null || flight.current !== null) return;
+      if (discovery && (!latest.current.active || !isVisible())) return;
       if (requested === "More" && base?.cursor == null) return;
       // A reread of a key with no rows yet is its first load.
       const op = requested === "Refetch" && base === null ? "Load" : requested;
       const settle = op === "More" ? [] : waiters.current.splice(0);
-      if (op !== "More") pendingObservation.current = false;
+      let follow = false;
+      const continuing = op === "More" ? demand.current : null;
+      if (op !== "More") {
+        pendingObservation.current = false;
+        demand.current = null;
+        setContinuationNeedsAction(false);
+      }
       const generation = owner.generation;
       const controller = new AbortController();
       flight.current = controller;
@@ -210,7 +225,7 @@ function useList<T, M>(
       let restarted = false;
       let wantPages = op === "Load" ? 1 : (base?.cursors.length ?? 1) + (op === "More" ? 1 : 0);
       let toEnd = op !== "Load" && base !== null && base.cursor === null &&
-        (base.source.kind === "catalog" || latest.current.refreshComplete !== false);
+        (base.source.kind === "catalog" || !discovery && latest.current.refreshComplete !== false);
       const read = async (signal: AbortSignal) => {
         const loadPage = async (cursor: string | null) => {
           if (!capacity) return fetchPage(cursor, pageSize, signal);
@@ -234,7 +249,7 @@ function useList<T, M>(
         };
         const validateCursor = (page: ListPage<T, M>, cursors: readonly (string | null)[]) => {
           if (page.next_cursor !== null && cursors.includes(page.next_cursor)) {
-            throw new ApiError(409, "E_INVALID_CURSOR", "list returned a repeated cursor");
+            throw new ApiError(409, discovery ? "E_REPEATED_CURSOR" : "E_INVALID_CURSOR", "list returned a repeated cursor");
           }
         };
         const walk = async () => {
@@ -311,7 +326,7 @@ function useList<T, M>(
         const pages = toEnd ? null : op === "More" && latest.current.cursorRecovery === "manual" ? 1
           : op === "More" ? wantPages + 1 : wantPages;
         const timeoutMs = latest.current.prefixTimeoutMs?.(pages) ?? latest.current.timeoutMs;
-        remainingExecutionMs = timeoutMs;
+        remainingExecutionMs = continuing?.remainingMs ?? timeoutMs;
         return owner.read(requestKey, signal => capacity ? read(signal)
           : requestWithRetry(read, signal, { ...latest.current, timeoutMs }), controller.signal);
       })()
@@ -320,7 +335,17 @@ function useList<T, M>(
             if (result === null) return;
             const { items, cursor, cursors, orderRevision, metadata, continuation } = result;
             if (controller.signal.aborted) throw aborted();
-            if (superseded()) return;
+            if (superseded() || discovery && (!latest.current.active || !isVisible())) return;
+            if (continuing !== null) {
+              continuing.pages--;
+              const admitted = new Set(base?.items.map(id));
+              const useful = items.some(item => !admitted.has(id(item)) && latest.current.continuation?.(item));
+              follow = cursor !== null && !useful && continuing.pages > 0 && (remainingExecutionMs ?? Infinity) > 0;
+              if (!follow) {
+                demand.current = null;
+                setContinuationNeedsAction(cursor !== null && !useful);
+              }
+            }
             const next = { key, stale, source: LIVE_SOURCE, items: unique(continuation && base !== null ? [...base.items, ...items] : items, id), cursor, cursors, orderRevision, metadata };
             shownRef.current = next;
             setFailure(null);
@@ -330,7 +355,7 @@ function useList<T, M>(
           },
           (error: unknown) => {
             if (controller.signal.aborted) throw aborted();
-            if (superseded()) return;
+            if (superseded() || discovery && (!latest.current.active || !isVisible())) return;
             if (isApiError(error) && error.code === "E_NETWORK" && !remoteReady() && base?.source.kind === "catalog") {
               setFailure(null);
               for (const waiter of settle) waiter.resolve();
@@ -344,8 +369,14 @@ function useList<T, M>(
                 ? error
                 : modeledApiError(error, fail, signIn);
             if (modeled !== null) {
+              const withdrawn = discovery && modeled.sent && (modeled.status === 403 || modeled.status === 404);
+              if (withdrawn) {
+                demand.current = null;
+                shownRef.current = null;
+                setShown(null);
+              }
               setFailureAccount(accountId);
-              setFailure({ key, op, error: modeled });
+              setFailure({ key, op, error: modeled, withdrawn });
             }
             for (const waiter of settle) waiter.reject(error);
           },
@@ -356,11 +387,13 @@ function useList<T, M>(
         .finally(() => {
           if (flight.current !== controller) return;
           flight.current = null;
+          if (continuing !== null) continuing.remainingMs = remainingExecutionMs;
           setRunning(null);
           if (latestAccount.current === accountId && waiters.current.length > 0) run("Refetch");
+          else if (follow && demand.current === continuing && latest.current.active && isVisible()) run("More");
         });
     },
-    [fail, shownRef, signIn, owner, accountId],
+    [fail, shownRef, signIn, owner, discovery, accountId],
   );
 
   const refetch = useCallback((): Promise<void> => {
@@ -381,6 +414,8 @@ function useList<T, M>(
     return () => {
       flight.current?.abort();
       flight.current = null;
+      demand.current = null;
+      setContinuationNeedsAction(false);
       for (const waiter of queue.splice(0)) waiter.reject(aborted());
       setRunning(null);
       setFailure(null);
@@ -401,18 +436,22 @@ function useList<T, M>(
   useEffect(() => {
     if (admissionGeneration === admittedGeneration.current) return;
     admittedGeneration.current = admissionGeneration;
-    if (remoteReady()) void refetch().catch(() => {});
-  }, [admissionGeneration, refetch]);
+    // A discovery prefix remains admitted when reachability changes. In
+    // particular, reacquiring the connection cannot replace a failed cursor.
+    if (remoteReady() && (!discovery || shownRef.current?.key !== key && !failure?.withdrawn)) void refetch().catch(() => {});
+  }, [admissionGeneration, discovery, key, refetch, shownRef, failure?.withdrawn]);
 
   const retry = () => {
-    if (input.cursorRecovery === "manual" && failure?.error.code === "E_INVALID_CURSOR") return;
-    if (failure?.op === "More" && failure.error.code !== "E_INVALID_CURSOR") {
+    if (failure?.error.code === "E_REPEATED_CURSOR" || input.cursorRecovery === "manual" && failure?.error.code === "E_INVALID_CURSOR") return;
+    if (failure?.op === "More" && !failure.withdrawn && failure.error.code !== "E_INVALID_CURSOR") {
+      if (demand.current?.remainingMs !== undefined && demand.current.remainingMs <= 0)
+        demand.current.remainingMs = input.prefixTimeoutMs?.(1);
       run("More");
     } else if (failure !== null) {
       refetch().catch(() => {});
     }
   };
-  useFailedReadRepair(failure !== null, running !== null, retry);
+  useFailedReadRepair(failure !== null && !(discovery && (failure.op === "More" || failure.withdrawn)), running !== null, retry);
 
   const revalidate = useCallback(() => {
     if (latest.current.key === null || pendingObservation.current) return;
@@ -421,19 +460,41 @@ function useList<T, M>(
   }, []);
 
   useEffect(() => {
-    const update = () => setVisible(isVisible());
+    const update = () => {
+      const visible = isVisible();
+      if (discovery && !visible) { flight.current?.abort(); demand.current = null; }
+      setVisible(visible);
+    };
     document.addEventListener("visibilitychange", update);
     return () => document.removeEventListener("visibilitychange", update);
-  }, []);
+  }, [discovery]);
 
   const ofKey = shown !== null && shown.key === key ? shown : null;
   const display = input.retainPreviousKey ? shown : ofKey;
   const active = input.active && visible;
   useEffect(() => {
-    if (!active || ofKey === null || running !== null || failure !== null) return;
-    if (ofKey.cursor !== null && input.drain !== false) run("More");
+    if (discovery && !active) {
+      flight.current?.abort();
+      demand.current = null;
+      return;
+    }
+    if (!active || running !== null) return;
+    if (discovery && waiters.current.length > 0) { run("Refetch"); return; }
+    if (failure !== null) return;
+    if (ofKey === null) {
+      if (discovery) run("Load");
+    } else if (ofKey.cursor !== null && !discovery && input.drain !== false) run("More");
     else if (pendingObservation.current) run("Refetch");
-  }, [active, ofKey, running, failure, observation, input.drain, run]);
+  }, [active, discovery, ofKey, running, failure, observation, input.drain, run]);
+
+  const more = () => {
+    if (discovery) {
+      if (!active || !isVisible() || ofKey?.cursor == null || flight.current !== null || failure !== null) return;
+      demand.current = { pages: input.prefixTimeoutMs === undefined ? 3 : Infinity, remainingMs: input.prefixTimeoutMs?.(1) };
+      setContinuationNeedsAction(false);
+    }
+    run("More");
+  };
 
   return {
     requestedKey: key,
@@ -453,7 +514,9 @@ function useList<T, M>(
     revalidate,
     retry,
     refetch,
-    more: () => run("More"),
+    more,
+    fetchAhead: () => { if (discovery && !continuationNeedsAction) more(); },
+    continuationNeedsAction,
   };
 }
 

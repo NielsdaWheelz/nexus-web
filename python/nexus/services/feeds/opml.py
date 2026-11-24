@@ -257,20 +257,18 @@ def get_import(db: Session, viewer_id: UUID, batch_id: UUID) -> wire.OpmlImportO
     )
 
 
-def list_imports(db: Session, viewer_id: UUID) -> list[wire.OpmlImportSummaryOut]:
+def unsettled_imports(db: Session, viewer_id: UUID) -> list[wire.OpmlImportSummaryOut]:
     rows = (
         db.execute(
-            text("""WITH selected AS (
-        SELECT * FROM feed_opml_imports WHERE user_id=:viewer AND state IN ('pending','running','needs_attention')
-        UNION ALL (SELECT * FROM feed_opml_imports WHERE user_id=:viewer AND state IN ('complete','cancelled')
-            ORDER BY updated_at DESC,id DESC LIMIT 20))
+            text("""
         SELECT p.id,p.attempt_version,p.state,p.created_at,p.updated_at,
             count(*) FILTER(WHERE i.state IN ('subscribed','already_subscribed'))::int AS admitted_count,
             count(*) FILTER(WHERE i.state='pending')::int AS remaining_count,
             count(*) FILTER(WHERE i.state='failed')::int AS failed_count,
             (p.state='needs_attention' OR (p.state IN ('pending','running') AND bool_or(i.state='pending'))) AS can_cancel,
             p.state='needs_attention' AND bool_or(i.state='pending' OR (i.state='failed' AND i.retryable)) AS can_retry
-        FROM selected p JOIN feed_opml_import_items i ON i.batch_id=p.id
+        FROM feed_opml_imports p JOIN feed_opml_import_items i ON i.batch_id=p.id
+        WHERE p.user_id=:viewer AND p.state IN ('pending','running','needs_attention')
         GROUP BY p.id,p.attempt_version,p.state,p.created_at,p.updated_at ORDER BY p.updated_at DESC,p.id DESC"""),
             {"viewer": viewer_id},
         )

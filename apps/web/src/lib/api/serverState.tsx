@@ -95,6 +95,7 @@ interface Held<D> {
   readonly error: ApiError | null;
   readonly running: boolean;
   readonly passive: boolean;
+  readonly withdrawn: boolean;
 }
 
 // live reads share requests, not pane snapshots. the representation key and policy
@@ -517,7 +518,7 @@ function arrive<D>(key: string | null, shown: Visit<D> | null): Held<D> {
     key, data: shown?.key === key ? shown.data : null,
     source: shown?.source ?? LIVE_SOURCE,
     acceptedStale: shown?.acceptedStale ?? null,
-    generation: 0, error: null, running: key !== null, passive: false,
+    generation: 0, error: null, running: key !== null, passive: false, withdrawn: false,
   };
 }
 
@@ -606,7 +607,7 @@ function useServerState<D>(
         try {
           let localError: ApiError | null = null;
           const retained = heldRef.current;
-          if (reading.catalog && (retained?.data === null || retained?.source.kind === "catalog")) {
+          if (reading.catalog && !retained?.withdrawn && (retained?.data === null || retained?.source.kind === "catalog")) {
             try {
               const saved = await reading.catalog.load(controller.signal);
               if (superseded()) continue;
@@ -629,7 +630,7 @@ function useServerState<D>(
           } else {
             if (!remoteAttemptAllowed()) {
               const error = localError ?? admissionRefusal();
-              update(h => ({ ...h, error: h.data === null ? error : h.error }));
+              update(h => ({ ...h, error: h.data === null && !h.withdrawn ? error : h.error }));
               settle(error);
               current.observe = false;
               break;
@@ -638,14 +639,16 @@ function useServerState<D>(
             next = await owner.read("value", signal => requestWithRetry(request, signal, reading.policy), controller.signal);
           }
           if (superseded()) continue;
-          update(h => ({ ...h, data: next, source: LIVE_SOURCE, acceptedStale: reading.stale, error: null, generation: h.generation + 1 }));
+          update(h => ({ ...h, data: next, source: LIVE_SOURCE, acceptedStale: reading.stale, error: null, withdrawn: false, generation: h.generation + 1 }));
           settle(null);
         } catch (error) {
           if (controller.signal.aborted) return;
           if (superseded()) continue;
           const modeled = modeledApiError(error, fail, signIn);
           const overSavedRows = !remoteReady() && heldRef.current?.source.kind === "catalog" && heldRef.current.data !== null;
-          if (modeled !== null && !overSavedRows) update(h => ({ ...h, error: modeled }));
+          if (modeled !== null && modeled.sent && (modeled.status === 403 || modeled.status === 404)) {
+            update(h => ({ ...h, data: null, source: LIVE_SOURCE, acceptedStale: null, error: modeled, withdrawn: true }));
+          } else if (modeled !== null && !overSavedRows) update(h => ({ ...h, error: modeled }));
           settle(error);
           current.observe = false;
           break;

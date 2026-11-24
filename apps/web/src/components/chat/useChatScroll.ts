@@ -6,19 +6,18 @@ import {
   useState,
   type RefObject,
   type FocusEvent,
-  type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
-  type TouchEvent,
   type WheelEvent,
 } from "react";
 import { buildDomTextCursor, type DomTextCursor } from "@/lib/canonicalText/domTextCursor";
 import { resolveDomTextRanges } from "@/lib/canonicalText/domTextRanges";
 import type { SourceArrivalContext } from "@/lib/reader/sourceArrival";
 import type { MarkdownPassage } from "@/lib/chat/markdownPassages";
-import { isEditableTarget } from "@/lib/ui/eventTarget";
+import { flushSync } from "react-dom";
+import { observeScrollMotion, writeScrollPosition, type ScrollMotion } from "@/lib/collections/scrollMotion";
+import type { TurnKey } from "@/lib/chat/wire";
 import styles from "./messageInspection.module.css";
-import { preferredScrollBehavior } from "@/lib/preferredScrollBehavior";
 
 // The one transcript scroll owner. A new question pins to the top inset
 // ("top") until its answer overflows the fold, then follows the newest text
@@ -30,7 +29,11 @@ type PinMode = "top" | "bottom" | "released";
 export interface ChatReadingPosition {
   readonly scrollTop: number;
   readonly pinMode: PinMode;
-  readonly point: { messageId: string; offset: number; prefix: string; offsetPx: number; messageOffsetPx: number } | null;
+  readonly point: {
+    runId: string;
+    slotOffsetPx: number;
+    line: { messageId: string; offset: number; prefix: string; offsetPx: number; messageOffsetPx: number } | null;
+  } | null;
 }
 export interface ChatScrollHandle {
   inspectMessage(id: string, move: boolean, passage: MarkdownPassage | null): HTMLElement | null;
@@ -42,24 +45,39 @@ export interface ChatScrollHandle {
   subscribeGeometry(listener: () => void): () => void;
   releaseFollowing(): void;
   inspectReference(messageId: string, citationId: string | null, marker: number | null): HTMLElement | null;
+  revealControl(target: HTMLElement): void;
 }
+
+type WindowGeometry = {
+  readonly shown: readonly TurnKey[];
+  readonly motion: ScrollMotion;
+  offset(id: string): number | null;
+  readViewport(): void;
+  setMotion(motion: ScrollMotion): void;
+};
 
 function createScrollOwner(
   scrollport: RefObject<HTMLDivElement | null>,
   transcript: RefObject<HTMLDivElement | null>,
+  spacerElement: RefObject<HTMLDivElement | null>,
   setSpacer: (px: number) => void,
   setLatestBelow: (below: boolean) => void,
   onAttention: () => void,
+  geometry: () => WindowGeometry,
 ) {
   let mode: PinMode = "released";
   let anchorId: string | null = null;
   let spacer = 0;
-  let previousUserId: string | null = null;
-  let previousLeafId: string | null = null;
+  let previousSend: string | null = null;
+  let previousOrder: readonly TurnKey[] = [];
+  let deferredSend: string | null = null;
+  let motion: ScrollMotion = "still";
+  let nativeStart = 0;
+  let lastStillTop = 0;
+  let moved = false;
+  let latestScope = false;
   let inspection: { trigger: HTMLElement; offset: number; top: number; focus: HTMLElement | null } | null = null;
-  let scrollGesture: number | null = null;
   let laidOut = false;
-  let sawEmptyReady = false;
   let readingPoint: ChatReadingPosition["point"] = null;
   const geometryListeners = new Set<() => void>();
   let notificationPending = false;
@@ -87,8 +105,12 @@ function createScrollOwner(
     if (!port) return;
     const top = port.getBoundingClientRect().top;
     const eye = top + inset();
-    readingPoint = null;
-    for (const root of transcript.current?.querySelectorAll<HTMLElement>("[data-message-id]") ?? []) {
+    const slot = [...transcript.current?.querySelectorAll<HTMLElement>("[data-chat-run]") ?? []]
+      .find(row => row.getBoundingClientRect().bottom > eye);
+    readingPoint = slot ? { runId: slot.dataset.chatRun!, slotOffsetPx: slot.getBoundingClientRect().top - top, line: null } : null;
+    if (!readingPoint) return;
+    const bottom = Math.min(slot?.getBoundingClientRect().bottom ?? eye, port.getBoundingClientRect().bottom);
+    for (const root of slot?.querySelectorAll<HTMLElement>("[data-message-id]") ?? []) {
       const body = root.querySelector<HTMLElement>("[data-message-content]");
       if (!body || body.getBoundingClientRect().bottom <= eye) continue;
       const cursor = cursorOf(body);
@@ -100,7 +122,7 @@ function createScrollOwner(
       for (const candidate of cursor.nodes) {
         probe.selectNodeContents(candidate.node);
         for (const box of probe.getClientRects()) {
-          if (box.bottom <= eye || box.right <= port.getBoundingClientRect().left || box.left >= port.getBoundingClientRect().right) continue;
+          if (box.bottom <= eye || box.top >= bottom || box.right <= port.getBoundingClientRect().left || box.left >= port.getBoundingClientRect().right) continue;
           const next = Math.max(0, box.top - eye);
           if (next < distance) { run = candidate; distance = next; }
         }
@@ -117,7 +139,7 @@ function createScrollOwner(
       let rect = rectAt(cursor, lo);
       while (!rect && ++lo < run.end) rect = rectAt(cursor, lo);
       if (!rect) continue;
-      readingPoint = { messageId: root.dataset.messageId!, offset: lo,
+      readingPoint.line = { messageId: root.dataset.messageId!, offset: lo,
         prefix: Array.from(cursor.emitted).slice(0, lo + 1).join(""), offsetPx: rect.top - top,
         messageOffsetPx: root.getBoundingClientRect().top - top };
       return;
@@ -126,14 +148,32 @@ function createScrollOwner(
   const holdReadingPoint = () => {
     const port = scrollport.current, point = readingPoint;
     if (!port || !point) return;
-    const root = message(point.messageId);
+    const view = geometry();
+    let runId = point.runId;
+    let offset = view.offset(runId);
+    if (offset === null) {
+      const rank = previousOrder.findIndex(key => key.run_id === runId);
+      if (rank < 0) return;
+      const neighbor = [...previousOrder.slice(rank + 1), ...previousOrder.slice(0, rank).reverse()]
+        .find(key => view.offset(key.run_id) !== null);
+      if (!neighbor) return;
+      runId = neighbor.run_id;
+      offset = view.offset(runId);
+    }
+    const root = point.line && runId === point.runId ? message(point.line.messageId) : null;
     const body = root?.querySelector<HTMLElement>("[data-message-content]");
-    if (!root || !body) { readingPoint = null; return; }
-    const cursor = cursorOf(body);
-    const rect = Array.from(cursor.emitted).slice(0, point.offset + 1).join("") === point.prefix
-      ? rectAt(cursor, point.offset) : null;
-    const drift = (rect ? rect.top - point.offsetPx : root.getBoundingClientRect().top - point.messageOffsetPx) - port.getBoundingClientRect().top;
-    if (Math.abs(drift) > .5) jump(port.scrollTop + drift, false);
+    if (root && body && point.line) {
+      const cursor = cursorOf(body);
+      const rect = Array.from(cursor.emitted).slice(0, point.line.offset + 1).join("") === point.line.prefix
+        ? rectAt(cursor, point.line.offset) : null;
+      const drift = (rect ? rect.top - point.line.offsetPx : root.getBoundingClientRect().top - point.line.messageOffsetPx)
+        - port.getBoundingClientRect().top;
+      if (Math.abs(drift) > .5) jump(port.scrollTop + drift);
+      return;
+    }
+    const slot = transcript.current?.querySelector<HTMLElement>(`[data-chat-run="${CSS.escape(runId)}"]`);
+    if (slot) jump(port.scrollTop + slot.getBoundingClientRect().top - port.getBoundingClientRect().top - point.slotOffsetPx);
+    else if (offset !== null) jump(offset - point.slotOffsetPx);
   };
 
   const message = (id: string | null) =>
@@ -151,37 +191,26 @@ function createScrollOwner(
       Math.max(0, top),
       Math.max(0, port.scrollHeight - port.clientHeight),
     );
+  const paintedSpacer = () => spacerElement.current?.getBoundingClientRect().height ?? 0;
   /** Would the newest content end below the fold with the transcript scrolled to `top`? */
   const overflows = (top: number) => {
-    const port = scrollport.current;
-    const content = transcript.current;
-    return (
-      !!port &&
-      !!content &&
-      content.scrollHeight - spacer > top + port.clientHeight + 1
-    );
+    const port = scrollport.current, content = transcript.current;
+    return !!port && !!content && content.getBoundingClientRect().height - paintedSpacer() > top + port.clientHeight + 1;
   };
-  const jump = (top: number, smooth: boolean) => {
+  const jump = (top: number) => {
     const port = scrollport.current;
-    if (!port) return;
+    if (!port || motion !== "still") return;
     const target = clamp(port, top);
     if (Math.abs(port.scrollTop - target) < 0.5) return;
-    if (smooth)
-      port.scrollTo({ top: target, behavior: preferredScrollBehavior() });
-    else {
-      port.scrollTop = target;
-      // A pending native gesture still belongs to the user after our correction.
-      if (scrollGesture !== null) scrollGesture = port.scrollTop;
-    }
+    writeScrollPosition(port, target);
+    lastStillTop = port.scrollTop;
+    geometry().readViewport();
   };
   const measure = () => {
-    const port = scrollport.current;
-    const content = transcript.current;
-    const anchor = message(anchorId);
-    if (!port || !content) return;
-    consumeUserScroll(port);
-    const below = anchor ? content.scrollHeight - anchor.offsetTop - spacer : 0;
-    const next = anchor ? Math.max(0, port.clientHeight - inset() - below) : 0;
+    const port = scrollport.current, content = transcript.current, anchor = message(anchorId);
+    if (!port || !content || motion !== "still") return;
+    const below = anchor ? content.getBoundingClientRect().bottom - anchor.getBoundingClientRect().top - paintedSpacer() : 0;
+    const next = anchor ? Math.max(0, Math.round(port.clientHeight - inset() - below)) : 0;
     if (next !== spacer) setSpacer((spacer = next));
   };
   /** Latest shows once the pin has had its say: never for growth the pin is about to follow. */
@@ -192,13 +221,13 @@ function createScrollOwner(
   const hold = () => {
     const port = scrollport.current;
     const anchor = message(anchorId);
-    if (!port) return;
+    if (!port || motion !== "still") return;
     if (holdInspection()) return;
     if (mode === "released") { holdReadingPoint(); return; }
     if (mode === "top" && anchor) {
       const top = clamp(port, anchor.offsetTop - inset());
       if (!overflows(top)) {
-        if (Math.abs(port.scrollTop - top) > 1) jump(top, false);
+        if (Math.abs(port.scrollTop - top) > 1) jump(top);
         return;
       }
       mode = "bottom";
@@ -207,12 +236,11 @@ function createScrollOwner(
       mode === "bottom" &&
       Math.abs(port.scrollTop - clamp(port, port.scrollHeight)) > 1
     )
-      jump(port.scrollHeight, false);
+      jump(port.scrollHeight);
   };
   const holdInspection = () => {
     const port = scrollport.current;
     if (!port) return false;
-    consumeUserScroll(port);
     consumeFocusScroll(port);
     if (!inspection) return false;
     const { trigger, offset } = inspection;
@@ -221,27 +249,20 @@ function createScrollOwner(
       return false;
     }
     const drift = trigger.getBoundingClientRect().top - port.getBoundingClientRect().top - offset;
-    if (Math.abs(drift) > 1) jump(port.scrollTop + drift, false);
+    if (Math.abs(drift) > 1) jump(port.scrollTop + drift);
     inspection.top = port.scrollTop;
     return true;
   };
   const releaseInspection = () => {
     inspection = null;
-    scrollGesture = null;
     mode = "released";
   };
-  const expectUserScroll = () => {
+  const noteMovement = (port: HTMLElement) => {
+    if (motion === "still" || moved || Math.abs(port.scrollTop - nativeStart) < .5) return;
+    moved = true;
+    deferredSend = null;
     onAttention();
-    const port = scrollport.current;
-    if (inspection) inspection.focus = null;
-    if (port) scrollGesture = port.scrollTop;
-  };
-  const consumeUserScroll = (port: HTMLElement) => {
-    if (scrollGesture === null) return;
-    // Native anchoring is disabled; geometry alone can only clamp the prior top.
-    const expected = clamp(port, scrollGesture);
-    if (port.scrollTop !== expected) { releaseInspection(); capturePoint(); }
-    else scrollGesture = expected;
+    releaseInspection();
   };
   const consumeFocusScroll = (port: HTMLElement) => {
     if (!inspection?.focus) return;
@@ -262,10 +283,10 @@ function createScrollOwner(
     if (bounds.top >= box.top && bounds.bottom <= box.bottom)
       inspection.focus = null;
   };
-  const pinTop = (id: string, smooth: boolean) => {
+  const pinTop = (id: string) => {
     mode = "top";
     const anchor = message(id);
-    if (anchor) jump(anchor.offsetTop - inset(), smooth);
+    if (anchor) jump(anchor.offsetTop - inset());
   };
 
   const handle: ChatScrollHandle = {
@@ -276,7 +297,7 @@ function createScrollOwner(
       if (passage && !(Number(target.dataset.messageSourceStart) <= passage.start && Number(target.dataset.messageSourceEnd) >= passage.end)) return null;
       releaseInspection();
       const port = scrollport.current;
-      if (move && port) jump(port.scrollTop + target.getBoundingClientRect().top - port.getBoundingClientRect().top - inset(), false);
+      if (move && port) jump(port.scrollTop + target.getBoundingClientRect().top - port.getBoundingClientRect().top - inset());
       capturePoint(); notifyGeometry();
       return target;
     },
@@ -294,13 +315,22 @@ function createScrollOwner(
       releaseInspection();
       mode = position.pinMode;
       readingPoint = position.point;
-      if (mode === "released" && readingPoint) holdReadingPoint();
-      else jump(position.scrollTop, false);
+      jump(position.scrollTop);
+      if (mode === "released" && readingPoint) holdReadingPoint(); else hold();
       capturePoint(); notifyGeometry();
     },
     getTranscriptElement: () => transcript.current,
     subscribeGeometry(listener) { geometryListeners.add(listener); return () => { geometryListeners.delete(listener); }; },
     releaseFollowing() { onAttention(); releaseInspection(); capturePoint(); },
+    revealControl(target) {
+      const port = scrollport.current;
+      if (!port) return;
+      releaseInspection();
+      const bounds = target.getBoundingClientRect(), viewport = port.getBoundingClientRect();
+      if (bounds.top < viewport.top || bounds.bottom > viewport.bottom)
+        jump(port.scrollTop + bounds.top - viewport.top - inset());
+      capturePoint(); report(); notifyGeometry();
+    },
     inspectReference(id, citationId, marker) {
       const root = message(id);
       const suffix = marker === null ? "" : `[data-citation-marker-start="${marker}"]`;
@@ -309,7 +339,7 @@ function createScrollOwner(
       const port = scrollport.current;
       if (!target || !port) return null;
       onAttention(); releaseInspection();
-      jump(port.scrollTop + target.getBoundingClientRect().top - port.getBoundingClientRect().top - inset(), false);
+      jump(port.scrollTop + target.getBoundingClientRect().top - port.getBoundingClientRect().top - inset());
       capturePoint(); notifyGeometry();
       return citationId === null ? target : target.querySelector<HTMLElement>("a[href]") ?? target;
     },
@@ -318,92 +348,91 @@ function createScrollOwner(
 
   return {
     handle,
-    /** After each commit that may change the newest question or the loaded state. */
-    turn(userId: string | null, leafId: string | null, ready: boolean) {
+    turn(userId: string | null, initialId: string | null, latest: boolean, sent: string | null) {
       const port = scrollport.current;
       if (!port) return;
-      if (leafId !== previousLeafId) {
-        inspection = null;
-        scrollGesture = null;
-      }
+      latestScope = latest;
       anchorId = userId;
+      const explicitSend = sent !== null && sent !== previousSend;
+      previousSend = sent;
+      if (motion !== "still") {
+        if (explicitSend) deferredSend = userId;
+        return;
+      }
       measure();
-      if (!laidOut) {
-        if (userId === null) sawEmptyReady ||= ready;
-        else if (sawEmptyReady) pinTop(userId, true);
-        else {
-          mode = "bottom"; // an opened chat starts at its newest message, following a live answer
-          jump(port.scrollHeight, false);
-        }
-        laidOut = userId !== null;
-      } else if (userId !== null && userId !== previousUserId)
-        pinTop(userId, true);
-      else hold();
-      previousUserId = userId;
-      previousLeafId = leafId;
-      measure();
+      if (explicitSend && userId !== null) { laidOut = true; pinTop(userId); }
+      else if (!laidOut && geometry().shown.length > 0) {
+        laidOut = true;
+        if (latest) { mode = "bottom"; jump(port.scrollHeight); }
+        else if (initialId !== null) jump(geometry().offset(initialId) ?? 0);
+      } else hold();
+      previousOrder = geometry().shown;
       capturePoint(); report(); notifyGeometry();
     },
     // A terminal replacement can move the footer without changing total height.
-    afterLayout() { measure(); hold(); capturePoint(); report(); notifyGeometry(); },
+    afterLayout() {
+      if (motion === "still") { measure(); hold(); capturePoint(); }
+      report(); notifyGeometry();
+    },
     observe() {
+      const port = scrollport.current;
       const observer = new ResizeObserver(() => {
-        measure();
-        hold();
-        capturePoint(); report(); notifyGeometry();
+        if (motion === "still") { measure(); hold(); capturePoint(); }
+        geometry().readViewport();
+        report(); notifyGeometry();
       });
-      if (scrollport.current) observer.observe(scrollport.current);
+      if (port) observer.observe(port);
       if (transcript.current) observer.observe(transcript.current);
-      return () => observer.disconnect();
+      const unobserve = port && observeScrollMotion(port, next => {
+        if (motion === "still") {
+          nativeStart = lastStillTop;
+          moved = false;
+          if (next === "seek") onAttention();
+        }
+        if (next === "still") {
+          noteMovement(port);
+          capturePoint();
+          if (moved && latestScope && !overflows(port.scrollTop)) mode = "bottom";
+          lastStillTop = port.scrollTop;
+        }
+        motion = next;
+        if (next !== "still") noteMovement(port);
+        flushSync(() => geometry().setMotion(next));
+        if (next === "still" && deferredSend !== null) {
+          pinTop(deferredSend);
+          deferredSend = null;
+        }
+      });
+      return () => { unobserve?.(); observer.disconnect(); };
     },
     toLatest() {
       releaseInspection();
       const port = scrollport.current;
       const anchor = message(anchorId);
       if (!port) return;
-      if (anchor && !overflows(anchor.offsetTop - inset()))
-        pinTop(anchorId ?? "", true);
-      else {
-        mode = "bottom";
-        jump(port.scrollHeight, true);
-      }
+      if (anchor && !overflows(anchor.offsetTop - inset())) pinTop(anchorId ?? "");
+      else { mode = "bottom"; jump(port.scrollHeight); }
+      capturePoint(); report(); notifyGeometry();
     },
     onScroll() {
       const port = scrollport.current;
       if (!port) return;
-      consumeUserScroll(port);
+      noteMovement(port);
       consumeFocusScroll(port);
+      geometry().readViewport();
       capturePoint(); setLatestBelow(overflows(port.scrollTop)); notifyGeometry();
     },
     onFocus(event: FocusEvent<HTMLElement>) {
       const port = scrollport.current;
       if (!port || !inspection) return;
-      scrollGesture = null;
       inspection.focus = event.target;
       consumeFocusScroll(port);
     },
-    /** A gesture releases inspection only if it actually moves this scrollport. */
-    onUserScroll(event: WheelEvent<HTMLElement> | TouchEvent<HTMLElement>) {
-      if (event.defaultPrevented || ("deltaY" in event && (event.deltaY === 0 || event.ctrlKey))) return;
-      expectUserScroll();
-    },
-    onKeyDown(event: KeyboardEvent<HTMLElement>) {
-      scrollGesture = null;
-      if (inspection) inspection.focus = null;
-      if (event.defaultPrevented || isEditableTarget(event.target)) return;
-      if (!["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) return;
-      if (event.key === " " && event.target instanceof Element && event.target.closest("button, summary, [role='button']")) return;
-      expectUserScroll();
-    },
     onPointerDown(event: PointerEvent<HTMLElement>) {
-      // Native scrollbar drags target the scrollport, not its transcript.
-      scrollGesture = null;
       if (inspection) inspection.focus = null;
-      if (event.target === event.currentTarget) expectUserScroll();
-      else if (event.isPrimary && !event.defaultPrevented) onAttention();
+      if (event.target !== event.currentTarget && event.isPrimary && !event.defaultPrevented) onAttention();
     },
     onClick(event: MouseEvent<HTMLElement>) {
-      scrollGesture = null;
       if (event.target instanceof Element && event.target.closest("a[href]")) releaseInspection();
     },
     /** A wheel over the docked composer scrolls the transcript, unless the composer can scroll. */
@@ -429,7 +458,7 @@ function createScrollOwner(
           : port.scrollTop + port.clientHeight >= port.scrollHeight;
       if (atEdge) return;
       releaseInspection();
-      port.scrollTop += event.deltaY;
+      jump(port.scrollTop + event.deltaY);
       event.preventDefault();
     },
   };
@@ -439,24 +468,28 @@ export function useChatScroll(
   scrollport: RefObject<HTMLDivElement | null>,
   transcript: RefObject<HTMLDivElement | null>,
   lastUserId: string | null,
-  leafId: string | null,
-  ready: boolean,
+  initialId: string | null,
+  latest: boolean,
+  sent: string | null,
   onAttention: () => void,
+  geometry: WindowGeometry,
 ) {
+  const spacerElement = useRef<HTMLDivElement>(null);
   const [spacer, setSpacer] = useState(0);
   const [latestBelow, setLatestBelow] = useState(false);
   const attention = useRef(onAttention);
   attention.current = onAttention;
+  const layout = useRef(geometry); layout.current = geometry;
   const [owner] = useState(() =>
-    createScrollOwner(scrollport, transcript, setSpacer, setLatestBelow, () => attention.current()),
+    createScrollOwner(scrollport, transcript, spacerElement, setSpacer, setLatestBelow, () => attention.current(), () => layout.current),
   );
   useLayoutEffect(
-    () => owner.turn(lastUserId, leafId, ready),
-    [owner, lastUserId, leafId, ready],
+    () => owner.turn(lastUserId, initialId, latest, sent),
+    [owner, lastUserId, initialId, latest, sent, geometry.shown, geometry.motion],
   );
   useLayoutEffect(() => { owner.afterLayout(); });
   useLayoutEffect(() => owner.observe(), [owner]);
-  return { ...owner, spacer, latestBelow };
+  return { ...owner, spacer, spacerElement, latestBelow };
 }
 
 /** The transcript owns scrolling; inspection never changes its message content. */

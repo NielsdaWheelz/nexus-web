@@ -25,7 +25,7 @@ from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.authored import NoteWork
 from nexus.schemas.resource_evidence import ResourceField
-from nexus.schemas.resource_graph import ConnectionFiltersRequest, ConnectionQueryRequest
+from nexus.schemas.resource_graph import ConnectionFiltersRequest, RelationQuery
 from nexus.schemas.retrieval import EpubFragmentOffsetsLocator, WebTextOffsetsLocator
 from nexus.services import libraries
 from nexus.services.chat import timeline
@@ -43,7 +43,7 @@ from nexus.services.media_read_map import (
     load_media_document,
     read_page_range,
 )
-from nexus.services.resource_graph.connections import query_connections
+from nexus.services.resource_graph.connections import list_relations
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -702,10 +702,10 @@ def _inspect(value: ResourceInspectInput, call: Call) -> ResourceInspectSuccess:
 def relations(value: RelationsListInput, call: Call) -> RelationsListSuccess:
     try:
         ref = _visible(call, value.uri)
-        page = query_connections(
+        items = list_relations(
             call.db,
             viewer_id=call.principal,
-            query=ConnectionQueryRequest(
+            query=RelationQuery(
                 refs=[ref.uri],
                 direction=value.direction,
                 filters=ConnectionFiltersRequest(kinds=value.kinds),
@@ -713,7 +713,7 @@ def relations(value: RelationsListInput, call: Call) -> RelationsListSuccess:
             ),
         )
         authors = assistant_writes.edge_authorships(
-            call.db, call.principal, [item.edge_id for item in page.items]
+            call.db, call.principal, [item.edge_id for item in items]
         )
         found = [
             RelationMatch(
@@ -729,7 +729,7 @@ def relations(value: RelationsListInput, call: Call) -> RelationsListSuccess:
                 target_label=item.target.label[:150] if item.target.label else None,
                 target_uri=item.target.ref,
             )
-            for item in page.items
+            for item in items
             if all(
                 message_admitted(call, _parse(uri))
                 for uri in (item.source.ref, item.target.ref)

@@ -7,6 +7,8 @@
   list-style: none;
 }
 
+.list[data-index-window] { position: relative; }
+
 .head {
   display: flex;
   flex-wrap: wrap;
@@ -19,4 +21,22 @@
   margin: 0;
   font: var(--list-head-font);
   color: var(--ink-muted);
+}
+
+
+.headSample {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.list[data-index-held] > :is([data-collection-row-id], [data-index-head-before]) {
+  --index-held-size: auto;
+  block-size: var(--index-held-size);
+  min-block-size: var(--index-held-size);
+  max-block-size: var(--index-held-size);
+  overflow: clip;
+  flex-shrink: 0;
 }

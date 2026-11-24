@@ -56,7 +56,8 @@ function Libraries() {
   const retry = () => { void list.refetch().catch(() => {}); };
   const invalid =
     failure?.code === "E_INVALID_REQUEST";
-  usePaneReturnReady(list.status !== "loading" || invalid);
+  // The invitation prefix must land before any library row can become the first eye line.
+  usePaneReturnReady(!invitations.opening && (list.status !== "loading" || invalid));
   usePaneScrollRetention(indexItems);
 
   const retainedFilter = usePaneVisitData(FILTER, (): string => filter);
@@ -109,7 +110,7 @@ function Libraries() {
       <CollectionView geometry="UniformIndex"
         returnScope="Libraries.Items"
         rows={visible.map(presentLibrary)}
-        status={list.status === "failed" ? "error" : list.status}
+        status={invitations.opening ? "loading" : list.status === "failed" ? "error" : list.status}
         ariaLabel="Libraries"
         anchorKey={text}
         collectionBusy={busy}

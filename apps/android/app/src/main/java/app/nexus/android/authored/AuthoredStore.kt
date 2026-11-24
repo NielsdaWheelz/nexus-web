@@ -11,6 +11,7 @@ import org.json.JSONObject
 import java.util.UUID
 
 internal const val AUTHORED_FORMAT_REVISION = 7
+internal const val AUTHORED_TRANSFER_BYTES = 16 * 1024 * 1024
 
 /** One serialized bundled-SQLite connection per bound account. Kotlin owns SQL
  * transactions, never CRDT merging. Every projection accompanies merged states
@@ -112,14 +113,47 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         row.put("provisioning_complete", row.getString("provisioning_complete") == "1")
         return row
     }
-    fun readSnapshot(selection: JSONObject): JSONObject = JSONObject().put("replica", replica()).put("states", states(selection))
+    fun readSnapshot(request: JSONObject): JSONObject {
+        val replica = replica()
+        val result = JSONObject().put("replica", replica)
+        if (!request.isNull("revision") && request.getString("revision") != replica.getString("store_revision")) return result
+        val states = states(request.getJSONObject("selection"))
+        val records = buildList {
+            for (key in listOf("resources", "links", "passages", "source_stubs")) {
+                val rows = states.getJSONArray(key)
+                for (index in 0 until rows.length()) add(JSONObject().put("kind", key).put("value", rows.getJSONObject(index)))
+            }
+        }
+        return packRecords(result, request.getInt("start"), records.size) { index -> records[index] }
+    }
+    private fun packRecords(result: JSONObject, start: Int, count: Int,
+                            reduce: ((JSONObject) -> Unit)? = null, read: (Int) -> JSONObject): JSONObject {
+        require(start in 0..count)
+        val output = JSONArray()
+        var bytes = 0
+        var end = start
+        while (end < count) {
+            val record = read(end)
+            var size = record.toString().toByteArray(Charsets.UTF_8).size + 1
+            if (size > AUTHORED_TRANSFER_BYTES - 1024 && reduce != null) {
+                reduce(record)
+                size = record.toString().toByteArray(Charsets.UTF_8).size + 1
+            }
+            require(size <= AUTHORED_TRANSFER_BYTES - 1024) { "stored writing record exceeds the native transfer limit" }
+            if (bytes + size > AUTHORED_TRANSFER_BYTES - 1024) break
+            output.put(record)
+            bytes += size
+            end++
+        }
+        return result.put("records", output).put("next", if (end < count) end else JSONObject.NULL)
+    }
     fun states(selection: JSONObject): JSONObject {
         val result = JSONObject()
         for ((table, key, selector) in listOf(Triple("resources", "ref", "refs"), Triple("links", "link_id", "link_ids"), Triple("passages", "anchor_id", "anchor_ids"), Triple("source_stubs", "source_ref", "source_refs"))) {
             val ids = selection.optJSONArray(selector) ?: JSONArray()
             require(ids.length() <= 1000)
             val values = Array(ids.length()) { ids.getString(it) }
-            val matches = if (ids.length() == 0) JSONArray() else rows("SELECT state_json${if (table == "resources") ",merge_bytes" else ""} FROM $table WHERE $key IN (${values.joinToString(",") { "?" }})", *values)
+            val matches = if (ids.length() == 0) JSONArray() else rows("SELECT state_json${if (table == "resources") ",merge_bytes" else ""} FROM $table WHERE $key IN (${values.joinToString(",") { "?" }}) ORDER BY $key", *values)
             val decoded = JSONArray()
             for (index in 0 until matches.length()) {
                 val match = matches.getJSONObject(index)
@@ -131,7 +165,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         }
         return result
     }
-    private fun write(states: JSONObject) {
+    private fun write(states: JSONObject, literalFields: JSONArray?) {
         val resources = states.getJSONArray("resources")
         val projections = states.getJSONArray("projections")
         val byRef = (0 until projections.length()).associate { projections.getJSONObject(it).let { row -> row.getString("ref") to row } }
@@ -168,9 +202,15 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         for (index in 0 until stubs.length()) indexed.add(stubs.getJSONObject(index).getString("source_ref"))
         val searchSql = sql("search_index")
         val removeSql = sql("search_remove")
-        for (ref in indexed) { run(removeSql, ref); run(searchSql, ref) }
+        for (ref in indexed) { run("DELETE FROM literal_fields WHERE ref=?", ref); run(removeSql, ref); run(searchSql, ref) }
+        if (literalFields != null) installLiterals(literalFields)
+        if (literalsComplete && indexed.isNotEmpty()) {
+            val supplied = (0 until (literalFields?.length() ?: 0)).map { literalFields!!.getJSONArray(it).getString(0) }.toSet()
+            literalsComplete = supplied.containsAll(indexed)
+        }
+        partialLiteral = null
     }
-    fun commit(frame: JSONObject): JSONObject = transaction {
+    fun commit(frame: JSONObject, literalFields: JSONArray?): JSONObject = transaction {
         val current = replica(); val change = frame.getJSONObject("change")
         val sequence = change.getString("command_seq").toLong()
         require(frame.getString("replica_id") == current.getString("replica_id"))
@@ -179,7 +219,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         if (frame.getString("expected_store_revision") != current.getString("store_revision")) return@transaction JSONObject().put("kind", "stale").put("store_revision", current.getString("store_revision")).put("states", states(selection(change)))
         val source = change.toString(); val byteCount = source.toByteArray().size
         require(byteCount <= 2 * 1024 * 1024)
-        write(frame.getJSONObject("states"))
+        write(frame.getJSONObject("states"), literalFields)
         run("INSERT INTO pending_changes VALUES(?,?,?)", sequence, source, byteCount)
         val revision = current.getString("store_revision").toLong() + 1
         run("UPDATE replica_state SET command_seq=?,store_revision=?,lamport=MAX(lamport,?) WHERE singleton=1", sequence, revision, change.getString("lamport").toLong())
@@ -223,17 +263,75 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             lamport = maxOf(lamport, change.getString("lamport").toLong())
         }
         require(cursor.toString() == frame.getString("next_cursor"))
-        if (incoming > 0) write(frame.getJSONObject("states"))
+        if (incoming > 0) write(frame.getJSONObject("states"), frame.optJSONArray("literal_fields"))
         run("UPDATE replica_state SET server_cursor=?,store_revision=store_revision+?,lamport=? WHERE singleton=1", cursor, incoming, lamport)
         replica()
     }
-    fun resetProvisioning() = transaction { for (table in listOf("resources", "links", "passages", "source_stubs", "reference_index", "search_documents")) run("DELETE FROM $table") }
-    fun stage(states: JSONObject) = transaction { require(!replica().getBoolean("provisioning_complete")); write(states) }
+    fun resetProvisioning() = transaction {
+        require(!replica().getBoolean("provisioning_complete"))
+        for (table in listOf("resources", "links", "passages", "source_stubs", "reference_index", "search_documents", "literal_fields")) run("DELETE FROM $table")
+    }
+    fun stage(states: JSONObject, literalFields: JSONArray?) = transaction { require(!replica().getBoolean("provisioning_complete")); write(states, literalFields) }
     fun finishProvisioning(cursor: String, counts: JSONObject, lamport: String) = transaction {
         for (table in listOf("resources", "links", "passages", "source_stubs")) require(rows("SELECT COUNT(*) AS count FROM $table").getJSONObject(0).getString("count").toLong() == counts.getLong(table))
         run("UPDATE replica_state SET provisioning_complete=1,server_cursor=?,store_revision=store_revision+1,lamport=MAX(lamport,?) WHERE singleton=1", cursor.toLong(), lamport.toLong())
     }
     private fun sql(name: String): String = queries.getValue(name).sql
+    private val literalNames = listOf("title", "body", "quote")
+    private data class LiteralAssembly(val ticket: String, val ref: String, val revision: String, val fields: List<StringBuilder>, var active: Int = 0)
+    private var partialLiteral: LiteralAssembly? = null
+    private var literalsComplete = false
+
+    private fun installLiterals(items: JSONArray) {
+        for (index in 0 until items.length()) {
+            val row = items.getJSONArray(index)
+            run(sql("literal_write"), row.getString(0), row.getString(1), row.getString(2), row.getString(3))
+        }
+    }
+
+    fun literalInstall(request: JSONObject) = transaction {
+        if (replica().getString("store_revision") == request.getString("revision")) installLiterals(request.getJSONArray("items"))
+    }
+
+    fun literalInputs(): JSONObject {
+        val missing = rows(sql("literal_missing"))
+        val items = JSONArray()
+        for (index in 0 until missing.length()) {
+            val ref = missing.getJSONObject(index).getString("ref")
+            val source = sql("literal_source")
+            val short = rows("SELECT title,body,quote FROM ($source) WHERE length(CAST(COALESCE(title,'') AS BLOB))+length(CAST(COALESCE(body,'') AS BLOB))+length(CAST(COALESCE(quote,'') AS BLOB))<=8192", ref)
+            val fields = short.optJSONObject(0)?.let { row -> JSONArray().apply { for (field in literalNames) put(if (row.isNull(field)) "" else row.getString(field)) } }
+            items.put(JSONObject().put("ref", ref).put("fields", fields ?: JSONObject.NULL))
+        }
+        return JSONObject().put("revision", replica().getString("store_revision")).put("items", items)
+    }
+
+    fun literalPiece(request: JSONObject): JSONObject {
+        if (replica().getString("store_revision") != request.getString("revision")) return JSONObject().put("changed", true).put("chunk", JSONObject.NULL)
+        val field = request.getString("field"); require(field in literalNames)
+        val offset = request.getLong("offset"); require(offset >= 0)
+        val source = sql("literal_source")
+        val part = rows("SELECT substr(CAST(COALESCE($field,'') AS BLOB),?2+1,65536) AS merge_bytes FROM ($source)", request.getString("ref"), offset).getJSONObject(0)
+        return JSONObject().put("changed", false).put("chunk", part.getString("merge_bytes"))
+    }
+
+    fun literalPart(request: JSONObject): Boolean {
+        val ticket = request.getString("ticket")
+        val ref = request.getString("ref")
+        val revision = request.getString("revision")
+        if (replica().getString("store_revision") != revision) return false
+        val field = literalNames.indexOf(request.getString("field")); require(field >= 0)
+        val offset = request.getInt("offset")
+        val value = request.getString("text")
+        require(value.length <= 65536)
+        if (field == 0 && offset == 0) partialLiteral = LiteralAssembly(ticket, ref, revision, List(3) { StringBuilder() })
+        val part = partialLiteral ?: return false
+        if (part.ticket != ticket || part.ref != ref || part.revision != revision || part.active != field || part.fields[field].length != offset) return false
+        part.fields[field].append(value)
+        if (request.getBoolean("last")) part.active++
+        if (part.active == 3) { run(sql("literal_write"), ref, part.fields[0].toString(), part.fields[1].toString(), part.fields[2].toString()); partialLiteral = null }
+        return true
+    }
     fun scopeProgress(): JSONObject {
         val state = rows(sql("scope_state")).getJSONObject(0)
         val pending = if (state.getInt("metadata_complete") == 1) rows(sql("scope_pending_reading")) else JSONArray()
@@ -358,42 +456,41 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             JSONObject().put("score", if (found.length() == 0) JSONObject.NULL else found.getJSONObject(0).getDouble("score"))
         } finally { run(sql("search_match_clear")) }
     }
-    private fun outlineWindow(records: JSONArray, rootRef: String): JSONObject {
-        val resources = linkedMapOf<String, JSONObject>()
-        var metadata: JSONObject? = null
-        for (index in 0 until records.length()) {
-            val record = records.getJSONObject(index)
-            if (record.getString("part") == "resource") {
-                val resource = JSONObject(record.getString("value_json")); resources[resource.getString("ref")] = resource
-            } else if (record.getString("part") == "meta") metadata = record
-        }
-        val meta = metadata ?: error("outline window metadata is missing")
-        val output = JSONArray(); val children = JSONArray()
-        val proof = JSONObject().put("root", resources[rootRef] ?: JSONObject.NULL)
-            .put("before", JSONObject.NULL).put("after", JSONObject.NULL).put("tail", JSONObject.NULL)
-        for (index in 0 until records.length()) {
-            val record = records.getJSONObject(index); val part = record.getString("part")
-            if (part == "resource" || part == "meta") continue
-            val link = JSONObject(record.getString("value_json"))
-            when (part) {
-                "raw" -> {
-                    val resource = resources[record.getString("ref")] ?: error("outline row resource is missing from its proven revision")
-                    output.put(JSONObject().put("resource", resource).put("link", link).put("match_text", JSONObject.NULL).put("activation_ref", JSONObject.NULL).put("matched_field", JSONObject.NULL).put("activation_field", JSONObject.NULL))
-                    children.put(if (record.isNull("child_available")) JSONObject.NULL else record.getInt("child_available") == 1)
-                }
-                "before", "after", "tail" -> proof.put(part, link)
-                else -> error("unknown outline window record")
+    /** Transport-only partitions of one closed outline proof. No result or cursor is retained. */
+    fun outlineRead(request: JSONObject): JSONObject {
+        val replica = replica()
+        require(replica.getBoolean("provisioning_complete"))
+        val revision = replica.getString("store_revision")
+        val result = JSONObject().put("revision", revision)
+        if (!request.isNull("revision") && request.getString("revision") != revision) return result
+        val plan = request.getJSONObject("plan")
+        val key = plan.getString("plan_key")
+        val params = plan.getJSONArray("params")
+        require(key.startsWith("outline_windows:") && queries.containsKey(key) && params.length() <= 100)
+        val records = readPlan(key, *Array(params.length()) { params.opt(it) })
+        return packRecords(result, request.getInt("start"), records.length(), reduce = { record ->
+            require(record.getString("part") == "resource")
+            val projection = record.getJSONObject("value_json")
+            // Keep only the facts needed to locate and disclose the structural slot.
+            for (field in listOf("title", "body_pm_json", "body_text", "source_publication", "selection", "excerpt", "capture_revision", "color", "work")) {
+                projection.put(field, JSONObject.NULL)
             }
+            projection.put("embedded_refs", JSONArray())
+            record.put("oversized", true)
+        }) { index ->
+            val record = records.getJSONObject(index)
+            if (!record.isNull("value_json")) record.put("value_json", JSONObject(record.getString("value_json")))
+            record
         }
-        return JSONObject().put("rows", output).put("children", children).put("proof", proof)
-            .put("next_cursor", meta.get("next_cursor")).put("previous_cursor", meta.get("previous_cursor"))
+    }
+    fun releaseIndexOrders(tokens: List<String>) {
+        run("DELETE FROM captured_index_orders WHERE token IN (SELECT value FROM json_each(?))", JSONArray(tokens).toString())
     }
     fun query(query: JSONObject, plans: JSONArray): JSONObject {
         val replica = replica()
         require(replica.getBoolean("provisioning_complete"))
         val kind = query.getString("kind")
-        val count = if (kind == "outline_windows") query.getJSONArray("ranges").length() else 1
-        require(count > 0 && plans.length() == count)
+        require(plans.length() == 1)
         fun read(index: Int): JSONArray {
             val plan = plans.getJSONObject(index)
             val key = plan.getString("plan_key"); val params = plan.getJSONArray("params")
@@ -405,21 +502,42 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             .put("next_cursor", JSONObject.NULL).put("previous_cursor", JSONObject.NULL)
             .put("binding_id", JSONObject.NULL).put("canonical_source_ref", JSONObject.NULL)
             .put("scope_available", true).put("daily_index", JSONObject.NULL).put("outline_windows", JSONObject.NULL)
-        if (kind == "outline_windows") {
-            val windows = JSONArray()
-            val ref = query.getString("ref")
-            for (index in 0 until count) windows.put(outlineWindow(read(index), ref))
-            return result.put("outline_windows", windows)
+            .put("page_register", JSONObject.NULL).put("register_label", JSONObject.NULL).put("outline_filter", JSONObject.NULL)
+            .put("work_index", JSONObject.NULL).put("habits", JSONObject.NULL).put("mentions", JSONObject.NULL).put("habit_days", JSONObject.NULL).put("latest_habit_date", JSONObject.NULL)
+        if (kind in listOf("page_register", "outline_filter", "work_pending", "work_completed", "work_row", "habits", "mentions", "daily_index")) {
+            val field = if (kind in listOf("work_pending", "work_completed", "work_row")) "work_index" else kind
+            if (!query.isNull("expected_revision") && replica.getString("store_revision") != query.getString("expected_revision")) return result.put(field, JSONObject().put("kind", "changed"))
+            if (!literalsComplete && (kind == "page_register" || kind == "outline_filter") && query.getString("text").isNotBlank()) {
+                if (rows(sql("literal_missing")).length() > 0) return JSONObject().put("literal_repair", true)
+                literalsComplete = true
+            }
+            if (kind in listOf("page_register", "habits", "mentions", "work_pending", "work_completed")) {
+                when (query.getJSONObject("at").getString("kind")) {
+                    "retain" -> { read(0); return result.put(field, JSONObject().put("kind", "retained")) }
+                    "release" -> { read(0); return result }
+                }
+            }
+            val record = read(0).getJSONObject(0)
+            if (kind in listOf("page_register", "habits", "work_pending", "work_completed", "work_row", "mentions", "daily_index")) return result.put(field, JSONObject(record.getString("register")))
+            val raw = JSONArray(record.getString("items"))
+            val items = JSONArray()
+            for (index in 0 until raw.length()) {
+                val row = raw.getJSONArray(index)
+                items.put(JSONObject().put("link_id", row.getString(0)).put("other_ref", row.getString(1)).put("matched", row.getInt(2) == 1))
+            }
+            val total = record.getInt("total")
+            return result.put(field, JSONObject().put("kind", "range").put("items", items).put("start", query.getInt("start")).put("total", total))
+        }
+        if (kind == "habit_days") {
+            val dates = read(0)
+            return result.put(kind, JSONArray().apply { for (index in 0 until dates.length()) put(dates.getJSONObject(index).getString("local_date")) })
+        }
+        if (kind == "latest_habit_date") return result.put(kind, read(0).getJSONObject(0).get("local_date"))
+        if (kind == "register_label") {
+            val row = read(0).optJSONObject(0) ?: return result
+            return result.put(kind, JSONObject().put("label", row.get("label")).put("oversized", row.getInt("oversized") == 1))
         }
         val records = read(0)
-        if (kind == "daily_index") {
-            val dates = JSONArray()
-            for (index in 0 until records.length()) {
-                val record = records.getJSONObject(index)
-                dates.put(JSONObject().put("local_date", record.getString("local_date")).put("ref", record.get("ref")))
-            }
-            return result.put("daily_index", dates)
-        }
         if (kind == "outline_children") {
             val children = JSONArray()
             for (index in 0 until records.length()) {
@@ -437,14 +555,13 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             return result.put("positions", positions).put("next_cursor", cursor)
         }
         val output = JSONArray()
-        val pageLimit = if (kind == "pages") query.getInt("limit").coerceIn(1, 100) else null
-        val rowCount = if (pageLimit == null) records.length() else minOf(pageLimit, records.length())
+        val rowCount = records.length()
         for (index in 0 until rowCount) {
             val row = records.getJSONObject(index)
             output.put(JSONObject().put("resource", JSONObject(row.getString("projection_json"))).put("link", if (row.isNull("link_json")) JSONObject.NULL else JSONObject(row.getString("link_json"))).put("match_text", JSONObject.NULL).put("activation_ref", JSONObject.NULL).put("matched_field", JSONObject.NULL).put("activation_field", JSONObject.NULL))
         }
         var cursor: Any = JSONObject.NULL
-        val more = if (pageLimit != null) records.length() > pageLimit else query.has("limit") && rowCount == minOf(100, query.getInt("limit"))
+        val more = query.has("limit") && rowCount == minOf(100, query.getInt("limit"))
         if (more && rowCount > 0) {
             val last = output.getJSONObject(rowCount - 1)
             val record = records.getJSONObject(rowCount - 1)

@@ -3,7 +3,7 @@
  * The foreground host requests every finite unit; this owner has no timer.
  * Scope hydration advances bounded pages beside writing replication. Its durable
  * staging and final fence never expand authored snapshot time or local readiness. */
-import { changedResourceRefs, changesDailyIndex } from "@nexus/authored/queries";
+import { changedResourceRefs } from "@nexus/authored/queries";
 import { mergeChanges } from "@nexus/authored/merge";
 import { FORMAT_REVISION, type FeedChange, type MergeResult } from "@nexus/authored/types";
 import { Persistence } from "./persistence";
@@ -40,7 +40,7 @@ export class Sync {
   last_error: string | null = null;
   readonly facts: SyncFacts = { local_error: false, saving: false, ready: false, admission: "ready", failure: null, online: true, pending: false, scope_pending: true, scope_progress: null, cursor: "0", head: null };
   get detail(): string | null { return syncDetail(this.facts, this.last_error); }
-  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning" | "scopeProgress" | "scopeRefs" | "scopeRepairRefs" | "scopeNeedsRepair" | "scopeReset" | "scopeRevoke" | "scopeMetadata" | "scopeText" | "scopeReuse" | "scopeNormalizationNext" | "scopeNormalizationRead" | "scopeNormalizationObservation" | "scopeNormalizationReset" | "scopeNormalized" | "scopeTextComplete" | "scopePublish">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean, dailyIndexChanged?: boolean, resourceRefs?: readonly string[] | null, onlyTitles?: boolean) => void, readonly evidenceChanged: () => void) {}
+  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning" | "scopeProgress" | "scopeRefs" | "scopeRepairRefs" | "scopeNeedsRepair" | "scopeReset" | "scopeRevoke" | "scopeMetadata" | "scopeText" | "scopeReuse" | "scopeNormalizationNext" | "scopeNormalizationRead" | "scopeNormalizationObservation" | "scopeNormalizationReset" | "scopeNormalized" | "scopeTextComplete" | "scopePublish">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean, resourceRefs?: readonly string[] | null) => void, readonly evidenceChanged: () => void) {}
   step({ refresh }: { refresh: boolean }): Promise<SyncStep> {
     if (refresh) {
       this.refreshRequested = true;
@@ -155,9 +155,9 @@ export class Sync {
     if (typeof data.evidence_revision !== "string") throw new Error("authored feed omitted its evidence revision");
     if (data.evidence_revision !== this.evidenceRevision) { this.evidenceRevision = data.evidence_revision; this.evidenceChanged(); }
     await this.local(async () => {
-      const { replica: current, applied, only_titles } = await this.persistence.applyRemote(data.changes, data.next_cursor);
+      const { replica: current, applied } = await this.persistence.applyRemote(data.changes, data.next_cursor);
       this.facts.cursor = current.server_cursor;
-      this.changed(applied.length > 0, applied.some(changesDailyIndex), changedResourceRefs(applied), only_titles);
+      this.changed(applied.length > 0, changedResourceRefs(applied));
     });
     if (BigInt(this.facts.cursor) >= BigInt(this.pullTarget)) { this.pullNeeded = false; this.pullTarget = null; }
     else if (!data.changes.length) throw new Error("authored feed did not advance");
@@ -330,7 +330,7 @@ export class Sync {
       const cursor = header.head_cursor;
       await this.local(() => this.persistence.finishProvisioning(cursor, counts, header!.lamport));
       this.facts.ready = true; this.facts.cursor = cursor; this.last_error = null;
-      this.changed(true, true);
+      this.changed(true);
     } finally { await reader.cancel(); reader.releaseLock(); }
   }
 }

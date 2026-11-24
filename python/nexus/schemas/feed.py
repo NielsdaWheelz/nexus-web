@@ -1,15 +1,17 @@
 """Shared source, subscription, finite-addition and OPML wire contracts."""
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nexus.db.models import MediaKind
 from nexus.db.models import TranscriptState as MediaTranscriptState
+from nexus.schemas.collection_index import CollectionIndex
 from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.contributor_credit import ContributorCreditOut
-from nexus.schemas.media_summary import MediaSummaryOut
+from nexus.schemas.media_summary import MediaProcessingStatus
 from nexus.schemas.podcast import PodcastPlaybackSettingsOut
 from nexus.services.sealed_handles import DiscoveryTargetHandle
 
@@ -473,22 +475,18 @@ class FeedStopOut(BaseModel):
 
 class FeedEntryListItemOut(BaseModel):
     id: UUID
-    media_summary: MediaSummaryOut
-    entry_id: UUID
-    published_at: datetime | None
-    published_on: date | None
-    entry_url: str | None
+    title: str
+    media_kind: MediaKind
+    other_filter_fields: list[str]
+    processing_status: MediaProcessingStatus
+    can_play: bool
     transcript_state: MediaTranscriptState | None
 
     model_config = ConfigDict(extra="forbid")
 
 
-class FeedEntryIndexOut(BaseModel):
-    next_cursor: str | None
+class FeedEntryIndexOut(CollectionIndex[FeedEntryListItemOut]):
     feed: FeedDetailOut
-    items: list[FeedEntryListItemOut]
-
-    model_config = _CLOSED
 
 
 class FeedRefreshFeedScope(BaseModel):

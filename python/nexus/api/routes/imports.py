@@ -2,26 +2,30 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Request, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
+from nexus.schemas.collection_index import CollectionIndex, parse_index_query
 from nexus.schemas.import_refs import parse_import_ref
 from nexus.schemas.imports import (
     DismissImportsRequest,
-    HistoryPage,
     ImportDetail,
-    ImportListQuery,
-    ImportPage,
+    ImportHistory,
+    ImportIndex,
+    ImportItem,
     ImportSummary,
+    parse_import_instant,
 )
 from nexus.services.import_dismissals import dismiss_imports
 from nexus.services.imports import (
     read_import_detail,
     read_import_history,
-    read_import_page,
+    read_import_index,
     read_import_summary,
+    read_recent_imports,
 )
 
 router = APIRouter(tags=["imports"])
@@ -51,11 +55,25 @@ def get_import_summary(
 
 @router.get("/imports")
 def list_imports(
-    query: Annotated[ImportListQuery, Query()],
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: RepeatableReadDbSession,
-) -> Data[ImportPage]:
-    return Data(data=read_import_page(db, viewer_id=viewer.user_id, query=query))
+) -> Data[ImportIndex]:
+    query = parse_index_query(request.query_params.multi_items(), domain_keys={"from"})
+    cutoff = parse_import_instant(query.get("from"), "from")
+    if cutoff is None:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Missing from instant")
+    return Data(data=read_import_index(db, viewer_id=viewer.user_id, arrived_from=cutoff))
+
+
+@router.get("/imports/recent")
+def get_recent_imports(
+    request: Request,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: RepeatableReadDbSession,
+) -> Data[CollectionIndex[ImportItem]]:
+    parse_index_query(request.query_params.multi_items(), domain_keys=set())
+    return Data(data=read_recent_imports(db, viewer_id=viewer.user_id))
 
 
 @router.get("/imports/{ref}")
@@ -70,17 +88,11 @@ def get_import(
 @router.get("/imports/{ref}/history")
 def get_import_history(
     ref: str,
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: RepeatableReadDbSession,
-    cursor: str | None = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=100),
-) -> Data[HistoryPage]:
+) -> Data[ImportHistory]:
+    parse_index_query(request.query_params.multi_items(), domain_keys=set())
     return Data(
-        data=read_import_history(
-            db,
-            viewer_id=viewer.user_id,
-            ref=parse_import_ref(ref),
-            cursor=cursor,
-            limit=limit,
-        )
+        data=read_import_history(db, viewer_id=viewer.user_id, ref=parse_import_ref(ref)),
     )

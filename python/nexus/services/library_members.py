@@ -26,7 +26,7 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.schemas.collection_page import CollectionPage
+from nexus.schemas.collection_index import CollectionIndex
 from nexus.schemas.library_members import (
     CreateInvitationRequest,
     LibraryInvitationOut,
@@ -35,14 +35,9 @@ from nexus.schemas.library_members import (
     ViewerInvitationOut,
 )
 from nexus.services import libraries, resource_grants
-from nexus.services.collection_keyset import KeysetValueKind, SortKey, keyset_page
 from nexus.services.search import projection
 from nexus.services.suggestion_changes import delete_suggestion_feeds, record_input_change
 
-_NEWEST = (
-    SortKey("created_at", "desc", KeysetValueKind.DateTime),
-    SortKey("id", "desc", KeysetValueKind.Uuid),
-)
 _MEMBERS = """
     SELECT m.user_id, m.role, m.created_at, u.email, u.display_name,
            m.user_id = l.owner_user_id AS is_owner
@@ -75,23 +70,12 @@ def _managed(db: Session, viewer_id: UUID, library_id: UUID) -> libraries.Librar
 
 
 def list_members(
-    db: Session, viewer_id: UUID, library_id: UUID, *, cursor: str | None, limit: int
-) -> CollectionPage[LibraryMemberOut]:
-    """One page of a library's members in user id order. Admin-only."""
+    db: Session, viewer_id: UUID, library_id: UUID
+) -> CollectionIndex[LibraryMemberOut]:
+    """Every member in user id order. Admin-only."""
     libraries.access(db, viewer_id, library_id, lock=False).require_admin()
-    rows, next_cursor = keyset_page(
-        db,
-        binding={"list": "LibraryMembers", "viewer": viewer_id, "library": library_id},
-        plan=(SortKey("user_id", "asc", KeysetValueKind.Uuid),),
-        alias="m",
-        cursor=cursor,
-        limit=limit,
-        params={"library_id": library_id},
-        sql=lambda keyset, order: f"{_MEMBERS} {keyset} ORDER BY {order} LIMIT :limit",
-    )
-    return CollectionPage[LibraryMemberOut](
-        items=[LibraryMemberOut(**row) for row in rows], next_cursor=next_cursor
-    )
+    rows = db.execute(text(f"{_MEMBERS} ORDER BY m.user_id"), {"library_id": library_id}).mappings()
+    return CollectionIndex(items=[LibraryMemberOut(**row) for row in rows])
 
 
 def set_member_role(
@@ -266,56 +250,34 @@ def create_invitation(
 
 
 def list_invitations(
-    db: Session, viewer_id: UUID, library_id: UUID, *, cursor: str | None, limit: int
-) -> CollectionPage[LibraryInvitationOut]:
+    db: Session, viewer_id: UUID, library_id: UUID
+) -> CollectionIndex[LibraryInvitationOut]:
     """A library's pending invitations, newest first. Admin-only."""
     library = libraries.access(db, viewer_id, library_id, lock=False)
     library.require_not_system()
     library.require_admin()
-    rows, next_cursor = keyset_page(
-        db,
-        binding={"list": "LibraryInvitations", "viewer": viewer_id, "library": library_id},
-        plan=_NEWEST,
-        alias="i",
-        cursor=cursor,
-        limit=limit,
-        params={"library_id": library_id},
-        sql=lambda keyset, order: f"""
-            {_INVITATIONS}
-            WHERE i.library_id = :library_id AND i.status = 'pending' {keyset}
-            ORDER BY {order} LIMIT :limit
-        """,
-    )
-    return CollectionPage[LibraryInvitationOut](
-        items=[LibraryInvitationOut(**row) for row in rows], next_cursor=next_cursor
-    )
+    rows = db.execute(
+        text(f"""{_INVITATIONS}
+            WHERE i.library_id = :library_id AND i.status = 'pending'
+            ORDER BY i.created_at DESC, i.id DESC"""),
+        {"library_id": library_id},
+    ).mappings()
+    return CollectionIndex(items=[LibraryInvitationOut(**row) for row in rows])
 
 
-def list_viewer_invitations(
-    db: Session, viewer_id: UUID, *, cursor: str | None, limit: int
-) -> CollectionPage[ViewerInvitationOut]:
+def list_viewer_invitations(db: Session, viewer_id: UUID) -> CollectionIndex[ViewerInvitationOut]:
     """The invitations waiting for the viewer, newest first, with who sent them."""
-    rows, next_cursor = keyset_page(
-        db,
-        binding={"list": "ViewerInvitations", "viewer": viewer_id},
-        plan=_NEWEST,
-        alias="i",
-        cursor=cursor,
-        limit=limit,
-        params={"viewer_id": viewer_id},
-        sql=lambda keyset, order: f"""
-            SELECT i.id, i.library_id, l.name AS library_name, i.role, i.created_at,
+    rows = db.execute(
+        text("""SELECT i.id, i.library_id, l.name AS library_name, i.role, i.created_at,
                    u.email AS inviter_email, u.display_name AS inviter_display_name
             FROM library_invitations i
             JOIN libraries l ON l.id = i.library_id
             JOIN users u ON u.id = i.inviter_user_id
-            WHERE i.invitee_user_id = :viewer_id AND i.status = 'pending' {keyset}
-            ORDER BY {order} LIMIT :limit
-        """,
-    )
-    return CollectionPage[ViewerInvitationOut](
-        items=[ViewerInvitationOut(**row) for row in rows], next_cursor=next_cursor
-    )
+            WHERE i.invitee_user_id = :viewer_id AND i.status = 'pending'
+            ORDER BY i.created_at DESC, i.id DESC"""),
+        {"viewer_id": viewer_id},
+    ).mappings()
+    return CollectionIndex(items=[ViewerInvitationOut(**row) for row in rows])
 
 
 def respond_to_invitation(

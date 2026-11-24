@@ -145,6 +145,7 @@ export interface TextEditorHandle {
   localHistory(command: "undo" | "redo"): {enabled: boolean; execute(): void} | null;
 }
 export interface NoteEditorHandle extends TextEditorHandle {
+  canReplaceProjection(): boolean;
   setInputMode(mode: "text" | "blocks" | "controls"): void;
   refuse(message: string): void;
 }
@@ -1644,7 +1645,10 @@ function NoteEditorContent(props: NoteEditorProps) {
       },
       refuse(message) {warn({ fact: "couldn’t change this outline.", reason: message });},
       canArrange() {
-        return latest.current.editable && !busy.current && !nativeInputOpen.current && !view.composing &&
+        return latest.current.editable && this.canReplaceProjection();
+      },
+      canReplaceProjection() {
+        return !busy.current && !nativeInputOpen.current && !view.composing &&
           compositionBase.current === null && referenceRef.current.getState() === null;
       },
       settleNativeInput() {

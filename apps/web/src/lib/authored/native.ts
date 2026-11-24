@@ -1,11 +1,12 @@
 /** Native adapter uses the same shared semantic kernel. Kotlin admits only
  * closed SQL transactions and fixed foreground transport operations. */
-import { bindingQueries, changedResourceRefs, changesDailyIndex, excerptQuery, invalidatesQuery, searchQuery, sourceAliasQuery, titleOnlyChanges, type CompiledQuery } from "@nexus/authored/queries";
+import { bindingQueries, changedResourceRefs, excerptQuery, invalidatesQuery, searchQuery, sourceAliasQuery, pageTitle, foldedFields, type CompiledQuery } from "@nexus/authored/queries";
+import { decodeBytes } from "@nexus/authored/documents";
 import { validateBindings } from "@nexus/authored/identity";
 import { isLocalFeedEcho, mergeChanges } from "@nexus/authored/merge";
-import { FORMAT_REVISION, type AuthoredStore, type Change, type FeedChange, type ReplicaState, type StateSelection, type QueryResult, type SyncFailure, type SyncStatus } from "@nexus/authored/types";
+import { FORMAT_REVISION, type AuthoredStore, type Corpus, type Change, type FeedChange, type MergeResult, type ReplicaState, type StateSelection, type QueryResult, type OutlineWindowSlice, type SyncFailure, type SyncStatus } from "@nexus/authored/types";
 import type { ScopeInputsPage, ScopeProgress, ScopeTextPage, ScopeNormalizationInterval, ScopeRawChunk, ScopeNormalizationObservation, NormalizedScopeChunk } from "@nexus/authored/scope";
-import { selectionFor } from "./persistence";
+import { decodeOutlineWindow, selectionFor } from "./persistence";
 import { nativeQueryPlans, nativeSearchPlan } from "./nativeQuery";
 import { Sync } from "./sync";
 import { scheduleReplication } from "./schedule";
@@ -70,52 +71,135 @@ async function frame<T>(op: string, input: Record<string, unknown> = {}, signal?
 }
 function base64(bytes: Uint8Array): string { return btoa(String.fromCharCode(...bytes)); }
 function unbase64(value: string): Uint8Array { return Uint8Array.from(atob(value), char => char.charCodeAt(0)); }
-async function call<T>(op: string, input: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
-  const bytes = new TextEncoder().encode(JSON.stringify({ op, ...input }));
+function projectionLiteral(p: MergeResult["projections"][number]): string[] {
+  return [p.ref, ...foldedFields({title: p.kind === "page" ? pageTitle(p.title ?? "", p.local_date) : p.title,
+    body: p.body_text, quote: p.selection?.quote_exact})];
+}
+async function call<T>(op: string, input: Record<string, unknown> = {}, signal?: AbortSignal, projections?: MergeResult["projections"]): Promise<T> {
+  const encoder = new TextEncoder();
+  let bytes = encoder.encode(JSON.stringify({ op, ...input }));
+  if (projections?.length) {
+    // Keep a canonical commit admissible even when its derived fields would exceed a native transfer.
+    const literal = projections.map(projectionLiteral);
+    const suffix = encoder.encode(`,"literal_fields":${JSON.stringify(literal)}}`);
+    if (bytes.length - 1 + suffix.length <= 16 * 1024 * 1024) {
+      const combined = new Uint8Array(bytes.length - 1 + suffix.length);
+      combined.set(bytes.subarray(0,-1)); combined.set(suffix, bytes.length - 1); bytes = combined;
+    }
+  }
   const transfer_id = crypto.randomUUID();
   try {
-  let byte_count: number;
-  const timeout = op === "snapshot" ? 300_000 : 30_000;
-  if (bytes.byteLength <= 24 * 1024) {
-    const result = await frame<{ kind: "inline"; byte_count: number; base64: string } | { kind: "transfer"; byte_count: number }>("invoke_inline", { transfer_id, base64: base64(bytes) }, signal, timeout);
-    if (result.kind === "inline") {
-      const raw = unbase64(result.base64);
-      if (raw.byteLength !== result.byte_count || raw.byteLength > 24 * 1024) throw new Error("invalid native authored inline framing");
-      return JSON.parse(new TextDecoder().decode(raw));
+    let byte_count: number;
+    const timeout = op === "snapshot" ? 300_000 : 30_000;
+    if (bytes.byteLength <= 24 * 1024) {
+      const result = await frame<{ kind: "inline"; byte_count: number; base64: string } | { kind: "transfer"; byte_count: number }>("invoke_inline", { transfer_id, base64: base64(bytes) }, signal, timeout);
+      if (result.kind === "inline") {
+        const raw = unbase64(result.base64);
+        if (raw.byteLength !== result.byte_count || raw.byteLength > 24 * 1024) throw new Error("invalid native authored inline framing");
+        return JSON.parse(new TextDecoder().decode(raw));
+      }
+      byte_count = result.byte_count;
+    } else {
+      await frame("begin", { transfer_id, byte_count: bytes.byteLength }, signal);
+      for (let offset = 0; offset < bytes.byteLength; offset += 24 * 1024) await frame("chunk", { transfer_id, offset, base64: base64(bytes.subarray(offset, offset + 24 * 1024)) }, signal);
+      ({ byte_count } = await frame<{ byte_count: number }>("invoke", { transfer_id }, signal, timeout));
     }
-    byte_count = result.byte_count;
-  } else {
-    await frame("begin", { transfer_id, byte_count: bytes.byteLength }, signal);
-    for (let offset = 0; offset < bytes.byteLength; offset += 24 * 1024) await frame("chunk", { transfer_id, offset, base64: base64(bytes.subarray(offset, offset + 24 * 1024)) }, signal);
-    ({ byte_count } = await frame<{ byte_count: number }>("invoke", { transfer_id }, signal, timeout));
+    const output = new Uint8Array(byte_count);
+    for (let offset = 0; offset < byte_count;) {
+      const chunk = await frame<{ base64: string; next_offset: number }>("read", { transfer_id, offset }, signal);
+      const raw = unbase64(chunk.base64);
+      if (chunk.next_offset !== offset + raw.byteLength || raw.byteLength === 0) throw new Error("invalid native authored result framing");
+      output.set(raw, offset); offset = chunk.next_offset;
+    }
+    return JSON.parse(new TextDecoder().decode(output));
+  } catch (error) {
+    void frame("discard_transfer", { transfer_id }).catch(reportError);
+    throw error;
   }
-  const output = new Uint8Array(byte_count);
-  for (let offset = 0; offset < byte_count;) {
-    const chunk = await frame<{ base64: string; next_offset: number }>("read", { transfer_id, offset }, signal);
-    const raw = unbase64(chunk.base64);
-    if (chunk.next_offset !== offset + raw.byteLength || raw.byteLength === 0) throw new Error("invalid native authored result framing");
-    output.set(raw, offset); offset = chunk.next_offset;
-  }
-  return JSON.parse(new TextDecoder().decode(output));
-  } finally { if (signal?.aborted) void frame("discard_transfer", { transfer_id }).catch(reportError); }
 }
+
+/** Canonical local text repairs old installations or a write whose derived sidecar did not fit.
+ * A large field crosses in pieces and is normalized as a whole, preserving NFC and final sigma. */
+async function repairLiteralFields() {
+  const {revision, items} = await call<{revision: string; items: {ref: string; fields: [string,string,string] | null}[]}>("literal_inputs");
+  const small: string[][] = [];
+  for (const {ref, fields} of items) {
+    if (fields !== null) { small.push([ref, ...foldedFields({title: fields[0],body: fields[1],quote: fields[2]})]); continue; }
+    const ticket = crypto.randomUUID();
+    for (const field of ["title","body","quote"] as const) {
+      const decoder = new TextDecoder(), text: string[] = [];
+      for (let offset = 0;;) {
+        const piece: {changed: boolean; chunk: string | null} = await call("literal_piece", {revision, ref, field, offset});
+        if (piece.changed) return;
+        const bytes = decodeBytes(piece.chunk!);
+        text.push(decoder.decode(bytes, {stream: true})); offset += bytes.length;
+        if (bytes.length < 65536) break;
+      }
+      text.push(decoder.decode());
+      const [folded] = foldedFields({title: text.join("")});
+      for (let offset = 0;;) {
+        let end = Math.min(folded.length, offset + 65536);
+        if (end < folded.length && /[\uD800-\uDBFF]/u.test(folded[end-1]!)) end--;
+        const last = end === folded.length;
+        const {accepted} = await call<{accepted: boolean}>("literal_part", {ticket, revision, ref, field, offset, text: folded.slice(offset,end), last});
+        if (!accepted) return;
+        if (last) break;
+        offset = end;
+      }
+    }
+  }
+  if (small.length) await call("literal_install", {revision, items: small});
+}
+
 export async function openNativeAuthoredStore(accountId: string): Promise<AuthoredStore> {
   const replica = await nativeHello(accountId);
   let lease: string | null = null;
   let closed = false;
   let queue: Promise<unknown> = Promise.resolve();
   const serialize = <T,>(work: () => Promise<T>): Promise<T> => { const next = queue.then(work); queue = next.catch(() => undefined); return next; };
-  const queries = new Set<(corpusChanged: boolean, dailyIndexChanged: boolean, resourceRefs: readonly string[] | null, onlyTitles: boolean, ownsCommit: boolean) => void>();
+  const queries = new Set<(corpusChanged: boolean, resourceRefs: readonly string[] | null, ownsCommit: boolean) => void>();
   const evidence = new Set<() => void>();
   const closedWaiters = new Set<() => void>();
   const statuses = new Set<(status: SyncStatus, detail: string | null, failure: SyncFailure) => void>();
-  const changed = (corpusChanged = false, dailyIndexChanged = false, resourceRefs: readonly string[] | null = null, onlyTitles = false, ownsCommit = false) => {
+  const changed = (corpusChanged = false, resourceRefs: readonly string[] | null = null, ownsCommit = false) => {
     for (const listener of statuses) listener(syncStatus(sync.facts), sync.detail, sync.facts.failure);
-    for (const listener of queries) listener(corpusChanged, dailyIndexChanged, resourceRefs, onlyTitles, ownsCommit);
+    for (const listener of queries) listener(corpusChanged, resourceRefs, ownsCommit);
   };
   const queryLocal = async (query: Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult> => {
+    if (query.kind === "outline_windows") {
+      const plans = await nativeQueryPlans(query);
+      for (;;) {
+        const windows: OutlineWindowSlice[] = [];
+        let revision: string | null = null;
+        for (const plan of plans) {
+          const records: Record<string, unknown>[] = [];
+          let start: number | null = 0;
+          while (start !== null) {
+            const part: {revision: string; records?: Record<string, unknown>[]; next: number | null} =
+              await call("outline_read", {plan, start, revision});
+            if (revision !== null && part.revision !== revision) break;
+            revision = part.revision;
+            records.push(...part.records!);
+            start = part.next;
+          }
+          if (start !== null) break;
+          windows.push(decodeOutlineWindow(records, query.ref));
+        }
+        if (windows.length === plans.length && revision !== null) return {
+          store_revision: revision, rows: [], children: [], positions: [], binding_id: null, scope_available: true,
+          next_cursor: null, previous_cursor: null, canonical_source_ref: null, outline_windows: windows,
+          page_register: null, register_label: null, outline_filter: null, work_index: null, habits: null, mentions: null,
+          habit_days: null, latest_habit_date: null, daily_index: null,
+        };
+      }
+    }
     if (query.kind !== "search" && query.kind !== "search_preview" && query.kind !== "search_admission" && query.kind !== "source_alias" && query.kind !== "excerpt") {
-      return call<QueryResult>("query", {query, plans: await nativeQueryPlans(query)});
+      const plans = await nativeQueryPlans(query);
+      for (;;) {
+        const value = await call<QueryResult | {literal_repair: true}>("query", {query, plans});
+        if (!("literal_repair" in value)) return value;
+        await repairLiteralFields();
+      }
     }
     for (;;) {
       const before = await call<ReplicaState>("replica");
@@ -143,14 +227,13 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
     replica: () => call<ReplicaState>("replica"),
     pending: async () => (await call<{ changes: Change[] }>("pending")).changes,
     acknowledge: async (sequence: string) => { await call("acknowledge", { sequence }); },
-    applyRemote: async (entries: FeedChange[], nextCursor: string): Promise<{replica: ReplicaState; applied: Change[]; only_titles: boolean}> => {
-      let raced = false;
+    applyRemote: async (entries: FeedChange[], nextCursor: string): Promise<{replica: ReplicaState; applied: Change[]}> => {
       for (;;) {
         const current = await call<ReplicaState>("replica");
         // Native documents share SQLite. This document may not have observed
         // an entry written by another document on the same replica.
         const applied = entries.map(entry => entry.change);
-        if (BigInt(current.server_cursor) >= BigInt(nextCursor)) return {replica: current, applied, only_titles: false};
+        if (BigInt(current.server_cursor) >= BigInt(nextCursor)) return {replica: current, applied};
         const changes = entries.filter(entry => BigInt(entry.server_seq) > BigInt(current.server_cursor));
         const incoming = changes.filter(entry => !isLocalFeedEcho(entry, current)).map(entry => entry.change);
         const states = await changeStates(incoming);
@@ -158,15 +241,46 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
         const merged = mergeChanges(states, incoming);
         const result = await call<ReplicaState | { kind: "stale" }>("apply_remote", {
           expected_store_revision: current.store_revision, expected_server_cursor: current.server_cursor, changes, next_cursor: nextCursor, states: merged,
-        });
-        if (!("kind" in result)) return {
-          replica: result, applied, only_titles: !raced && incoming.length === entries.length && titleOnlyChanges(incoming, states, merged),
-        };
-        raced = true;
+        }, undefined, merged.projections);
+        if (!("kind" in result)) return {replica: result, applied};
       }
     },
     resetProvisioning: async () => { await call("reset_provisioning"); },
-    stage: async (states: Parameters<typeof mergeChanges>[0] & { projections: unknown[] }) => { await call("stage", { states }); },
+    stage: async (states: MergeResult) => {
+      const ceiling = 16 * 1024 * 1024 - 1024;
+      const encoder = new TextEncoder();
+      const empty: MergeResult = {resources: [], links: [], passages: [], source_stubs: [], projections: []};
+      const byRef = new Map(states.projections.map(projection => [projection.ref, projection]));
+      // Each stage is unpublished until finishProvisioning commits its exact counts.
+      const stage = async <T,>(records: readonly T[], corpus: (rows: T[]) => MergeResult,
+        project: (row: T) => MergeResult["projections"][number] | undefined) => {
+        let rows: T[] = [], projections: MergeResult["projections"] = [], literals: string[][] = [], size = 0;
+        const flush = async () => {
+          if (rows.length === 0) return;
+          await call("stage", {states: {...corpus(rows), projections}, literal_fields: literals});
+          rows = []; projections = []; literals = []; size = 0;
+        };
+        for (const row of records) {
+          const projection = project(row);
+          const bytes = encoder.encode(JSON.stringify(row)).byteLength +
+            (projection === undefined ? 0 : encoder.encode(JSON.stringify(projection)).byteLength) + 2;
+          if (bytes > ceiling) throw new RangeError("authored snapshot record exceeds the native transfer limit");
+          const literal = projection === undefined ? null : projectionLiteral(projection);
+          const literalBytes = literal === null ? 0 : encoder.encode(JSON.stringify(literal)).byteLength + 1;
+          const packed = bytes + literalBytes <= ceiling ? bytes + literalBytes : bytes;
+          if (size + packed > ceiling) await flush();
+          rows.push(row);
+          if (projection !== undefined) projections.push(projection);
+          if (literal !== null && packed > bytes) literals.push(literal);
+          size += packed;
+        }
+        await flush();
+      };
+      await stage(states.resources, resources => ({...empty, resources}), row => byRef.get(row.ref));
+      await stage(states.passages, passages => ({...empty, passages}), row => byRef.get(`passage_anchor:${row.anchor_id}`));
+      await stage(states.source_stubs, source_stubs => ({...empty, source_stubs}), () => undefined);
+      await stage(states.links, links => ({...empty, links}), () => undefined);
+    },
     finishProvisioning: async (cursor: string, counts: Record<string, number>, lamport: string) => { await call("finish_provisioning", { cursor, counts, lamport }); },
     scopeProgress: () => call<ScopeProgress>("scope_progress"),
     scopeRefs: async (after: string | null) => (await call<{refs: string[]}>("scope_refs", {after})).refs,
@@ -226,7 +340,29 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       if (signal.aborted) { aborted(); return; }
       queries.add(check); closedWaiters.add(aborted); signal.addEventListener("abort", aborted, { once: true }); check();
     }),
-    readSnapshot: selection => serialize(() => call("read_snapshot", { selection })),
+    readSnapshot: selection => serialize(async () => {
+      type StateRecord = {[K in keyof Corpus]: {kind: K; value: Corpus[K][number]}}[keyof Corpus];
+      for (;;) {
+        const states: Corpus = {resources: [], links: [], passages: [], source_stubs: []};
+        let replica: ReplicaState | null = null, start: number | null = 0;
+        while (start !== null) {
+          const part: {replica: ReplicaState; records?: StateRecord[]; next: number | null} =
+            await call("read_snapshot", {selection, start, revision: replica?.store_revision ?? null});
+          if (replica !== null && replica.store_revision !== part.replica.store_revision) break;
+          replica = part.replica;
+          for (const record of part.records!) {
+            switch (record.kind) {
+              case "resources": states.resources.push(record.value); break;
+              case "links": states.links.push(record.value); break;
+              case "passages": states.passages.push(record.value); break;
+              case "source_stubs": states.source_stubs.push(record.value); break;
+            }
+          }
+          start = part.next;
+        }
+        if (start === null && replica !== null) return {replica, states};
+      }
+    }),
     readReplica: () => serialize(persistence.replica),
     readStates: selection => serialize(() => call("states", { selection })),
     query: query => serialize(() => queryLocal(query)),
@@ -237,33 +373,31 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
         await validateBindings(accountId, states, [frame.change]);
         const merged = mergeChanges(states, [frame.change]);
         frame = { ...frame, states: merged };
-        const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease });
+        const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease }, undefined, merged.projections);
         sync.facts.pending = true;
-        if (result.kind === "committed") changed(true, changesDailyIndex(frame.change), changedResourceRefs([frame.change]), titleOnlyChanges([frame.change], states, merged), true);
+        if (result.kind === "committed") changed(true, changedResourceRefs([frame.change]), true);
         replication.wake();
         return result;
       }
       finally { sync.facts.saving = false; changed(); }
     }),
     subscribe: (query, listener, failed) => {
-      let live = true;
-      let generation = 0;
-      let observed: QueryResult | null = null;
-      const read = (corpusChanged: boolean, dailyIndexChanged: boolean, resourceRefs: readonly string[] | null, onlyTitles: boolean) => {
-        if (!invalidatesQuery(query, corpusChanged, dailyIndexChanged, resourceRefs, onlyTitles, observed)) return;
+      let live = true, queued = false, generation = 0;
+      const read = (corpusChanged: boolean, resourceRefs: readonly string[] | null) => {
+        if (!live || queued || !invalidatesQuery(query, corpusChanged, resourceRefs)) return;
         const current = ++generation;
-        observed = null;
-        void serialize(() => queryLocal(query)).then(value => {
-          if (!live) return;
-          if (query.kind === "outline_windows" && generation === current) observed = value;
-          listener(value);
-        }, error => { if (live) failed(error); });
+        queued = true;
+        void serialize(async () => {
+          queued = false;
+          return live ? queryLocal(query) : null;
+        }).then(value => { if (live && current === generation && value !== null) listener(value); },
+          error => { if (live && current === generation) failed(error); });
       };
-      queries.add(read); read(true, true, null, false);
+      queries.add(read); read(true, null);
       return () => { live = false; queries.delete(read); };
     },
     onResourceChange: (ref, listener) => {
-      const notify = (corpus: boolean, _index: boolean, refs: readonly string[] | null, _titles: boolean, ownsCommit: boolean) => {
+      const notify = (corpus: boolean, refs: readonly string[] | null, ownsCommit: boolean) => {
         if (corpus && !ownsCommit && (refs === null || refs.includes(ref))) listener();
       };
       queries.add(notify);

@@ -3,16 +3,10 @@
  * unassigned characters stay opaque boundaries; final sigma uses frozen
  * properties because even assigned characters' casing properties can change.
  */
-import { CASED_15, CASE_IGNORABLE_15, UNASSIGNED_15 } from "./paneFilterUnicode15.gen.ts";
+import { CASED_15, CASE_IGNORABLE_15, UNASSIGNED_15 } from "./filterUnicode15.gen.ts";
 
-export const PAGE_TITLE_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"] as const;
-export function pageTitle(title: string, local_date: string | null): string {
-  if (title) return title;
-  if (local_date === null) return "untitled page";
-  return `${PAGE_TITLE_MONTHS[Number(local_date.slice(5,7))-1]} ${Number(local_date.slice(8,10))}, ${local_date.slice(0,4)}`;
-}
-
-export function paneFilterText(value: string): string {
+export function foldFilterText(value: string): string {
+  if (!/[\u0080-\u{10ffff}]/u.test(value)) return value.toLowerCase();
   const normalized = value.split(UNASSIGNED_15)
     .map((part, index) => index % 2 === 0 ? part.normalize("NFC") : part).join("");
   const characters = Array.from(normalized);
