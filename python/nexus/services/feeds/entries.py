@@ -95,20 +95,30 @@ def list_entries(
     summaries = media.media_summaries(
         db, viewer_id=viewer_id, media_ids=[row["media_id"] for row in rows]
     )
-    return wire.FeedEntryIndexOut(
-        feed=detail,
-        items=[
+    items = []
+    for row in rows:
+        summary = summaries[row["media_id"]]
+        if summary.show is None:
+            filter_fields = [
+                name
+                for credit in summary.contributors
+                if credit.role == "author"
+                for name in (credit.credited_name, credit.contributor_display_name)
+                if name is not None
+            ]
+        else:
+            filter_fields = [] if summary.show.podcast_id == feed_id else [summary.show.title]
+        items.append(
             wire.FeedEntryListItemOut(
-                id=row["media_id"],
-                entry_id=row["entry_id"],
-                media_summary=summaries[row["media_id"]],
-                published_at=row["published_at"],
-                published_on=row["published_on"],
-                entry_url=row["entry_url"],
+                id=summary.media_id,
+                title=summary.title,
+                media_kind=summary.media_kind,
+                other_filter_fields=filter_fields,
+                processing_status=summary.processing_status,
+                can_play=summary.can_play,
                 transcript_state=TranscriptState(row["transcript_state"])
                 if row["transcript_state"]
                 else None,
             )
-            for row in rows
-        ],
-    )
+        )
+    return wire.FeedEntryIndexOut(feed=detail, items=items)

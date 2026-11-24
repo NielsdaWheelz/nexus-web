@@ -9,8 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PlaybackSourceContext, captureSavedView, capturePlaybackSource } from "@/lib/actions/playbackSource";
 import CollectionView from "@/components/collections/CollectionView";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
-import { presentMedia } from "@/lib/collections/presenters/media";
-import CollectionRow from "@/components/collections/CollectionRow";
+import IndexedMediaRow from "@/components/collections/IndexedMediaRow";
 import { libraryDisplayName } from "@/lib/collections/presenters/library";
 import type { FeedActionSubject } from "@/lib/actions/inlineActions";
 import { projectCollectionConsumptionAction, projectPodcastTranscriptAction, projectFeedLibraryRemovalAction } from "@/lib/actions/project";
@@ -30,10 +29,6 @@ import PaneSurface from "@/components/ui/PaneSurface";
 import PaneSection from "@/components/ui/PaneSection";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
-import {
-  useMediaSummaries,
-} from "@/lib/media/MediaSummaryProvider";
-import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
 import { shouldPollTranscriptProvisioning } from "@/lib/media/transcriptView";
 import {
   usePaneIsActive,
@@ -146,35 +141,11 @@ function FeedDetailPane({ feedId, kind, paneId }: { readonly feedId: string; rea
   const following = destinations.length > 0;
   const history = ready?.data.imports ?? [];
   const recurring = ready?.data.recurring;
-  const loaded = episodes.status === "ready" ? episodeItems : null;
-  const summaries = useMediaSummaries(
-    (loaded ?? []).map((episode) => episode.media_summary), source,
-  );
-  const transcriptSignature = live && episodes.status === "ready" && episodeFailure === null
-    ? JSON.stringify(episodeItems.map(episode => [episode.id, episode.transcript_state] as const).sort((a, b) => a[0].localeCompare(b[0])))
-    : null;
-  const observedTranscripts = useRef<string | null>(null);
-  const retrySummaries = summaries.retry;
-  useEffect(() => {
-    if (transcriptSignature === null || observedTranscripts.current === transcriptSignature) return;
-    observedTranscripts.current = transcriptSignature;
-    retrySummaries();
-  }, [transcriptSignature, retrySummaries]);
-  const resolved = useMemo(
-    () =>
-      (loaded ?? []).flatMap((episode) => {
-        const summary = summaries.resolve(episode.media_summary);
-        return summary === null
-          ? []
-          : [{ ...episode, media_summary: summary }];
-      }),
-    [loaded, summaries],
-  );
-  const matching = (text: string) => resolved.filter(episode =>
-    matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary, { containingPodcastId: kind === "podcast" ? feedId : undefined })));
+  const matching = (text: string) => episodeItems.filter(episode =>
+    matchesPaneFilterQuery(text, [episode.title, ...episode.other_filter_fields]));
 
   const working = history.some(operation => operation.work_in_flight) || recurring?.work_in_flight === true || recurring?.history.work_in_flight === true;
-  const provisioning = episodeItems.some(episode => episode.media_summary.processing_status !== "suspended" && episode.transcript_state !== null && shouldPollTranscriptProvisioning(episode.transcript_state));
+  const provisioning = episodeItems.some(episode => episode.processing_status !== "suspended" && episode.transcript_state !== null && shouldPollTranscriptProvisioning(episode.transcript_state));
   // justify-polling: one visible observation lane owns header and entry publication.
   useIntervalPoll({ enabled: live && remoteReady() && observing && (following || working || provisioning),
     pollIntervalMs: working || provisioning ? WORK_OBSERVATION_MS : PASSIVE_OBSERVATION_MS, onPoll: () => episodes.revalidate({ passive: true }) });
@@ -219,7 +190,7 @@ function FeedDetailPane({ feedId, kind, paneId }: { readonly feedId: string; rea
   }, [canCheckSource, ctx, feedId, retainCheck, throwLater]);
   const filterRows = usePaneFilterRows({
     sourceKey: `FeedDetail.Episodes:${feedId}`,
-    getRowStatus: (text) => indexRowStatus(episodes, resolved.length, matching(text).length, { singular, plural: noun }),
+    getRowStatus: (text) => indexRowStatus(episodes, episodeItems.length, matching(text).length, { singular, plural: noun }),
   });
   const replaceView = useCallback(
     (changes: Readonly<Record<string, string | null>>) =>
@@ -360,11 +331,10 @@ function FeedDetailPane({ feedId, kind, paneId }: { readonly feedId: string; rea
               : <Failed error={episodeFailure} noun={noun} retry={{ run: retry, busy }} />
           ) : known === undefined || ready === null ? null : (
             <PlaybackSourceContext.Provider value={async selected_media_id => {
-              if (kind === "article") return captureSavedView(visible.map(entry => entry.media_summary), selected_media_id);
+              if (kind === "article" || source.kind === "catalog")
+                return captureSavedView(visible.map(episode => ({ media_id: episode.id, media_kind: episode.media_kind, can_play: episode.can_play })), selected_media_id);
               const sourceSort = (["newest", "oldest", "duration_asc", "duration_desc"] as const).find(value => value === sort);
               if (sourceSort === undefined) throw new Error("invalid podcast queue sort");
-              if (source.kind === "catalog")
-                return captureSavedView(visible.map(episode => episode.media_summary), selected_media_id);
               // The refusal's message is its reason, as the player's own refusals are.
               if (!live || !remoteReady()) throw new ApiError(409, "E_PLAYBACK_REFUSED", "this list needs a connection.");
               if (episodes.status !== "ready" || episodes.refreshing) throw new ApiError(409, "E_PLAYBACK_REFUSED", "this list is still loading.");
@@ -375,13 +345,17 @@ function FeedDetailPane({ feedId, kind, paneId }: { readonly feedId: string; rea
             <CollectionView geometry="UniformIndex"
               surface={false}
               returnScope="FeedDetail.Episodes"
-              rows={visible.map(episode => presentMedia(episode.media_summary, {
-                id: episode.id, primary: { kind: "link", href: `/media/${episode.id}` },
+              rows={visible.map(episode => ({
+                id: episode.id, kind: episode.media_kind === "podcast_episode" ? "podcast_episode" : "media",
+                presentation: "Index", title: { text: episode.title }, contributors: [], publicationDate: null, context: null,
+                primary: { kind: "link", href: `/media/${episode.id}`, paneLabelHint: episode.title },
                 resourceRef: canonicalResourceRef({ scheme: "media", id: episode.id }), selected: false,
               }))}
               status={episodes.status === "loading" ? "loading" : "ready"}
               ariaLabel={noun}
-              renderRow={props => <CollectionRow {...props} containingPodcastId={kind === "podcast" ? feedId : undefined} />}
+              renderRow={props => <IndexedMediaRow {...props} mediaId={props.row.id}
+                saved={source.kind === "catalog" ? catalog.data?.media.get(props.row.id)?.summary : undefined}
+                containingPodcastId={kind === "podcast" ? feedId : undefined} />}
               collectionBusy={busy}
               anchorKey={text}
               empty={<Fact line={{ fact: emptyTitle }} />}

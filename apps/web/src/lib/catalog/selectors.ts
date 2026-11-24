@@ -5,6 +5,7 @@
  * listening over the dated catalog, applied before filtering and sorting. */
 import { ApiError } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
+import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
 import {
   effectiveEpisode, episodeDuration, episodeProgress, episodeReadState, episodeRemainingSeconds,
   type EffectiveEpisode, type ListeningFacts,
@@ -189,7 +190,8 @@ export function catalogFeedEntries(catalog: CatalogIndex, id: string, params = n
   }).map(row => {
     const media = catalog.media.get(row.media_id);
     if (!media) throw new Error("catalog source entry has no media");
-    return { id: row.media_id, entry_id: row.entry_id, media_summary: media.summary, transcript_state: row.transcript_state,
-      published_at: row.published_at, published_on: row.published_on, entry_url: row.entry_url };
+    const { title, media_kind, processing_status, can_play } = media.summary;
+    return { id: row.media_id, title, media_kind, processing_status, can_play, transcript_state: row.transcript_state,
+      other_filter_fields: mediaListFilterFields(media.summary, { containingPodcastId: id }).slice(1) };
   })) };
 }

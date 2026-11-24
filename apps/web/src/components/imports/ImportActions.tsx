@@ -58,7 +58,7 @@ export function useDismissAction(item: ImportItem): Command | null {
       confirmation: null, tracked: true, execute: () => dismissImports([{ ref: item.ref, through }]) }) };
 }
 
-export function importDetailsAction(item: ImportItem, onSelect: (ref: string, trigger: HTMLElement | null) => void): Command {
+export function importDetailsAction(item: Pick<ImportItem, "ref">, onSelect: (ref: string, trigger: HTMLElement | null) => void): Command {
   return { kind: "command", id: "ImportDetails", label: ACTION_CATALOG.ImportDetails.label, icon: null,
     onSelect: ({ triggerEl }) => onSelect(item.ref, triggerEl) };
 }

@@ -3,7 +3,7 @@
 import { useLayoutEffect, useRef, useState, type AnimationEventHandler } from "react";
 import { Failed } from "@/components/feedback/Fact";
 import CollectionView, { type CollectionViewRowRenderProps } from "@/components/collections/CollectionView";
-import CollectionRow from "@/components/collections/CollectionRow";
+import IndexedMediaRow from "@/components/collections/IndexedMediaRow";
 import OpmlBatchRow from "@/components/feeds/OpmlBatchRow";
 import Button from "@/components/ui/Button";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
@@ -12,13 +12,11 @@ import { apiFetch } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { usePaneFreeServerValue, useServerValue, type Visit } from "@/lib/api/serverState";
 import { useObservationDemand } from "@/lib/api/useObservationDemand";
-import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
-import { dismissImports, fetchImportIndex, type ImportIndex, type ImportItem } from "@/lib/imports/api";
+import { dismissImports, fetchImportIndex, type ImportIndex } from "@/lib/imports/api";
 import { registerDay } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { formatLocalDateInTimeZone, shiftLocalDate } from "@/lib/localDate";
-import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { requestNexusOpen } from "@/lib/nexus/events";
 import { usePaneIsPresented } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -28,6 +26,7 @@ import { importDetailsAction, importRecovery, recoveryCommand } from "./ImportAc
 import ImportWorkRow from "./ImportWorkRow";
 import styles from "./Imports.module.css";
 
+type Entry = ImportIndex["items"][number] | Schema<"OpmlImportSummaryOut">;
 const VISIT = definePaneVisitDataKey<Visit<ImportIndex>>("Imports.Register");
 const WINDOW = definePaneVisitDataKey<string>("Imports.From");
 
@@ -67,13 +66,7 @@ export default function Register({ selected, onSelect }: {
   const batches = register.status === "ready" ? register.data.batches : [];
   const all = usePaneFreeServerValue({ key: "imports:all", stale: "",
     load: async signal => (await apiFetch<ApiJson<"/me", "get">>("/api/me", { signal })).data.default_library_id });
-  const seeds = items.flatMap(item => {
-    if (item.classification !== "Complete") return [];
-    if (item.media_id === null || item.summary === null) throw new Error("Arrived import has no media summary");
-    return [item.summary];
-  });
-  const summaries = useMediaSummaries(seeds);
-  const entries = new Map<string, ImportItem | Schema<"OpmlImportSummaryOut">>();
+  const entries = new Map<string, Entry>();
   for (const batch of batches.filter(batch => batch.state === "needs_attention")) entries.set(`opml:${batch.id}`, batch);
   for (const item of items.filter(item => item.classification === "NeedsAttention")) entries.set(item.ref, item);
   for (const batch of batches.filter(batch => batch.state !== "needs_attention")) entries.set(`opml:${batch.id}`, batch);
@@ -89,13 +82,12 @@ export default function Register({ selected, onSelect }: {
     // justify-defect: imports uses the render environment's fixed supported display zone.
     if (group === null) throw new Error("display time zone is unavailable");
     groups.set(id, group);
-    if (item?.classification === "Complete") {
-      const resolved = summaries.resolve(item.summary!);
-      if (resolved === null) { entries.delete(id); continue; }
-      rows.push(presentMedia(resolved, { id, resourceRef: assumeCanonicalResourceRef(`media:${item.media_id}`),
-        selected: selected === id, primary: { kind: "link", href: `/media/${item.media_id}` } }));
-    } else rows.push({ id, kind: item === null ? "feed" : "media", presentation: "Index", title: { text: item?.title ?? "subscription import" },
-      primary: { kind: "static" }, contributors: [], publicationDate: null, context: null, resourceRef: null, selected: selected === id });
+    const arrived = item !== null && !("obligations" in item);
+    rows.push({ id, kind: item === null ? "feed" : item.media_kind === "podcast_episode" ? "podcast_episode" : "media",
+      presentation: "Index", title: { text: item?.title ?? "subscription import" },
+      primary: arrived ? { kind: "link", href: `/media/${item.media_id}`, paneLabelHint: item.title } : { kind: "static" },
+      contributors: [], publicationDate: null, context: null,
+      resourceRef: arrived ? assumeCanonicalResourceRef(`media:${item.media_id}`) : null, selected: selected === id });
   }
   const established = useRef(false);
   const firstInGroup = new Set<string>();
@@ -108,10 +100,11 @@ export default function Register({ selected, onSelect }: {
   const [retrying, setRetrying] = useState(false);
   const [dismissing, setDismissing] = useState(false);
   const retryable = items.flatMap(item => {
+    if (!("obligations" in item)) return [];
     const offer = importRecovery(item);
     return offer === null || item.media_id === null ? [] : [{ mediaId: item.media_id, offer }];
   });
-  const dismissible = items.flatMap(item => item.dismissal === null ? [] : [{ ref: item.ref, through: item.dismissal.through }]);
+  const dismissible = items.flatMap(item => !("obligations" in item) || item.dismissal === null ? [] : [{ ref: item.ref, through: item.dismissal.through }]);
   const retryAll = async () => {
     if (retrying) return;
     setRetrying(true);
@@ -168,12 +161,12 @@ export default function Register({ selected, onSelect }: {
 
 /** A row's transition outlives reads and a change from pointer to library presentation. */
 function RegisterRow({ entry, group, animate, onSelect, ...props }: CollectionViewRowRenderProps & {
-  readonly entry: ImportItem | Schema<"OpmlImportSummaryOut">;
+  readonly entry: Entry;
   readonly group: string;
   readonly animate: boolean;
   readonly onSelect: (ref: string, trigger: HTMLElement | null) => void;
 }) {
-  const readable = "ref" in entry && (entry.can_read || entry.can_play);
+  const readable = "ref" in entry && (!("obligations" in entry) || entry.can_read || entry.can_play);
   const [motion, setMotion] = useState({ group, readable, fall: animate, ink: false });
   if (motion.group !== group || motion.readable !== readable) setMotion({ group, readable,
     fall: motion.fall || animate && motion.group !== group,
@@ -185,8 +178,8 @@ function RegisterRow({ entry, group, animate, onSelect, ...props }: CollectionVi
       setMotion(previous => ({ ...previous, ink: false }));
   };
   const className = `${motion.fall ? styles.fall : ""} ${motion.ink ? styles.ink : ""}`;
-  return "ref" in entry ? entry.classification === "Complete"
-    ? <CollectionRow {...props} className={className} onAnimationEnd={onAnimationEnd} occurrenceActions={[importDetailsAction(entry, onSelect)]} />
+  return "ref" in entry ? !("obligations" in entry)
+    ? <IndexedMediaRow {...props} mediaId={entry.media_id} className={className} onAnimationEnd={onAnimationEnd} occurrenceActions={[importDetailsAction(entry, onSelect)]} />
     : <ImportWorkRow item={entry} selected={props.row.selected} onSelect={onSelect} className={className} onAnimationEnd={onAnimationEnd} listPosition={props.listPosition} />
     : <OpmlBatchRow batch={entry} selected={props.row.selected} onSelect={onSelect} className={className} onAnimationEnd={onAnimationEnd} listPosition={props.listPosition} />;
 }

@@ -28,6 +28,7 @@ import styles from "./page.module.css";
 
 type Page = ApiJson<"/assistant-writes", "get">;
 type Write = Page["data"]["items"][number];
+const NO_WRITES: readonly Write[] = [];
 const VISIT = definePaneVisitDataKey<Visit<Page["data"]>>("Settings.AssistantWrites");
 
 /** Successful writes in server order. Undo changes a row's state, never its place. */
@@ -59,7 +60,7 @@ export default function Writes({ generationId, toolCallId }: {
     key, stale, enabled: active, visit: VISIT,
     load: async signal => (await apiFetch<Page>(`/api${key}` as ApiPath, { cache: "no-store", signal })).data,
   });
-  const writes = list.status === "ready" ? list.data.items : [];
+  const writes = list.status === "ready" ? list.data.items : NO_WRITES;
   const current = list.status === "ready";
   useEffect(() => {
     if (pending && writes.some(write => write.id === pending.id && write.reverted_at !== null)) {

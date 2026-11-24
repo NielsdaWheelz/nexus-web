@@ -112,7 +112,18 @@ class ImportItem(_Wire):
     source_issue_count: int
 
 
-class ImportIndex(CollectionIndex[ImportItem]):
+class ImportArrival(_Wire):
+    """An accepted arrival names a media occurrence; its body loads only when visible."""
+
+    ref: str
+    media_id: UUID
+    title: str
+    media_kind: MediaKind
+    arrived_at: datetime
+    classification: Literal["Complete"]
+
+
+class ImportIndex(CollectionIndex[ImportItem | ImportArrival]):
     batches: list[OpmlImportSummaryOut]
 
 

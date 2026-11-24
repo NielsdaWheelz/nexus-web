@@ -154,9 +154,7 @@ def list_entries(
             ApiErrorCode.E_INVALID_REQUEST, "Invalid feed entry view"
         ) from error
     data = entries.list_entries(db, viewer.user_id, feed_id, state=state, sort=sort)
-    return observation.stamp(
-        db, viewer.user_id, data, [item.media_summary.media_id for item in data.items]
-    )
+    return observation.stamp(db, viewer.user_id, data, [item.id for item in data.items])
 
 
 @router.get("/feed-entries/{media_id}/removal-preview")

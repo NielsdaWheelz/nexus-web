@@ -29,6 +29,7 @@ from nexus.schemas.import_history import (
 )
 from nexus.schemas.import_refs import ParsedImportRef, format_import_ref
 from nexus.schemas.imports import (
+    ImportArrival,
     ImportDetail,
     ImportDismissal,
     ImportHistory,
@@ -378,9 +379,21 @@ def read_import_index(db: Session, *, viewer_id: UUID, arrived_from: datetime) -
         .mappings()
         .all()
     )
-    media = _hydrate(db, viewer_id, rows)
+    media = _hydrate(db, viewer_id, [row for row in rows if row["classification"] != "Complete"])
     return ImportIndex(
-        items=[_item(row, media) for row in rows],
+        items=[
+            ImportArrival(
+                ref=row["ref_key"],
+                media_id=row["media_id"],
+                title=row["title"],
+                media_kind=MediaKind(row["media_kind"]),
+                arrived_at=row["arrived_at"],
+                classification="Complete",
+            )
+            if row["classification"] == "Complete"
+            else _item(row, media)
+            for row in rows
+        ],
         batches=opml.unsettled_imports(db, viewer_id),
     )
 
