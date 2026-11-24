@@ -3,7 +3,7 @@
  * eligible at admission; graph inverses freeze that coverage at their own slot.
  * No clone survives a gesture and no receipt chooses which command to undo. */
 import * as Y from "yjs";
-import {applyBodyEdits, bodyInline, createNote, encodeBytes, hydrateNote, noteEncodingBound, readBody, sliceInline, splitBody} from "@nexus/authored/documents";
+import {applyBodyEdits, bodyInline, createNote, encodeBytes, hydrateNote, noteEncodingBound, readBody, sliceInline} from "@nexus/authored/documents";
 import {bodyHasContent, emptyBody, parseBody, noteBodySchema, type NoteBody} from "@nexus/authored/body";
 import {canonicalSerialization} from "@nexus/authored/canonical";
 import {createNoteIntent, foldPageCredit, prepareChange, type Intent} from "@nexus/authored/commands";
@@ -29,17 +29,29 @@ function reversibleStep(replica_id: string, credit: PageCredit) {
 }
 /** A structural command's fresh Yjs manager has one operation in its history.
  * Exercise all three directions on the observed document with the real writer id. */
-function reversibleBody(document: WritingDocument, state: string, origin: symbol, write: (clone: Y.Doc) => void): Intent[][] {
+function reversibleBody(document: WritingDocument, state: string, origin: symbol, write: (clone: Y.Doc) => void, measure?: (clone: Y.Doc) => void): Intent[][] {
   const clone = hydrateNote(state); clone.clientID = document.doc.clientID;
   const manager = new Y.UndoManager([clone.getXmlFragment("body"), bodyInline(clone)], {trackedOrigins: new Set([origin]), captureTimeout: 0});
   const updates: Uint8Array[] = [];
   clone.on("update", (update: Uint8Array) => updates.push(update));
   try {
     return [() => write(clone), () => manager.undo(), () => manager.redo()].map(mutate => {
-      updates.length = 0; mutate();
+      updates.length = 0; mutate(); measure?.(clone);
       return updates.length ? [{kind: "edit_body", ref: document.ref, body_update: transactionUpdate(updates)}] : [];
     });
   } finally {manager.clear(); manager.destroy(); clone.destroy();}
+}
+
+function splitDisplayed(displayed: DisplayedSplit): {suffix: NoteBody; update: Uint8Array | null} {
+  const clone = hydrateNote(displayed.body_state);
+  try {
+    const inline = bodyInline(clone), from = Math.min(displayed.from, displayed.to), to = Math.max(displayed.from, displayed.to);
+    const suffix = parseBody({type: "body", attrs: readBody(clone).body_pm_json.attrs, content: sliceInline(clone, to, inline.length)});
+    let update: Uint8Array | null = null;
+    clone.on("update", (bytes: Uint8Array) => {update = bytes;});
+    applyBodyEdits(clone, [{kind: "replace", from, to: inline.length, content: []}]);
+    return {suffix, update};
+  } finally {clone.destroy();}
 }
 
 function inverseWork(receipt: LocalCommit): Intent[] {
@@ -118,7 +130,7 @@ interface Group {
   stamp: number;
   refs: string[]; documents: WritingDocument[]; metadata(): unknown;
   before: InputBookmark; after: InputBookmark; placements_before: readonly OccurrenceBookmark[]; placements_after: readonly OccurrenceBookmark[]; coverage: Coverage;
-  suspended: number; range: {replay(redo: boolean, lower: Promise<Settlement | null>, mayFocus: () => boolean): boolean} | null;
+  checking: boolean; suspended: number; range: {replay(redo: boolean, lower: Promise<Settlement | null>, mayFocus: () => boolean): boolean} | null;
   added: readonly OccurrenceBookmark[]; removed: readonly OccurrenceBookmark[];
   settled: Promise<Settlement | null>; receipt: Settlement | null; released: boolean;
   apply(redo: boolean, lower: Promise<Settlement | null>): AdmittedStructure;
@@ -178,15 +190,19 @@ export class OutlineHistory {
     for (const group of future) this.release(group);
   }
   bindFocus(owner: FocusOwner): () => void {this.focus = owner; return () => {if (this.focus === owner) this.focus = null;};}
-  canUndo(): boolean {return this.past.some(group => !group.released && group.suspended === 0);}
-  canRedo(): boolean {return this.future.some(group => !group.released && group.suspended === 0);}
+  private nextGroup(stack: readonly Group[]): Group | null {
+    const group = stack.findLast(group => !group.released && (group.checking || group.suspended === 0));
+    return group && !group.checking ? group : null;
+  }
+  canUndo(): boolean {return this.nextGroup(this.past) !== null;}
+  canRedo(): boolean {return this.nextGroup(this.future) !== null;}
   undo = (): void => {this.replay(false);};
   redo = (): void => {this.replay(true);};
   private groups(): Group[] {return [...this.past, ...this.future];}
   private reserve(change: OutlineChange, provisional = false): Group {
     if (this.closed) throw new Error("outline history is closed");
     if (!provisional) for (const discarded of this.future) this.release(discarded);
-    const group: Group = {stamp: this.allowance.stamp(), refs: [], documents: [], metadata: () => null, before: change.before, after: change.after, placements_before: change.placements_before ?? [], placements_after: change.placements_after ?? [], suspended: 0, range: null,
+    const group: Group = {stamp: this.allowance.stamp(), refs: [], documents: [], metadata: () => null, before: change.before, after: change.after, placements_before: change.placements_before ?? [], placements_after: change.placements_after ?? [], checking: false, suspended: 0, range: null,
       coverage: {resources: new Map(), links: new Map()}, added: [], removed: [], settled: Promise.resolve(null), receipt: null, released: false,
       apply: () => {throw new Error("outline command has not finished admission");}, cleanup: () => {}};
     this.past.push(group);
@@ -199,11 +215,10 @@ export class OutlineHistory {
     const future = this.future.filter(group => !group.released);
     for (const prior of future) prior.suspended++;
     const group = this.reserve(change, true), eligible = this.groups();
-    group.suspended++;
-    let pending = true;
+    group.checking = true;
     return {group, eligible, finish: (accepted: boolean) => {
-      if (!pending) return;
-      pending = false; group.suspended--;
+      if (!group.checking) return;
+      group.checking = false;
       for (const prior of future) {prior.suspended--; if (accepted) this.release(prior);}
       if (!accepted) this.release(group);
     }};
@@ -276,7 +291,7 @@ export class OutlineHistory {
   private replay(redo: boolean): void {
     if (this.closed) return;
     const from = redo ? this.future : this.past, to = redo ? this.past : this.future;
-    const group = from.findLast(group => !group.released && group.suspended === 0); if (!group) return;
+    const group = this.nextGroup(from); if (!group) return;
     this.boundary();
     const owner = this.focus, mayFocus = owner?.lease() ?? (() => true);
     const target = redo ? group.after : group.before, source = redo ? group.before : group.after;
@@ -476,47 +491,22 @@ export class OutlineHistory {
     return this.birth({...args, source: null, retiring: null}, credit);
   }
   split(args: {source: WritingDocument; displayed: DisplayedSplit; placement: OutlinePlacement; change: OutlineBirthChange}, credit = this.origin.credit()): AdmittedNote {
-    const clone = hydrateNote(args.displayed.body_state);
-    try {
-      const inline = bodyInline(clone), from = Math.min(args.displayed.from, args.displayed.to), to = Math.max(args.displayed.from, args.displayed.to);
-      const suffix = parseBody({type: "body", attrs: readBody(clone).body_pm_json.attrs, content: sliceInline(clone, to, inline.length)});
-      const vector = Y.encodeStateVector(clone);
-      applyBodyEdits(clone, [{kind: "replace", from, to: inline.length, content: []}]);
-      return this.birth({placement: args.placement, body: suffix, change: args.change,
-        source: {document: args.source, update: Y.encodeStateAsUpdate(clone, vector)}, retiring: null}, credit);
-    } finally {clone.destroy();}
+    const {suffix, update} = splitDisplayed(args.displayed);
+    return this.birth({placement: args.placement, body: suffix, change: args.change, source: {document: args.source, update}, retiring: null}, credit);
   }
   /** Charge the newborn, independent baseline and initial capture, and the source's retained deletion history, before admission. */
   async splitCharge(source: WritingDocument, displayed: DisplayedSplit, placement: OutlinePlacement): Promise<number | null> {
-    const from = Math.min(displayed.from, displayed.to), to = Math.max(displayed.from, displayed.to);
-    const suffix = splitBody(displayed.body_state, to).suffix;
-    const baseline = hydrateNote(displayed.body_state), current = hydrateNote(encodeBytes(Y.encodeStateAsUpdate(source.doc)));
-    current.clientID = source.doc.clientID;
-    const origin = Symbol("outline split preflight"), manager = new Y.UndoManager([current.getXmlFragment("body"), bodyInline(current)], {trackedOrigins: new Set([origin]), captureTimeout: 0});
-    try {
-      let changed = false;
-      current.on("update", () => {changed = true;});
-      const vector = Y.encodeStateVector(baseline), currentVector = Y.encodeStateVector(current), before = Y.encodeStateAsUpdate(current).byteLength;
-      applyBodyEdits(baseline, [{kind: "replace", from, to: bodyInline(baseline).length, content: []}]);
-      Y.applyUpdate(current, Y.encodeStateAsUpdate(baseline, vector), origin);
-      const update = encodeBytes(Y.encodeStateAsUpdate(current, currentVector)), growth = Math.max(0, Y.encodeStateAsUpdate(current).byteLength - before), undoVector = Y.encodeStateVector(current);
-      const forward = changed ? update : null;
-      changed = false;
-      manager.undo();
-      const inverse = changed ? encodeBytes(Y.encodeStateAsUpdate(current, undoVector)) : null;
-      const undoGrowth = Y.encodeStateAsUpdate(current).byteLength - before, redoVector = Y.encodeStateVector(current);
-      changed = false;
-      manager.redo();
-      const replay = changed ? encodeBytes(Y.encodeStateAsUpdate(current, redoVector)) : null;
-      const retainedGrowth = Math.max(growth, undoGrowth, Y.encodeStateAsUpdate(current).byteLength - before);
-      const charge = await this.birthCharge({body: suffix, placement, source: {ref: source.ref, forward, inverse, replay}, retiring: null});
-      return charge === null ? null : charge + 2 * retainedGrowth;
-    } finally {manager.clear(); manager.destroy(); baseline.destroy(); current.destroy();}
+    const {suffix, update} = splitDisplayed(displayed), before = Y.encodeStateAsUpdate(source.doc), origin = Symbol("outline split preflight");
+    let growth = 0;
+    const edits = reversibleBody(source, encodeBytes(before), origin, doc => {if (update) Y.applyUpdate(doc, update, origin);},
+      doc => {growth = Math.max(growth, Y.encodeStateAsUpdate(doc).byteLength - before.byteLength);});
+    const charge = await this.birthCharge({body: suffix, placement, source: {ref: source.ref, edits}, retiring: null});
+    return charge === null ? null : charge + 2 * growth;
   }
   replaceWithNoteCharge(args: {placement: OutlinePlacement; retiring: LinkState}): Promise<number | null> {
     return this.birthCharge({body: emptyBody(), placement: args.placement, source: null, retiring: args.retiring});
   }
-  private async birthCharge(args: {body: NoteBody; placement: OutlinePlacement; source: {ref: string; forward: string | null; inverse: string | null; replay: string | null} | null; retiring: LinkState | null}): Promise<number | null> {
+  private async birthCharge(args: {body: NoteBody; placement: OutlinePlacement; source: {ref: string; edits: Intent[][]} | null; retiring: LinkState | null}): Promise<number | null> {
     const {placement, source, retiring} = args, initializer = createNote(args.body), newborn = noteEncodingBound(args.body);
     const store = await this.runtime.store, replica = await store.readReplica(), ref = `note_block:${crypto.randomUUID()}`, position = await this.placement(placement);
     const id = await this.identity(placement.parent_ref, ref);
@@ -526,15 +516,15 @@ export class OutlineHistory {
     const credit = this.origin.credit(MAX_PAGE_WORK_AT_MS);
     const states = await store.readStates({refs: [...new Set([...(source ? [source.ref] : []), ...(credit ? [credit.ref] : [])])], link_ids: [...link.intents.flatMap(intent => "link_id" in intent ? [intent.link_id] : []), ...(retiring ? [retiring.link_id] : [])], anchor_ids: [], source_refs: []});
     const step = reversibleStep(replica.replica_id, credit);
-    const edit = (update: string | null | undefined): Intent[] => source && update ? [{kind: "edit_body", ref: source.ref, body_update: update}] : [];
+    const edits = source?.edits ?? [[], [], []];
     try {
-      const forward = step(forwardSeq, [{kind: "create_note", ref, body_update: initializer}, ...edit(source?.forward), ...link.intents,
+      const forward = step(forwardSeq, [{kind: "create_note", ref, body_update: initializer}, ...edits[0]!, ...link.intents,
         ...(retiring ? [{kind: "unlink" as const, link_id: retiring.link_id, observed_add: retiring.add_vv}] : [])], states);
       if (new TextEncoder().encode(JSON.stringify(forward.change)).byteLength + Math.ceil(newborn * 4 / 3) - initializer.length > MAX_COMMAND_BYTES) return null;
-      const undo = step(undoSeq, [...edit(source?.inverse), {kind: "delete_resource", ref, observed_touch: {[replica.replica_id]: forwardSeq}},
+      const undo = step(undoSeq, [...edits[1]!, {kind: "delete_resource", ref, observed_touch: {[replica.replica_id]: forwardSeq}},
         {kind: "unlink", link_id: link.link_id, observed_add: {[replica.replica_id]: forwardSeq}},
         ...(retiring ? [{kind: "restore_link" as const, link_id: retiring.link_id}] : [])], forward.states);
-      step(redoSeq, [...edit(source?.replay), {kind: "restore_resource", ref}, {kind: "restore_link", link_id: link.link_id},
+      step(redoSeq, [...edits[2]!, {kind: "restore_resource", ref}, {kind: "restore_link", link_id: link.link_id},
         ...(retiring ? [{kind: "unlink" as const, link_id: retiring.link_id, observed_add: {...retiring.add_vv, [replica.replica_id]: undoSeq}}] : [])], undo.states);
       return 3 * newborn;
     } catch (error) {if (error instanceof CommandTooLargeError) return null; throw error;}
@@ -542,7 +532,7 @@ export class OutlineHistory {
   replaceWithNote(args: {placement: OutlinePlacement; retiring: OccurrenceBookmark & {link: LinkState}; change: OutlineBirthChange}, credit: PageCredit): AdmittedNote {
     return this.birth({...args, body: emptyBody(), source: null}, credit);
   }
-  private birth(args: {placement: OutlinePlacement; body: NoteBody; change: OutlineBirthChange; source: {document: WritingDocument; update: Uint8Array} | null; retiring: (OccurrenceBookmark & {link: LinkState}) | null}, credit: PageCredit): AdmittedNote {
+  private birth(args: {placement: OutlinePlacement; body: NoteBody; change: OutlineBirthChange; source: {document: WritingDocument; update: Uint8Array | null} | null; retiring: (OccurrenceBookmark & {link: LinkState}) | null}, credit: PageCredit): AdmittedNote {
     const {placement, body, change, source, retiring} = args;
     this.boundary();
     const group = this.reserve({before: change.before, after: null, placements_before: change.placements_before}), origin = Symbol("outline birth");
@@ -553,7 +543,7 @@ export class OutlineHistory {
     let relationship = "";
     const eligible = this.groups();
     const admitted = this.runtime.admitWriting({credit, existing: this.participants(group.documents, origin), notes: [{body, origin}],
-      mutate: () => {if (source) Y.applyUpdate(source.document.doc, source.update, origin);},
+      mutate: () => {if (source?.update) Y.applyUpdate(source.document.doc, source.update, origin);},
       prepare: async refs => {
         const settled = await resolved;
         const at = settled?.placement ?? placement;
