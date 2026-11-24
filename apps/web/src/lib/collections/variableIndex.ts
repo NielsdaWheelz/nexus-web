@@ -28,8 +28,8 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
   useLayoutEffect(() => {previous.current = presentation;}, [presentation]);
   const frame = useRef<AnchorGeometryFrame | null>(null);
   const [demands, setDemands] = useState<ReadonlyMap<symbol, string>>(() => new Map());
-  const [origin, setOrigin] = useState<number | null>(null);
-  const margin = origin ?? 0;
+  const [origin, setOrigin] = useState<{offset: number; companion: boolean} | null>(null);
+  const margin = origin?.offset ?? 0;
   const byId = useMemo(() => new Map(ids.map((id, rank) => [id, rank])), [ids]);
   const getPort = useCallback(() => {
     for (let node = list.current?.parentElement; node; node = node.parentElement) {
@@ -42,7 +42,11 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
     if (!windowed) return;
     const root = list.current, port = getPort();
     if (!root || !port) return;
-    const read = () => setOrigin(root.getBoundingClientRect().top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop);
+    const companion = port.hasAttribute("data-companion-scrollport");
+    const read = () => {
+      const offset = root.getBoundingClientRect().top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop;
+      setOrigin(previous => previous?.offset === offset && previous.companion === companion ? previous : {offset, companion});
+    };
     read();
     const resize = new ResizeObserver(read);
     // A preceding section can move the list without resizing the list or its port.
@@ -55,6 +59,7 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
 
   const index = useVirtualizer<HTMLElement, HTMLLIElement>({
     count: ids.length, enabled: windowed, getScrollElement: getPort,
+    anchorTo: origin?.companion ? "end" : "start",
     getItemKey: rank => ids[rank]!, estimateSize: () => estimate, scrollMargin: margin, overscan: 4,
     rangeExtractor(range) {
       const ranks = new Set(defaultRangeExtractor(range));
