@@ -1,4 +1,4 @@
-"""Bounded turn navigation, terminal-pair deletion and individual message reads."""
+"""Paired turn order, bounded rich reads and terminal-pair deletion."""
 
 from dataclasses import dataclass
 from typing import Literal, cast
@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import ChatRun, Message
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
-from nexus.schemas.chat import TimelineOut
+from nexus.schemas.chat import ChatRunResponse, TimelineOut, TimelineTurnOut
 from nexus.services.chat import deletion, events, reads
 from nexus.services.collection_keyset import (
     KeysetValueKind,
@@ -26,61 +26,58 @@ from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 
 
-def window(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    before_seq: str | None,
-    after_seq: str | None,
-    around_message_id: UUID | None,
-    limit: int,
-) -> TimelineOut:
-    if sum(value is not None for value in (before_seq, after_seq, around_message_id)) > 1:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Choose one timeline cursor")
-    query = (
-        select(ChatRun)
-        .join(Message, Message.id == ChatRun.user_message_id)
-        .where(ChatRun.owner_user_id == viewer_id)
-    )
-    if around_message_id is not None:
-        anchor = db.scalar(
-            select(Message.seq).where(
-                Message.id == around_message_id, Message.owner_user_id == viewer_id
+def index(db: Session, *, viewer_id: UUID, around_message_id: UUID | None) -> TimelineOut:
+    order = [
+        TimelineTurnOut(
+            run_id=run_id,
+            user_message_id=user_id,
+            assistant_message_id=assistant_id,
+            user_seq=str(seq),
+            created_at=created_at,
+        )
+        for run_id, user_id, assistant_id, seq, created_at in db.execute(
+            select(
+                ChatRun.id,
+                ChatRun.user_message_id,
+                ChatRun.assistant_message_id,
+                Message.seq,
+                Message.created_at,
             )
+            .join(Message, Message.id == ChatRun.user_message_id)
+            .where(ChatRun.owner_user_id == viewer_id, Message.owner_user_id == viewer_id)
+            .order_by(Message.seq)
+        ).tuples()
+    ]
+    last_start = max(0, len(order) - 25)
+    start = last_start
+    if around_message_id is not None:
+        anchor = next(
+            (
+                rank
+                for rank, turn in enumerate(order)
+                if around_message_id in (turn.user_message_id, turn.assistant_message_id)
+            ),
+            None,
         )
         if anchor is None:
             raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
-        query = query.order_by(text("abs(messages.seq - :anchor)"), Message.seq).params(
-            anchor=anchor
+        start = max(0, min(last_start, anchor - 12))
+    items = resolve(
+        db, viewer_id=viewer_id, run_ids=[turn.run_id for turn in order[start : start + 25]]
+    )
+    return TimelineOut(order=order, items=items)
+
+
+def resolve(db: Session, *, viewer_id: UUID, run_ids: list[UUID]) -> list[ChatRunResponse]:
+    if not run_ids:
+        return []
+    runs = {
+        run.id: run
+        for run in db.scalars(
+            select(ChatRun).where(ChatRun.owner_user_id == viewer_id, ChatRun.id.in_(run_ids))
         )
-    elif after_seq is not None:
-        query = query.where(Message.seq > int(after_seq)).order_by(Message.seq)
-    else:
-        if before_seq is not None:
-            query = query.where(Message.seq < int(before_seq))
-        query = query.order_by(Message.seq.desc())
-    runs = list(db.scalars(query.limit(limit)))
-    items = sorted(reads.turns(db, viewer_id, runs), key=lambda item: int(item.user_message.seq))
-    before = after = None
-    if items:
-        first, last = items[0].user_message.seq, items[-1].user_message.seq
-        if db.scalar(
-            select(Message.id)
-            .where(
-                Message.owner_user_id == viewer_id, Message.role == "user", Message.seq < int(first)
-            )
-            .limit(1)
-        ):
-            before = first
-        if db.scalar(
-            select(Message.id)
-            .where(
-                Message.owner_user_id == viewer_id, Message.role == "user", Message.seq > int(last)
-            )
-            .limit(1)
-        ):
-            after = last
-    return TimelineOut(items=items, before_seq=before, after_seq=after)
+    }
+    return reads.turns(db, viewer_id, [runs[run_id] for run_id in run_ids if run_id in runs])
 
 
 def delete_turn(db: Session, *, viewer_id: UUID, run_id: UUID) -> None:

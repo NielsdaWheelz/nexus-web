@@ -59,9 +59,10 @@ function createDraft(accountId: string, viewId: string, guard: WorkGuard) {
       if (submitted !== null && value.draft === submitted) { value = { ...value, draft: EMPTY, refusal: null }; caret = null; }
       emit();
     },
-    settleAdopted() {
-      if (value.adopted.length === 0) return;
-      value = { ...value, adopted: [] }; emit();
+    settleAdopted(observed?: ReadonlySet<string>) {
+      const adopted = observed ? value.adopted.filter(turn => !observed.has(turn.run_id)) : [];
+      if (adopted.length === value.adopted.length) return;
+      value = { ...value, adopted }; emit();
     },
     accountFor(accepted: AcceptedDraft | null) {
       // The reader captured this token before starting its request. An older read

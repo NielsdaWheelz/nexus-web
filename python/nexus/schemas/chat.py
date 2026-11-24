@@ -175,10 +175,27 @@ class ChatRunResponse(Wire):
     can_delete: bool
 
 
+class TimelineTurnOut(Wire):
+    run_id: UUID
+    user_message_id: UUID
+    assistant_message_id: UUID
+    user_seq: OrderRevision
+    created_at: datetime
+
+
 class TimelineOut(Wire):
+    order: list[TimelineTurnOut]
     items: list[ChatRunResponse]
-    before_seq: OrderRevision | None
-    after_seq: OrderRevision | None
+
+
+class ResolveLibrarianTurnsRequest(Wire):
+    run_ids: list[UUID] = Field(min_length=1, max_length=25)
+
+    @model_validator(mode="after")
+    def require_distinct_ids(self) -> ResolveLibrarianTurnsRequest:
+        if len(set(self.run_ids)) != len(self.run_ids):
+            raise ValueError("run_ids must be distinct")
+        return self
 
 
 class ChatRunAssistantTextDeltaEventPayload(Wire):

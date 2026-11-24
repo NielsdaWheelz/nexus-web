@@ -3,12 +3,26 @@ import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
-/** Search owns valid nonblank queries; malformed arrivals stay with the transcript. */
-export function librarianSearchQuery(href: string): string | null {
+export type LibrarianPaneQuery =
+  | { readonly kind: "Timeline"; readonly messageId: string | null }
+  | { readonly kind: "Search"; readonly text: string }
+  | { readonly kind: "InvalidLink" };
+
+export function librarianPaneQuery(href: string): LibrarianPaneQuery {
   const url = parseWorkspaceHref(href);
-  if (url?.pathname !== "/librarian") return null;
-  const text = (url.searchParams.get("q") ?? "").trim();
-  return text !== "" && sourceTargetFromHref(href)?.kind !== "invalid_destination" ? text : null;
+  if (url?.pathname !== "/librarian") return { kind: "InvalidLink" };
+  const target = sourceTargetFromHref(href);
+  if (target?.kind === "invalid_destination") return { kind: "InvalidLink" };
+  const text = url.searchParams.get("q")?.trim();
+  if (text) return { kind: "Search", text };
+  const ref = target?.kind === "resource" ? target.resource_ref
+    : target?.kind === "live_reference" ? target.reference.resource_ref : null;
+  return { kind: "Timeline", messageId: ref?.startsWith("message:") ? ref.slice("message:".length) : null };
+}
+
+export function librarianSearchQuery(href: string): string | null {
+  const query = librarianPaneQuery(href);
+  return query.kind === "Search" ? query.text : null;
 }
 
 export function indexPaneQuery(routeId: PaneRouteId | "unsupported", query: URLSearchParams): string | null {
