@@ -9,11 +9,14 @@ css pixels after touchend while the port remained 7,147 pixels high. the
 headless stock firefox drag separately
 preserved its landing line after a prepend.
 
-physical touch and assistive-input boundaries remain unrun. the emulator check
-admitted momentum and byte bounds. it did not combine a touch/fling with data
-or measurement arriving during travel, or compare the same landing line
-before and after that correction. the necessary input and measurement belong
-to the actual installed scrollport.
+the paired api-34 run `20261124-045319-1abcdd0548f4` released an acknowledged
+prepend into a trusted WebView fling. the scrollport held 7,179 css pixels
+through continued motion after lift. its last old-extent sample and first
+settled sample had the same occurrence within 0.27 css px. the browser emitted
+no observed `scrollend`. the separate outline keyboard stage failed later in
+that run.
+
+physical touch and assistive-input boundaries remain unrun.
 
 resolve with the paired artifact, trusted input at the physical/assistive
 boundary being asserted, and a preserved physical line within one css pixel
