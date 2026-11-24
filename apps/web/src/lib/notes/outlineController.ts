@@ -548,7 +548,7 @@ export class OutlineController {
   private presentationProtected(): boolean {
     const risk = this.pending.risk();
     return risk.changed || risk.unconfirmed || this.pending.error !== null || this.reading !== null || this.nativeSelection !== null || this.selected.size > 0 ||
-      this.view?.hasFocus() === true || this.rootAttachment?.ownsFocus() === true || this.view !== null && this.handle?.canArrange() === false ||
+      this.view?.hasFocus() === true || this.rootAttachment?.ownsFocus() === true || this.view !== null && this.handle?.canReplaceProjection() === false ||
       [...this.documents.values()].some(held => held.captureBytes > 0 || held.document.hasPendingEdits()) || this.binding.capturedRows().length > 0 ||
       this.view !== null && ownsOverlayFocus(this.view.dom, document.activeElement) ||
       [...this.mounts.values()].some(mount => mount.dom.dataset.dragging === "true");
@@ -683,7 +683,7 @@ export class OutlineController {
   }
   private planViewport(range?: {top: number; bottom: number}): void {
     if (range) this.viewportRange = range;
-    if (!this.presentation || !this.view || this.handle?.canArrange() === false) return;
+    if (!this.presentation || !this.view || this.handle?.canReplaceProjection() === false) return;
     if (!range && this.frame) {
       const top = this.frame.scrollport.scrollTop - this.frame.origin;
       this.viewportRange = {top, bottom: top + this.frame.scrollport.clientHeight};
@@ -691,7 +691,10 @@ export class OutlineController {
     const top = this.viewportRange.top - this.rowOverscan, bottom = this.viewportRange.bottom + this.rowOverscan;
     const wanted = new Set(this.protectedRows());
     const near = this.viewport.metrics.filter(metric => metric.top + metric.height >= top && metric.top <= bottom);
-    for (const metric of near) if (!metric.gap) wanted.add(metric.id);
+    for (const metric of near) {
+      const needed = metric.gap ? metric.parent : metric.id;
+      if (needed !== null) wanted.add(needed);
+    }
     for (const id of [...wanted]) for (let parent = this.parent(id); parent; parent = this.parent(parent)) wanted.add(parent);
     let changed = false, topology = false;
     for (const metric of near) if (metric.parent && this.gaps.get(metric.id)?.waiting && this.dormantBranches.delete(metric.parent)) {
@@ -796,7 +799,7 @@ export class OutlineController {
   private changed(reason: ProjectionReason = "projection"): void {this.rebuild(reason); this.publishLayout(); this.demandAnchors(); this.planViewport(); this.notify();}
   refresh(): void {
     this.rebuild();
-    if (this.handle?.canArrange()) {if (this.nativeRangeRefusal()) this.restoreNativeSelection(); this.binding.refresh(); this.pending.resume(); for (const [id, window] of this.proposals) this.resumeAdmission(id, window);}
+    if (this.handle?.canReplaceProjection()) {if (this.nativeRangeRefusal()) this.restoreNativeSelection(); this.binding.refresh(); this.pending.resume(); for (const [id, window] of this.proposals) this.resumeAdmission(id, window);}
   }
   configure(rootField: RootField | undefined): void {
     this.rootField = rootField;
@@ -1047,7 +1050,7 @@ export class OutlineController {
       [...row.branch.traversedEdgeIds].sort()]);
   }
   private childProof(row: OutlineRow, window: OutlineWindow | undefined): ChildProof | null {
-    if (!window || !row.link || !window.rows.some(item => item.link?.link_id === row.link!.link_id && item.resource.ref === row.ref)) return null;
+    if (row.terminal || !window || !row.link || !window.rows.some(item => item.link?.link_id === row.link!.link_id && item.resource.ref === row.ref)) return null;
     const descriptor = this.childDescriptor(row);
     if (descriptor === null || descriptor !== this.childDescriptor({...row, parent_ref: window.ref, branch: window.branch})) return null;
     const available = window.childAvailability.get(row.link.link_id);
@@ -1121,7 +1124,7 @@ export class OutlineController {
     let released = false, failed = false, installed = false, topologyChanged = false;
     this.admission = this.admission.then(async () => {
       if (!this.active || this.versions.get(parent_id) !== version || !this.requests.has(parent_id) || !this.navigationValid(parent_id)) return;
-      if (this.windows.size && this.view && (this.hasPendingWriting() || !this.handle?.canArrange())) return;
+      if (this.windows.size && this.view && (this.hasPendingWriting() || !this.handle?.canReplaceProjection())) return;
       const placements = [...this.pending.fields.values()].filter(field => field.relocating);
       if (placements.some(field => field.settledRevision === undefined)) return;
       const selected = this.placementWindows(parent_id, window); if (!selected) return;
@@ -1159,7 +1162,7 @@ export class OutlineController {
       try {await Promise.all(retired.map(([ref]) => this.captureDocument(ref)));}
       catch (error) {this.blockedRows.clear(); this.syncReadOnly(); throw error;}
       this.settlingRefs.clear();
-      if (!valid() || this.view && this.windows.size > 0 && (this.hasPendingWriting() || !this.handle?.canArrange())) {this.blockedRows.clear(); this.syncReadOnly(); return;}
+      if (!valid() || this.view && this.windows.size > 0 && (this.hasPendingWriting() || !this.handle?.canReplaceProjection())) {this.blockedRows.clear(); this.syncReadOnly(); return;}
       const retainedFields = new Map<string, OutlineBindingField>();
       for (const row of this.rows.values()) if (!row.root && this.editableReady(row) && !this.blockedRows.has(row.row_id)) retainedFields.set(row.row_id, this.field(row.row_id));
       this.binding.update(retainedFields, this.history.retainedOccurrences());
@@ -1176,7 +1179,7 @@ export class OutlineController {
             : this.runtime.openDocument(ref, prelude));
           acquired.push([ref, {document, captureBytes: 0, release: document.retain()}]);
         }
-        if (!valid() || this.view && this.windows.size > 0 && (this.hasPendingWriting() || !this.handle?.canArrange())) return;
+        if (!valid() || this.view && this.windows.size > 0 && (this.hasPendingWriting() || !this.handle?.canReplaceProjection())) return;
         for (const [ref, held] of acquired.splice(0)) this.documents.set(ref, held);
         this.configure(this.rootField);
         const initial = this.windows.size === 0;
@@ -1260,7 +1263,7 @@ export class OutlineController {
       else if (newer && newer !== window && this.active && !failed) this.resumeAdmission(parent_id, newer);
       else if (released && !failed && this.active && [...this.refs(this.windows)].some(ref => !this.documents.has(ref))) {
         const current = this.requests.get(parent_id);
-        if (newer === window && current === request && this.handle?.canArrange() && !this.hasPendingWriting()) this.resumeAdmission(parent_id, window);
+        if (newer === window && current === request && this.handle?.canReplaceProjection() && !this.hasPendingWriting()) this.resumeAdmission(parent_id, window);
         else if (!newer && current === request?.navigation?.previous) {const retained = this.windows.get(parent_id); if (retained) this.resumeAdmission(parent_id, retained);}
       }
     });
@@ -1389,7 +1392,7 @@ export class OutlineController {
   }
   private rebuild(reason: ProjectionReason = "projection"): void {
     this.retireWithdrawnPlacements();
-    if (this.view && this.windows.size > 0 && reason === "projection" && (this.hasPendingWriting() || !this.handle?.canArrange())) {this.deferred = true; this.syncMetadata(); return;}
+    if (this.view && this.windows.size > 0 && reason === "projection" && (this.hasPendingWriting() || !this.handle?.canReplaceProjection())) {this.deferred = true; this.syncMetadata(); return;}
     this.deferred = false;
     for (const row of this.rows.values()) this.occurrences.set(row.row_id, row);
     this.gaps.clear();
@@ -1608,7 +1611,7 @@ export class OutlineController {
   /** initial view population bypasses input admission without being an edit.
    * semantic commands have already reconciled input; refresh must wait. */
   private project(reason: ProjectionReason = "projection"): void {
-    if (!this.view || reason === "projection" && !this.handle?.canArrange()) return;
+    if (!this.view || reason === "projection" && !this.handle?.canReplaceProjection()) return;
     const next = this.doc();
     const start = this.view.state.doc.content.findDiffStart(next.content);
     if (start === null) return;
@@ -2200,7 +2203,7 @@ export class OutlineController {
     return new Map([...this.rows.values()].filter(row => !row.root && !row.seed && !row.gap).map(row => [row.row_id, {row_id: row.row_id, ref: row.ref, resource: row.resource, kind: row.kind === "body" ? "note" : row.kind,
       depth: row.depth, parent_id: row.parent_id, label: this.label(row), href: this.href(row), mirrors: this.mirrors(row),
       parentLabel: this.labelOf(row.parent_id), day: this.day(row),
-      childrenAvailable: row.children?.available === true || this.requests.has(row.row_id), read: this.branchRead(row.row_id), open: row.open, terminal: row.terminal, selected: this.selected.has(row.row_id),
+      childrenAvailable: !row.terminal && (row.children?.available === true || this.requests.has(row.row_id)), read: this.branchRead(row.row_id), open: row.open, terminal: row.terminal, selected: this.selected.has(row.row_id),
       workOwners: owners => this.workOwners.set(row.row_id, owners),
       annotation: row.resource?.kind === "highlight" && !row.terminal && !this.filter.trim() ? this.annotation(row.row_id) : null,
       toggle: () => {this.toggle(row.row_id); this.focused = false; this.notify();}, select: () => this.select(row.row_id),
