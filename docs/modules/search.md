@@ -569,9 +569,11 @@ unsupported passage kinds retain their explicit empty fact.
 labels above keyed results. its standing collation field settles after 200ms;
 completed operators lift into words without losing the caret. kind, format and
 author are multiple-choice dimensions; the author finder is a picker aside. role
-and scope appear only when set. related-match ready notice and show live under
-the field; adoption focuses words.input. automatic pagination exposes no rolling
-count or completion receipt; initial query waiting and failures remain explicit.
+and scope appear only when set. the related-match action follows the results;
+adoption focuses words.input. forward travel or keyboard approach grants one
+continuation near the visible tail. sparse pages spend the same operation's
+budget across retries. an exhausted budget offers an explicit source action.
+one ranking cursor serves all its headings; local hits have their own cursor.
 
 two `useServerList` instances own independent lexical/hybrid metadata and cursors;
 only the selected one pages. a hidden candidate loads page one and restarts its

@@ -34,6 +34,7 @@ import type {DisplayedSplit, FocusSelection, NoteEdit, OutlineCommand} from "./e
 import type {OutlinePresentationAllowance} from "./outlinePresentationAllowance";
 import {continuationLink, mergeOutlineWindows, provesEmptyOutline, OutlineViewport, type BranchPart} from "./outlineViewport";
 import type {AnchorGeometry, AnchorGeometryFrame, AnchorPosition} from "@/lib/workspace/paneReturnMemento";
+import type {ScrollMotion} from "@/lib/collections/scrollMotion";
 import {readAuthoredIndex} from "./indexes";
 import {clipboardPlainText, readOutlineClipboard, writeOutlineClipboard, type ClipItem} from "./clipboard";
 
@@ -177,11 +178,32 @@ export class OutlineController {
   private initialTitleApplied = false;
   private titleEdited = false;
   filter = "";
+  private motion: ScrollMotion = "still";
+  private publishStructure: (() => void) | null = null;
   private structureRevision: string | null = null;
   private structureFilter = "";
   private structure = new Map<string, ReadonlySet<string>>();
   get structureReady(): boolean {return this.structureRevision !== null && this.structureFilter === this.filter.trim();}
   get hasFilteredRows(): boolean {return [...this.structure.values()].some(links => links.size > 0);}
+
+  setMotion(motion: ScrollMotion): void {
+    if (this.motion === motion) return;
+    const held = this.motion !== "still";
+    if (!held) this.publishLayout();
+    this.motion = motion;
+    if (held && motion !== "still") return;
+    const finish = motion === "still" ? this.layoutTransaction() : null;
+    try {
+      for (const mount of this.mounts.values()) mount.sync();
+      const pending = this.publishStructure;
+      this.publishStructure = null;
+      if (motion === "still") {
+        pending?.();
+        this.publishLayout();
+        this.planViewport();
+      }
+    } finally {finish?.();}
+  }
 
   disclosureKey(): string {
     return JSON.stringify([[...this.opened], [...this.embedded].flatMap(([id, embed]) =>
@@ -199,11 +221,14 @@ export class OutlineController {
     type Query = Extract<AuthoredQuery, {kind: "outline_filter"}>;
     const root = this.pending.root_id, opened = new Set(this.opened), embeds = new Map(this.embedded);
     const first: Query = {kind: "outline_filter", parent_ref: this.rootRef, text, start: 0, limit: 2048, expected_revision: null};
-    let live = true, generation = 0, stop: (() => void) | undefined;
+    let live = true, generation = 0, latest: bigint | null = null, stop: (() => void) | undefined;
     const report = (error: unknown) => {if (live) failed(error);};
     void this.runtime.store.then(store => {
       if (!live) return;
       const receive = (head: import("@nexus/authored/types").QueryResult) => {
+        const incoming = BigInt(head.store_revision);
+        if (latest !== null && incoming <= latest) return;
+        latest = incoming;
         const ticket = ++generation, current = () => live && generation === ticket;
         const revision = head.store_revision, rows = new Map<string, Promise<readonly OutlineIndexItem[] | null>>();
         const read = (ref: string) => {
@@ -253,13 +278,21 @@ export class OutlineController {
           }
           if (!current()) return;
           if (changed) {receive(await store.query(first)); return;}
-          this.structureRevision = revision;
-          this.structureFilter = text;
-          this.structure = new Map([...branches].map(([id, links]) => [id, new Set(links)]));
-          this.viewport.setBranches(branches);
-          const finish = this.layoutTransaction();
-          try {this.changed();} finally {finish();}
-          failed(null);
+          const apply = () => {
+            if (!current()) return;
+            const changedOrder = this.viewport.setBranches(branches);
+            const changedShape = this.structureRevision === null || this.structureFilter !== text || changedOrder;
+            this.structureRevision = revision;
+            this.structureFilter = text;
+            this.structure = new Map([...branches].map(([id, links]) => [id, new Set(links)]));
+            if (changedShape) {
+              const finish = this.layoutTransaction();
+              try {this.changed();} finally {finish();}
+            }
+            failed(null);
+          };
+          if (this.structureRevision !== null && this.structureFilter === text && this.motion !== "still") this.publishStructure = apply;
+          else apply();
         })().catch(error => {if (current()) report(error);});
       };
       stop = store.subscribe(first, receive, report);
@@ -693,7 +726,7 @@ export class OutlineController {
         const gap = this.gaps.get(metric.id);
         if (metric.parent !== parent || !gap || metric.id.startsWith("reading:")) continue;
         const anchor_link_id = gap.links === undefined ? gap.range.anchor_link_id :
-          this.viewport.seek(parent, gap.links, Math.max(0, this.viewportRange.top - metric.top));
+          this.viewport.seek(parent, gap.links, Math.max(0, (this.viewportRange.top + this.viewportRange.bottom) / 2 - metric.top));
         if (!ranges.some(range => range.anchor_link_id === anchor_link_id && range.cursor === gap.range.cursor))
           ranges.push({...gap.range, anchor_link_id, limit: Math.max(1, Math.min(32, Math.ceil((bottom - top) / Math.max(1, this.viewport.estimate))))});
       }
@@ -1429,8 +1462,10 @@ export class OutlineController {
       }
       for (const row of ordered) {
         if (row.gap) {this.rows.set(row.row_id, row); continue;}
-        if (row.link && this.structureReady && !this.structure.get(parent_id)?.has(row.link.link_id) &&
-          !this.pending.fields.has(row.row_id) && !protectedRows.has(row.row_id)) continue;
+        const members = this.structure.get(parent_id);
+        if (row.link && members && !members.has(row.link.link_id) && !this.pending.fields.has(row.row_id) &&
+          !protectedRows.has(row.row_id) && (this.structureFilter !== "" ||
+            this.structureRevision !== null && window && BigInt(this.structureRevision) >= BigInt(window.data.store_revision))) continue;
         this.rows.set(row.row_id, row);
         for (const [id, embedded] of this.embedded) if (embedded.projection !== null && embedded.owner === row.row_id) collect(id, embedded.projection.ref, embedded.projection.branch, depth + 1);
         if (row.open && !row.terminal) {
@@ -2312,6 +2347,10 @@ export class OutlineController {
         else {presentation.replaceChildren(button); dom.removeAttribute("aria-busy");}
       }
       if (row.gap) dom.style.minHeight = `${row.gapHeight ?? this.viewport.estimate}px`; else dom.style.removeProperty("min-height");
+      const held = this.motion !== "still" && row.parent_id !== null && row.link !== null
+        ? this.viewport.rowHeight(row.parent_id, row.link.link_id) : null;
+      dom.style.blockSize = held === null ? "" : `${held}px`;
+      dom.style.overflow = held === null ? "" : "clip";
       if (row.kind === "reference") {
         const editing = this.referenceRow === id && this.canEditReference(row);
         content.hidden = !editing; content.contentEditable = editing ? "true" : "false";

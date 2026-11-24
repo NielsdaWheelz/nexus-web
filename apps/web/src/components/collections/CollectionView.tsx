@@ -135,11 +135,13 @@ export default function CollectionView({
   usePaneCollectionGeometry({ scope: returnScope, window });
   const windowed = window.plan.kind !== "Intrinsic";
   const ready = shownStatus !== "loading" && window.plan.kind !== "Measure";
-  const committedIds = useRef(orderedIds);
+  const liveIds = useMemo(() => holding ? orderedIds.filter(id => currentById.has(id)) : orderedIds,
+    [holding, orderedIds, currentById]);
+  const committedIds = useRef(liveIds);
   const plan = window.plan;
   useLayoutEffect(() => {
     committed.current = shown;
-    committedIds.current = orderedIds;
+    committedIds.current = liveIds;
     const list = listRef.current;
     if (!holding || list === null) {
       if (sizes !== null) setSizes(null);
@@ -159,7 +161,7 @@ export default function CollectionView({
       element.style.setProperty("--index-held-size", `${height}px`);
     }
     if (heldSizes === null || measured.size !== heldSizes.size) setSizes({ scopeKey, heights: measured });
-  }, [shown, orderedIds, holding, heldSizes, plan, scopeKey, sizes]);
+  }, [shown, liveIds, holding, heldSizes, plan, scopeKey, sizes]);
   const pendingFocus = useRef<{ id: string; selector: string; fallback: HTMLElement | null; release: () => void } | null>(null);
   const fallbackTarget = useCallback(() => {
     const root = returnScopeRef.current;
@@ -210,7 +212,7 @@ export default function CollectionView({
     if (document.activeElement !== document.body || root.closest("[inert]")) return;
     ownedFocusRef.current = null;
     const remaining = Array.from(root.querySelectorAll<HTMLElement>("[data-collection-row-id]"));
-    const sameRow = remaining.find((item) => item.dataset.collectionRowId === focus.rowId);
+    const sameRow = remaining.find(item => item.dataset.collectionRowId === focus.rowId && item.getAttribute("role") !== "presentation");
     const control = sameRow?.querySelector<HTMLElement>(focus.controlSelector ?? "[data-row-focusable]:not([disabled])");
     const sameControl = control?.hasAttribute("data-row-primary-control")
       ? focusableElements(control)[0] : control;

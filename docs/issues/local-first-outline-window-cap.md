@@ -13,3 +13,12 @@ preserving every such oversized window would require a bounded multipart
 response contract with one consistent revision, rather than raising the cap,
 clipping projections or dropping writing. revisit only if that capability is
 required; qualification must include an oversized window and unchanged writing.
+
+index-scrolling now requires bounded rich reads as well as bounded structural
+ranges. the exception above describes the older outline release.
+`compileOutlineWindows` permits up to 48 rich rows per slice and several slices
+in one bridge answer. long notes or captured excerpts can still exceed the
+aggregate cap. an inline retry can repeat the same request. keep one revision
+while choosing a byte-bounded body batch, and give a detail too large on its
+own a readable row-level failure. resolve with a paired apk and a real
+oversized window that retains its slot and neighboring editing state.

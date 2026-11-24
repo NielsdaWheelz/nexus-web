@@ -30,8 +30,10 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
   onForward?: (port: HTMLElement) => void): () => void {
   let motion: ScrollMotion = "still";
   let lastTop = port.scrollTop;
+  let lastMaximum = Math.max(0, port.scrollHeight - port.clientHeight);
   let press: number | null = null;
-  let claim: { frame: number; forward: boolean } | null = null;
+  let claim: { cancel(): void; forward: boolean } | null = null;
+  let quiet: ReturnType<typeof setTimeout> | null = null;
   let settle: number | null = null;
   const change = (next: ScrollMotion) => {
     if (motion === next) return;
@@ -39,7 +41,7 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
     onMotion(next);
   };
   const clearClaim = () => {
-    if (claim !== null) cancelAnimationFrame(claim.frame);
+    claim?.cancel();
     claim = null;
   };
   const clearSettle = () => {
@@ -56,16 +58,17 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
     });
   };
   const arm = (forward: boolean) => {
-    if (press !== null) return;
-    const continuing = forward || claim?.forward === true;
+    if (press !== null || !forward && claim?.forward) return;
     clearClaim();
-    if (continuing) writes.delete(port);
-    claim = {forward: continuing, frame: requestAnimationFrame(() => {
-      claim = {forward: continuing, frame: requestAnimationFrame(() => {
-        claim = null;
-        if (motion === "seek") settleSoon();
-      })};
-    })};
+    const expire = () => {claim = null;};
+    if (forward) {
+      writes.delete(port);
+      let frame = requestAnimationFrame(() => {frame = requestAnimationFrame(expire);});
+      claim = {forward, cancel: () => cancelAnimationFrame(frame)};
+    } else {
+      const timer = setTimeout(expire, 150);
+      claim = {forward, cancel: () => clearTimeout(timer)};
+    }
   };
   const wheel = (event: WheelEvent) => {
     if (event.isTrusted && !event.defaultPrevented && !event.ctrlKey && event.deltaY !== 0) arm(true);
@@ -108,13 +111,16 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
   const scroll = (event: Event) => {
     if (event.target !== port) return;
     const top = port.scrollTop;
+    const maximum = Math.max(0, port.scrollHeight - port.clientHeight);
+    const clamped = top < lastTop && Math.abs(top - maximum) <= 0.5 && maximum < lastMaximum;
+    lastMaximum = maximum;
     const forward = top > lastTop;
     const moved = top !== lastTop;
     lastTop = top;
     const write = writes.get(port);
     if (write?.kind === "smooth") return;
     writes.delete(port);
-    if (!moved || write?.kind === "instant" && Math.abs(top - write.offset) <= 0.5) return;
+    if (!moved || clamped && press === null || write?.kind === "instant" && Math.abs(top - write.offset) <= 0.5) return;
     const demand = claim?.forward === true || motion === "travel";
     const incidentalMovement = press === null && claim?.forward === false && !demand;
     clearClaim();
@@ -125,6 +131,10 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
     if (demand) clearSettle();
     else if (settle !== null) settleSoon();
     change(press === null && demand ? "travel" : "seek");
+    if (!Reflect.has(port, "onscrollend") && press === null) {
+      if (quiet !== null) clearTimeout(quiet);
+      quiet = setTimeout(settleSoon, 180);
+    }
     if (forward && (demand || press !== null)) onForward?.(port);
   };
   const end = (event: Event) => {
@@ -165,6 +175,7 @@ export function observeScrollMotion(port: HTMLElement, onMotion: (motion: Scroll
     document.removeEventListener("visibilitychange", visibility);
     clearClaim();
     clearSettle();
+    if (quiet !== null) clearTimeout(quiet);
     writes.delete(port);
   };
 }

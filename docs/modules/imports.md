@@ -50,15 +50,15 @@ envelope. the web reaches them under `/api`.
 | route | request | answer |
 | --- | --- | --- |
 | `GET /imports/summary` | none | `{observed_at, needs_attention_count, active_count, work_in_flight, digest}` |
-| `GET /imports` | `view=Register` with offset-bearing `from`, or `view=Recent`; optional cursor and limit 1..100, default 50 | `{items, next_cursor}` |
+| `GET /imports` | offset-bearing `from` | `{items, batches}` |
+| `GET /imports/recent` | none | `{items}`, at most five |
 | `GET /imports/{ref}` | none | `{item, source_issues, related_imports, pending_captures, original_source, email_source}` |
-| `GET /imports/{ref}/history` | cursor, limit 1..100, default 50 | `{entries, next_cursor}` |
+| `GET /imports/{ref}/history` | none | complete `{entries}` |
 | `PUT /imports/dismissals` | `{dismissals: [{ref, through}]}`, 1..100 offset-bearing instants | 204 |
 
-the page refuses every other parameter and all former views with 400
-`E_INVALID_REQUEST`; invalid or mismatched cursors answer `E_INVALID_CURSOR`.
-Register includes all unsettled imports and complete imports arrived at or after
-`from`. keyset order is attention, active, complete; newest raised failure,
+changed get routes reject unknown and duplicate parameters with
+`E_INVALID_REQUEST`. register includes all unsettled imports and complete imports
+arrived at or after `from`. order is attention, active, complete; newest raised failure,
 acceptance or arrival respectively; then ref. Recent retains its existing own
 acquisition membership, supersession and newest-acceptance order. its only reader
 is the import page's shelf. there is no count query or event matching.
@@ -88,10 +88,9 @@ consumers accelerate it to 10 seconds while `work_in_flight` is true. held work
 does not accelerate it. hiding retires optional reads; return observes immediately;
 a failed summary waits for a wake or explicit retry.
 
-every imports read except summary waits for the first digest. revision advances
-on manual refresh, in-tab imports invalidation and entry changes. list, details,
-record, shelf and batches reread only when revision or digest moves, retaining
-accepted data after refresh failure. the intake's source truth continues to use
+the register opens independently of summary polling. the digest, manual
+refresh and in-tab invalidation replace its complete observation. the shelf uses
+its own fixed recent selection. details and history open on demand. the intake's source truth continues to use
 the observation clock under its separate contract below.
 
 the digest hashes ordered jsonb arrays, including nulls, over all unsettled
@@ -113,15 +112,11 @@ media or opml segment. the next write drops other parameters. restored selection
 never opens details; explicit activation does. imports publishes an Import primary
 action and refresh capability, with no navigation, query, views or toolbar.
 
-Register uses `useServerList`, 50 rows per page, `drain: false` and
-`refreshComplete: false`. rereads replace only the admitted pages, including when the
-previous result was complete. load more queues behind a reread; if that read fails, its
-requested continuation shows retry, and a later load-more press retries the prefix
-before continuing. passive same-query refresh failures stay quiet. all loaded rows mount; heads prohibit windowing. attention and
-importing heads use summary counts plus their batches. batches precede their
-group; active batches wait until the loaded prefix has passed attention. finished
-batches leave. day heads use the display zone. final colophon hands earlier
-arrivals to all through the existing profile's default library id.
+the register holds one complete value. unsettled opml batches precede the imports
+within their state group. attention and importing heads describe the admitted rows.
+day heads use the display zone. grouped measurements reserve the complete extent
+and mount nearby rows. the colophon leads to earlier arrivals through the default
+library.
 
 arrivals use the library's `presentMedia` and `CollectionRow`, with Import details
 as an occurrence action. unsettled work uses an Index `ResourceRow`: title when
@@ -135,8 +130,9 @@ says `choose it again`, source recovery `retry`, search repair `rebuild`, an
 unpublished upload without recovery `remove`, else offered dismissal `dismiss`.
 row shortcuts require raised attention. media menus lead with Import details,
 the speaking recovery and Dismiss, followed by ordinary work actions. retry all
-walks loaded source/search recoveries sequentially despite refusals; dismiss all
-sends batches of at most 100, with one invalidation. partial attention prefixes show counted verbs.
+walks the frozen eligible source/search recoveries sequentially despite refusals.
+dismiss sends the frozen eligible refs and instants in batches of at most 100.
+the displayed counts describe those eligible sets.
 
 the companion surface remains `import-detail`, with identity; one standing Fact
 per unsettled slot and covered markers; pending captures and discard; related

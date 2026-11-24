@@ -162,6 +162,10 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         val removeSql = sql("search_remove")
         for (ref in indexed) { run("DELETE FROM literal_fields WHERE ref=?", ref); run(removeSql, ref); run(searchSql, ref) }
         if (literalFields != null) installLiterals(literalFields)
+        if (literalsComplete && indexed.isNotEmpty()) {
+            val supplied = (0 until (literalFields?.length() ?: 0)).map { literalFields!!.getJSONArray(it).getString(0) }.toSet()
+            literalsComplete = supplied.containsAll(indexed)
+        }
         partialLiteral = null
     }
     fun commit(frame: JSONObject, literalFields: JSONArray?): JSONObject = transaction {
@@ -213,6 +217,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
     private val literalNames = listOf("title", "body", "quote")
     private data class LiteralAssembly(val ticket: String, val ref: String, val revision: String, val fields: List<StringBuilder>, var active: Int = 0)
     private var partialLiteral: LiteralAssembly? = null
+    private var literalsComplete = false
 
     private fun installLiterals(items: JSONArray) {
         for (index in 0 until items.length()) {
@@ -441,8 +446,10 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         if (kind in listOf("page_register", "outline_filter", "work_pending", "work_completed", "habits", "mentions")) {
             val field = if (kind in listOf("work_pending", "work_completed", "habits")) "work_index" else kind
             if (!query.isNull("expected_revision") && replica.getString("store_revision") != query.getString("expected_revision")) return result.put(field, JSONObject().put("kind", "changed"))
-            if ((kind == "page_register" || kind == "outline_filter") && query.getString("text").isNotBlank() && rows(sql("literal_missing")).length() > 0)
-                return JSONObject().put("literal_repair", true)
+            if (!literalsComplete && (kind == "page_register" || kind == "outline_filter") && query.getString("text").isNotBlank()) {
+                if (rows(sql("literal_missing")).length() > 0) return JSONObject().put("literal_repair", true)
+                literalsComplete = true
+            }
             val record = read(0).getJSONObject(0)
             val raw = JSONArray(record.getString("items"))
             val items = JSONArray()

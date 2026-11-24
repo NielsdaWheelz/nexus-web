@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { QueryResult, RegisterItem } from "@nexus/authored/types";
 import * as Icon from "@/lib/ui/icons";
 import CollectionView, { type CollectionViewRowRenderProps } from "@/components/collections/CollectionView";
@@ -9,6 +9,7 @@ import CollectionRow from "@/components/collections/CollectionRow";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { Fact } from "@/components/feedback/Fact";
 import { presentNote } from "@/lib/collections/presenters/note";
+import { useAuthoredAccountId } from "@/lib/authored/provider";
 import { useAuthoredIndex, useAuthoredQuery } from "@/lib/notes/hooks";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneFilterQuery } from "@/lib/panes/paneFilterRows";
@@ -17,7 +18,7 @@ import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
 import { readerType } from "@/lib/reader/typography";
 import { useRecent } from "@/lib/recent/store";
-import { usePaneReturnReady, usePaneScrollRetention } from "@/lib/workspace/paneReturnMemento";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./NotesPaneBody.module.css";
 
 const UNIT = {singular: "page", plural: "pages"};
@@ -39,10 +40,16 @@ export default function NotesPaneBody() {
   const filter = usePaneFilterQuery("Notes.Pages");
   const text = filter.query.trim();
   const read = useAuthoredIndex({kind: "page_register", text, start: 0, limit: 2048, expected_revision: null}, register);
+  const account = useAuthoredAccountId();
+  const [last, setLast] = useState<{account: typeof account; text: string; data: NonNullable<typeof read.data>} | null>(null);
+  if (read.data && (last?.account !== account || last.text !== text || last.data !== read.data))
+    setLast({account, text, data: read.data});
+  const shown = read.data ?? (last?.account === account ? last.data : null);
+  const shownText = read.data || last?.account !== account ? text : last.text;
   const recent = useRecent();
   const list = useMemo(() => {
     const rows = [], heads = new Map<string,string>(), long = new Set<string>();
-    const items = read.data?.items ?? [];
+    const items = shown?.items ?? [];
     let opened = 0;
     const add = (item: RegisterItem, isRecent: boolean) => {
       const id = item.ref.slice(5), row = presentNote({id, title: item.label ?? "page"});
@@ -50,7 +57,7 @@ export default function NotesPaneBody() {
       if (item.label === null) long.add(occurrence);
       return {...row, id: occurrence};
     };
-    if (!text && recent.snapshot) {
+    if (!shownText && recent.snapshot) {
       const byRef = new Map(items.map(item => [item.ref,item]));
       for (const {target} of recent.snapshot.entries) {
         const item = target.kind === "resource_ref" ? byRef.get(target.ref) : null;
@@ -69,10 +76,9 @@ export default function NotesPaneBody() {
       rows.push(row); previous = item.group;
     }
     return {rows, heads, long};
-  }, [read.data, text, recent.snapshot]);
+  }, [shown, shownText, recent.snapshot]);
   const ready = (read.data !== null || read.error !== null) && (text !== "" || recent.snapshot !== null || recent.readFailure);
   usePaneReturnReady(ready);
-  usePaneScrollRetention(list.rows);
   const count = read.data?.items.length ?? 0, total = read.data?.sourceTotal ?? 0;
   usePaneChrome({
     primaryAction: {kind: "link", id: "NewPage", label: "New page", icon: <Icon.Add aria-hidden="true"/>, href: "/pages/new",
@@ -91,13 +97,13 @@ export default function NotesPaneBody() {
   }, [list.heads]);
   const failure = <AuthoredReadFailure {...read} noun="pages"/>;
   return <div {...type} className={styles.register}>
-    <CollectionView returnScope="Notes.Pages" ariaLabel="Notes" rows={list.rows} geometry="UniformIndex" anchorKey={text}
-      status={read.data ? "ready" : read.error ? "error" : "loading"} collectionBusy={!ready}
-      notice={<>{read.data && read.error ? failure : null}
+    <CollectionView returnScope="Notes.Pages" ariaLabel="Notes" rows={list.rows} geometry="UniformIndex" anchorKey={shownText}
+      status={shown ? "ready" : read.error ? "error" : "loading"} collectionBusy={!ready}
+      notice={<>{shown && read.error ? failure : null}
         {!text && recent.snapshot === null && recent.readFailure ? <Fact line={{fact: "couldn’t load recent items."}}
           verbs={[{label: "retry", commandKey: "retry recent", run: recent.read}]}/> : null}</>}
-      error={!read.data ? failure : undefined}
-      empty={<Fact line={{fact: text ? "no pages match this filter." : "no pages yet. daily pages stay in the journal."}}/>}
+      error={!shown ? failure : undefined}
+      empty={<Fact line={{fact: shownText ? "no pages match this filter." : "no pages yet. daily pages stay in the journal."}}/>}
       renderRow={props => list.long.has(props.row.id) ? <LongTitleRow {...props}/> : <CollectionRow {...props}/>}
       headBefore={headBefore}/>
   </div>;

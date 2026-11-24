@@ -1,8 +1,9 @@
 "use client";
 
-import type {WorkIndexItem} from "@nexus/authored/types";
+import type {ResourceProjection, WorkIndexItem} from "@nexus/authored/types";
 import type {OutlineHistory} from "@/lib/notes/structure";
 import {useWorkCheck, type WorkIntent} from "@/lib/notes/work";
+import {localResourceLabel} from "@/lib/resources/localResource";
 import * as Icon from "@/lib/ui/icons";
 import styles from "./WorkCheckbox.module.css";
 
@@ -16,10 +17,10 @@ export interface WorkCompletion { intent: WorkIntent; keyboard: boolean; at: num
  * `presentDone`: the host's presentation of a completion its projection has not shown yet. The sign is drawn
  * done, is named for what it shows (`completed: {line}`), and takes no press. */
 export default function WorkCheckbox({resource,today,history,presentDone = false,onComplete}: {
-  resource:WorkIndexItem; today:string|null; history:OutlineHistory; presentDone?:boolean;
+  resource:WorkIndexItem | ResourceProjection; today:string|null; history:OutlineHistory; presentDone?:boolean;
   onComplete?:(completion:WorkCompletion)=>void;
 }) {
-  const label = resource.label === null ? "name too large to display" : resource.label || "empty note";
+  const label = "label" in resource ? resource.label === null ? "name too large to display" : resource.label || "empty note" : localResourceLabel(resource);
   const check = useWorkCheck({...resource, label},today,history);
   if (check === null) return null;
   const checked = presentDone || check.checked;

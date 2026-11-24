@@ -71,7 +71,11 @@ export class OutlineViewport {
     this.heights.clear(); this.smallest = null;
     this.branchHeights.clear();
   }
-  setBranches(branches: ReadonlyMap<string, readonly string[]>): void {
+  setBranches(branches: ReadonlyMap<string, readonly string[]>): boolean {
+    if (branches.size === this.branches.size && [...branches].every(([parent, ids]) => {
+      const previous = this.branches.get(parent);
+      return previous?.length === ids.length && ids.every((id, rank) => previous[rank] === id);
+    })) return false;
     this.branches = branches;
     for (const [parent, sizes] of this.branchHeights) {
       const links = branches.get(parent);
@@ -79,6 +83,7 @@ export class OutlineViewport {
       const remaining = new Set(links);
       for (const link of sizes.keys()) if (!remaining.has(link)) sizes.delete(link);
     }
+    return true;
   }
   estimatedHeight(parent: string): number {
     return (this.branches.get(parent) ?? []).reduce((height, link) => height + this.rowHeight(parent, link), 0);

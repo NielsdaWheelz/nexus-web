@@ -22,7 +22,7 @@ import {OpenOutlineScopes, type OpenOutlineScope} from "@/lib/resourceGraph/open
 import {useOpenScopeSearch} from "@/lib/notes/openScopeSearch";
 import {WorkHistoryContext} from "@/lib/notes/work";
 import {WorkConversionError, WorkJoinError, WorkUnavailableError} from "@nexus/authored/types";
-import {usePaneAnchorGeometry, usePaneBeforeLayout, usePaneInputLease, usePaneRevealAnchor, usePaneVisitRetained} from "@/lib/workspace/paneReturnMemento";
+import {usePaneAnchorGeometry, usePaneBeforeLayout, usePaneInputLease, usePaneRevealAnchor, usePaneScrollMotion, usePaneVisitRetained} from "@/lib/workspace/paneReturnMemento";
 import {usePaneOutlineCommands} from "@/lib/panes/paneChrome";
 import {useNativeKeyboardVisibility} from "@/lib/ui/useKeyboardInset";
 import {ClipboardWriteUnavailableError} from "@/lib/ui/copyText";
@@ -63,7 +63,7 @@ const pendingCopy = (value: {input: OutlinePendingInput}) => value.input.copyTex
 
 export default function LocalOutline(props: Props) {
   const inherited = useContext(SharedOutline);
-  if (inherited) return <EmbeddedBranch controller={inherited} rootRef={props.rootRef} prefix={props.occurrencePrefix ?? props.rootRef}/>;
+  if (inherited) return props.childrenVisible === false ? null : <EmbeddedBranch controller={inherited} rootRef={props.rootRef} prefix={props.occurrencePrefix ?? props.rootRef}/>;
   return <OutlineRoot {...props}/>;
 }
 
@@ -166,6 +166,8 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
   received(window: OutlineWindow): void; onReady(controller: OutlineController | null): void;
 }) {
   const resources = useContext(ResourceOutlineContext);
+  const motion = usePaneScrollMotion();
+  useLayoutEffect(() => controller.setMotion(motion), [controller, motion]);
   useLayoutEffect(() => controller.readLayout().geometry.refreshRange());
   controller.platform = useRenderEnvironment().platform;
   const guard = useWorkGuard();

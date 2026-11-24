@@ -564,11 +564,14 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       const stop = observeScrollMotion(port.element, motion => {
         if (scrollports.get(paneId) !== port) return;
         port.motion = motion;
-        port.inputGeneration += 1;
-        holds.delete(paneId);
-        refreshes.delete(paneId);
-        if (motion !== "still") finish(paneId, false);
+        if (motion !== "still") {
+          port.inputGeneration += 1;
+          holds.delete(paneId);
+          refreshes.delete(paneId);
+          finish(paneId, false);
+        }
         announceMotion();
+        if (motion === "still") applyHold(paneId);
       }, () => {
         for (const listen of forwardListeners) listen(paneId, port);
       });

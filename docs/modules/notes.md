@@ -85,8 +85,9 @@ both typed histories and the winning designation controls current behavior. disa
 tracking retains dates. unlink changes placement; deletion hides work and restoration
 returns it. text always uses the note's current wording.
 
-`work_pending`, `work_completed` and `habits` query visible notes before cursor
-pagination. unfinished tasks and today's unchecked habits share one capture order.
+`work_pending`, `work_completed` and `habits` read bounded rank ranges of one
+local revision. unfinished tasks and today's unchecked habits share numeric
+capture order, with replica and ref ties.
 the journal agenda ends with `add a task`, which opens its capture form in
 place. a completion fills the sign immediately. after 600ms from the press,
 its receipt replaces the row. an active menu or an editor still in use keeps
@@ -135,9 +136,9 @@ last habit. the header title yields while the paper heading is visible.
 activating a date opens that date
 in the existing correction dialog; month navigation never writes. year and month
 each use one roving keyboard stop. a normal history button remains available on
-small screens. stopped habits retain editable history. full positive date arrays
-travel in resource projections: simple existing subscriptions cost about 5 kb per
-fully checked habit-year and retain the hosts' existing result limits.
+small screens. stopped habits retain editable history. the store derives the
+latest recorded date across all habits. visible rows read positive dates for
+the chosen year.
 
 ## ownership
 
@@ -263,11 +264,12 @@ order is fractional position then link id; equal-key insertion rekeys only the
 observed tie run. receiving and indexing never manufacture a touch.
 
 the register lists visible undated pages by display title under sqlite `NOCASE`,
-then ref. keyset pagination uses that same pair and the `resources_register`
-partial index. the uppercased first code point heads each run. only ascii letters fold.
-an empty title files as `untitled page`. `opened here` resolves device recents
-and shows the first eight visible undated pages in recent order. a filter hides
-that group and applies to the loaded register prefix. `New page` opens an empty
+then ref, using the `resources_register` partial index. the uppercased first code
+point heads each run. an empty title files as `untitled page`. `opened here`
+shows the first eight distinct visible undated pages from device recents. a filter
+hides that group and matches every title by unicode-15 nfc/lower/substring. the
+large register reads ordered ranks at one store revision. long titles retain
+identity and grouping and resolve only when mounted. `New page` opens an empty
 focused title on the paper. authored devices store no edit timestamps.
 
 one local sql transaction commits touched merge bytes, projections, indexes,
@@ -677,7 +679,13 @@ menus retain the same native control and focus target. retaining an open empty
 input does not establish child
 availability. they disclose authored local links, excluding relationships
 already traversed by that occurrence. a bounded batched local query proves child
-availability. one `outline_windows` query reads a coherent set of bounded raw
+availability. `outline_filter` observes all adjacent link ids at one revision
+for each disclosed parent. the outline joins them by occurrence path, omits
+traversed links, and keeps matches and ancestors. it seeks by link id to the
+rich window at the selected rank. the local literal fields derive from canonical
+title, text and quote. explicit filtering also checks disclosed server scopes
+through current admitted labels and quotes. failed scopes keep their paths and
+individual retries. one `outline_windows` query reads a coherent set of bounded raw
 pages, root and
 boundary projections, adjacent and absolute tail relationships, and aligned child
 proofs through indexed sql statements in one serialized store operation. every

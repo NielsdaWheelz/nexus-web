@@ -12,7 +12,14 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
   const revision = useRef(0);
   const heldLayout = useRef(held);
   const pendingInvalidation = useRef(false);
-  useLayoutEffect(() => { heldLayout.current = held; }, [held]);
+  const sweep = useRef<(() => void) | null>(null);
+  useLayoutEffect(() => {
+    const released = heldLayout.current && !held;
+    heldLayout.current = held;
+    if (!released) return;
+    const frame = requestAnimationFrame(() => sweep.current?.());
+    return () => cancelAnimationFrame(frame);
+  }, [held]);
   const heights = useRef(new Map<string, number>());
   const elements = useRef(new Map<string, HTMLElement>());
   const admissions = useRef(new Map<string, "pending" | "ready" | "failed">());
@@ -148,18 +155,20 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
       const nextTypography = readTypography();
       if (typography !== null && nextTypography !== typography) invalidate();
       typography = nextTypography;
+      for (const entry of entries) if (entry.target === root.current) {
+        const next = entry.contentRect.width;
+        if (width !== null && width !== next) invalidate();
+        width = next;
+      }
+      update(entries.flatMap(entry => entry.target !== root.current ? [entry.target as HTMLElement] : []));
+    };
+    const update = (nodes: Iterable<HTMLElement>) => {
+      if (heldLayout.current) return;
       const { dates } = committed.current;
       const updates: { index: number; date: string; height: number }[] = [];
-      for (const entry of entries) {
-        if (entry.target === root.current) {
-          const next = entry.contentRect.width;
-          if (width !== null && width !== next) invalidate();
-          width = next;
-          continue;
-        }
-        const element = entry.target as HTMLElement;
+      for (const element of nodes) {
         const date = element.dataset.journalDate;
-        if (!date || element.hidden || heldLayout.current) continue;
+        if (!date || element.hidden) continue;
         const index = dates.indexOf(date), height = element.getBoundingClientRect().height;
         if (index >= 0 && height > 0 && heights.current.get(date) !== height) updates.push({ index, date, height });
       }
@@ -175,12 +184,16 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
       });
       finish();
     };
+    sweep.current = () => {
+      if (pendingInvalidation.current) invalidate();
+      else update(elements.current.values());
+    };
     observer.current = new ResizeObserver(size);
     if (root.current) observer.current.observe(root.current);
     for (const element of elements.current.values()) observer.current.observe(element);
     document.fonts.addEventListener("loadingdone", invalidate);
     return () => {
-      observer.current?.disconnect(); observer.current = null;
+      observer.current?.disconnect(); observer.current = null; sweep.current = null;
       document.fonts.removeEventListener("loadingdone", invalidate);
     };
   }, [beforeLayout, root, virtualizer, port]);
