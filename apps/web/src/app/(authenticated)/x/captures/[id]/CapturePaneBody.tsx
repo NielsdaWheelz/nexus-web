@@ -5,7 +5,6 @@ import { useOutcome } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { convertReaderQuestion } from "@nexus/authored/markdown";
 import { captureReaderQuote, launchReaderChat } from "@/lib/chat/readerIntent";
-import { readCatalog } from "@/lib/chat/catalog";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { useRecent } from "@/lib/recent/store";
 import { normalizeVisitTitleHint } from "@/lib/workspace/model";
@@ -50,8 +49,7 @@ function CaptureReader({ id }: { readonly id: string }) {
   const { ctx } = useActionRuntime();
   const guard = useWorkGuard();
   const memory = useChatSelection();
-  const catalogRead = usePaneFreeServerValue({ key: "/llm-catalog", stale: "", load: readCatalog });
-  const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
+  const catalog = usePaneFreeServerValue(memory.catalog);
   const store = useAuthoredStore();
   const { profile } = useReaderContext();
   const mobile = useIsMobileViewport();
@@ -212,7 +210,7 @@ function CaptureReader({ id }: { readonly id: string }) {
       if (question.kind === "Unsupported") { say({ fact: "images and embeds can’t be sent from here." }); return false; }
       if (question.kind === "Text" && [...question.content].length > 20_000) { say({ fact: "this question is too long.", reason: "the limit is 20,000 characters." }); return false; }
       return launchReaderChat({ ctx, guard, originPaneId: runtime.paneId, question: question.kind === "Text" ? question.content : "",
-        quote, selection: memory.fresh(catalog) ?? { kind: "Uninitialized" } }).kind === "Opened";
+        quote, catalog, readSelection: memory.fresh }).kind === "Opened";
     },
   });
   const mapEvidence = useMemo(() => {

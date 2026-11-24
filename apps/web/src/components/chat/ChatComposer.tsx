@@ -23,8 +23,8 @@ import styles from "./ChatComposer.module.css";
 
 /** Admission, not generation, gates send. Later questions remain editable and
  * append to the same server queue while the librarian is answering. */
-export default function ChatComposer({ catalog: catalogRead, command, owner, focusKey, autoSend, choice, currentSelection, recall }: {
-  choice: ResolvedSelection; currentSelection(): Selection | null;
+export default function ChatComposer({ catalog: catalogRead, command, owner, focusKey, autoSend, choice, refused, currentSelection, recall }: {
+  choice: ResolvedSelection; refused(value: Selection): boolean; currentSelection(): Selection | null;
   recall: string | null;
   catalog: ServerValue<Catalog>; command: CommandState; owner: LibrarianCommands; focusKey: string | null; autoSend: { id: string; draft: Draft } | null;
 }) {
@@ -35,13 +35,15 @@ export default function ChatComposer({ catalog: catalogRead, command, owner, foc
   const { draft, setText, setSelection, setQuote, getCaret, setCaret, entry, refusal, refuse } = useChatDraft(runtime.paneId);
   const memory = useChatSelection();
   const { value: selection, reason } = choice;
+  const recallError = memory.read.status === "loading" ? null : memory.read.error;
+  const recallPending = memory.read.status === "loading" || (memory.read.status === "failed" ? memory.read.retrying : memory.read.refreshing);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const mobile = useIsMobileViewport();
   useEffect(() => { if (active && focusKey) textarea.current?.focus({ preventScroll: true }); }, [active, focusKey]);
   useEffect(() => { const caret = getCaret(); if (caret) textarea.current?.setSelectionRange(caret.start, caret.end, caret.direction); }, [getCaret]);
   const canSend = command.kind === "Idle" && catalogRead.status === "ready" && selection.kind === "Selected" && reason === null && draft.text.trim().length > 0;
   const submit = () => {
-    if (!canSend) return false;
+    if (!canSend || !owner.canExecute()) return false;
     const selected = currentSelection();
     if (!selected) return false;
     const submitted = draft;
@@ -57,14 +59,21 @@ export default function ChatComposer({ catalog: catalogRead, command, owner, foc
   const sentEntry = useRef<string | null>(null);
   useEffect(() => {
     if (!autoSend || sentEntry.current === autoSend.id) return;
-    if (reason !== null || entry.getSnapshot().draft !== autoSend.draft) { sentEntry.current = autoSend.id; return; }
+    if (reason !== null || catalogRead.status === "failed" || catalogRead.status === "ready" && catalogRead.error
+      || selection.kind === "Uninitialized" && recallError || entry.getSnapshot().draft !== autoSend.draft) { sentEntry.current = autoSend.id; return; }
     if (submit()) sentEntry.current = autoSend.id;
   });
   return <div className={styles.composer}>
     <div className={styles.rule} aria-hidden="true" />
     {draft.quote ? <DraftReferenceFigure quote={draft.quote} onRemove={() => { setQuote(null); textarea.current?.focus({ preventScroll: true }); }} /> : null}
     <Textarea bare autoGrow={{ minRows: 1, maxRows: 8 }} ref={textarea} className={styles.input} value={draft.text} aria-label="ask the librarian" placeholder={draft.quote ? "ask about this passage" : "ask the librarian"}
-      onChange={event => { setText(event.target.value); if (draft.selection.kind === "Uninitialized" && selection.kind === "Selected") setSelection(selection); }}
+      onChange={event => {
+        setText(event.target.value);
+        if (entry.getSnapshot().draft.selection.kind === "Uninitialized") {
+          const fresh = memory.fresh(catalogRead.status === "ready" ? catalogRead.data : null);
+          if (fresh?.kind === "Selected") setSelection(fresh);
+        }
+      }}
       onSelect={event => { const field = event.currentTarget; setCaret({ start: field.selectionStart, end: field.selectionEnd, direction: field.selectionDirection }); }}
       onKeyDown={event => {
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -83,10 +92,10 @@ export default function ChatComposer({ catalog: catalogRead, command, owner, foc
         event.preventDefault();
         if (!event.repeat) submit();
       }} />
-    {memory.read.status === "failed" ? <Failed error={memory.read.error} noun="saved model" retry={{ run: memory.read.refetch, busy: memory.read.retrying }} /> : null}
+    {recallError ? <Failed error={recallError} noun="saved model" retry={{ run: memory.read.refetch, busy: recallPending }} /> : null}
     {refusal ? <Fact line={refusal.line} /> : null}
     {reason && refusal?.line.reason !== reason ? <Fact line={{ fact: reason }} /> : null}
-    <div className={styles.row}><GenerationPicker catalogRead={catalogRead} choice={choice} onChange={setSelection} returnFocus={() => textarea.current?.focus({ preventScroll: true })} />
+    <div className={styles.row}><GenerationPicker catalogRead={catalogRead} choice={choice} refused={refused} recallPending={recallPending} onChange={setSelection} returnFocus={() => textarea.current?.focus({ preventScroll: true })} />
       <Button tone="accent" className={styles.send} disabled={!canSend} aria-busy={command.kind === "Busy" || undefined} title={pendingReason(command) ?? undefined} onClick={submit}>
         send{!mobile ? <span className={styles.hint} aria-hidden="true">↵</span> : null}
       </Button>

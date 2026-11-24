@@ -163,7 +163,7 @@ function createCommands(accountId: string) {
     canExecute: () => active() && state.kind === "Idle" && flight === null,
     getSnapshot: () => state,
     getCatalogRevision: () => catalogRevision,
-    // Librarian catalog reads stamp account entry/rejection revision. A failed read
+    // Each chat catalog read stamps the foreground and rejection revision. A failed read
     // retains the earlier accepted stamp, including while another tuple is edited.
     selectionRejected(selection: Selection, acceptedStamp: string | null) {
       return (refusedSelections.get(selectionKey(selection)) ?? 0) > Number(acceptedStamp?.split("/")[1] ?? 0);

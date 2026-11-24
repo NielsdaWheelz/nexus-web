@@ -18,11 +18,11 @@ import { useLibrarianEntryReads } from "@/lib/panes/indexPaneEntry";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
 import { readerSurfaceStyle } from "@/lib/reader/typography";
-import { requirePaneRuntime, usePaneEntryDelivery, usePaneRuntime, usePaneRouter } from "@/lib/panes/paneRuntime";
+import { requirePaneRuntime, usePaneEntryDelivery, usePaneIsActive, usePaneRuntime, usePaneRouter } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey, type PaneVisitDataKey, usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import type { Visit } from "@/lib/api/serverState";
-import type { Catalog, Timeline, Turn } from "@/lib/chat/wire";
+import type { Catalog, Selection, Timeline, Turn } from "@/lib/chat/wire";
 import ChatOperationBoundary from "./ChatOperationBoundary";
 import ChatComposer from "./ChatComposer";
 import LibrarianTranscript, { type LibrarianTranscriptHandle } from "./LibrarianTranscript";
@@ -50,10 +50,17 @@ export default function Librarian() {
   const { settleAdopted } = draft;
   const memory = useChatSelection();
   const catalog = useServerValue({ ...reads.catalog, visit: CATALOG_VISIT });
+  const active = usePaneIsActive();
+  const wasActive = useRef(active);
+  useLayoutEffect(() => {
+    const revisit = active && !wasActive.current;
+    wasActive.current = active;
+    if (revisit) catalog.revalidate();
+  }, [active, catalog]);
   const currentCatalog = catalog.status === "ready" ? catalog.data : null;
   const selection = draft.draft.selection.kind === "Uninitialized" ? memory.fresh(currentCatalog) ?? draft.draft.selection : draft.draft.selection;
-  const resolve = (value: SelectionEditor) => resolveSelection(currentCatalog, value,
-    value.kind === "Selected" && catalog.status === "ready" && commandOwner.selectionRejected(value.selection, catalog.acceptedStale));
+  const refused = (value: Selection) => catalog.status === "ready" && commandOwner.selectionRejected(value, catalog.acceptedStale);
+  const resolve = (value: SelectionEditor) => resolveSelection(currentCatalog, value, refused);
   const choice = resolve(selection);
   const currentSelection = () => {
     if (!currentCatalog || draft.entry.getSnapshot().draft !== draft.draft) return null;
@@ -136,7 +143,7 @@ export default function Librarian() {
       <div className={styles.composerSlot} data-has-messages={search.searching || turns.length > 0 || adopted.length > 0 || undefined} onWheel={event => transcript.current?.onComposerWheel(event)}>
         {commandFeedback}
         {!search.searching && history.status === "ready" && history.error ? <Fact line={{ fact: "messages stopped updating." }} verbs={[{ label: "retry", commandKey: "refresh librarian", run: history.refetch }]} /> : null}
-        <ChatComposer choice={choice} currentSelection={currentSelection} autoSend={autoSend} catalog={catalog} command={command} owner={commandOwner} focusKey={focus} recall={recall} />
+        <ChatComposer choice={choice} refused={refused} currentSelection={currentSelection} autoSend={autoSend} catalog={catalog} command={command} owner={commandOwner} focusKey={focus} recall={recall} />
       </div>
     </div>;
 }
