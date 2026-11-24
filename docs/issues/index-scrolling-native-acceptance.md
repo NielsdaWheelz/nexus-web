@@ -1,16 +1,18 @@
-# qualify index scrolling on the installed webview
+# qualify native motion and access boundaries
 
-firefox and chromium cases cannot establish touch and fling on the nested
-android port. the required installed checks also cover offline authored data
-with more than 16 mib in aggregate, bounded bridge reads, and an active edit
-through a scroll, detour and return.
+a paired api-34 emulator at f7cb7f11f signed in, provisioned the authored
+store, reopened notes offline, read 96 long titles totaling over 16 mib through
+the real 24 kib frame protocol, and recorded trusted scrolling after touchend
+on the installed notes pane. the headless stock firefox drag separately
+preserved its landing line after a prepend.
 
-the temporary authored-native case uses an exact-origin lab apk and verifies
-real sign-in, local provisioning and offline access. it has no admitted
-candidate device result. during takeover, the three running avds were named
-nexus-notes-home-api34, nexus-outline-shortcuts-7229 and nexus-api34. select an
-owned disposable avd and debug package before testing or clearing any data.
+physical touch and assistive-input boundaries remain unrun. the emulator check
+admitted momentum and byte bounds. it did not combine a touch/fling with data
+or measurement arriving during travel, or compare the same landing line
+before and after that correction. the necessary input and measurement belong
+to the actual installed scrollport.
 
-resolve with an exact-source paired apk, the measured aggregate and largest
-bridge response, trusted native touch and momentum samples and a surviving
-landing line within one css pixel. confirm owned device and runtime teardown.
+resolve with the paired artifact, trusted input at the physical/assistive
+boundary being asserted, and a preserved physical line within one css pixel
+while the underlying collection changes. record the exact input boundary and
+separate owned-device and lab teardown.
