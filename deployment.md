@@ -159,12 +159,10 @@ the frontend candidate is qualified on private port 3444 before activation.
 only the selected candidate on 3443 has a public tunnel route.
 
 the api has a 384 MiB memory ceiling with container swap disabled. the eight
-service ceilings total 3888 MiB; these are independent limits, not reserved
-host ram. the shared host must be qualified against concurrent production and
-bounded development, cache reclaim, memory pressure and request completion. summing separate
-historical peaks does not establish that workload's demand; a passing preflight
-does not establish its capacity. swap does not count toward physical memory or
-the available-memory floor.
+independent service ceilings total 4112 MiB. qualify the shared host against
+concurrent production and bounded development, cache reclaim, memory pressure
+and request completion. measure coincident peaks during representative load.
+use physical memory for the available-memory floor.
 
 the eight long-lived services and backup/migration one-offs belong to `system-nexus.slice` under
 `system.slice`. its persistent `MemorySwapMax=0` enforces no-swap for their

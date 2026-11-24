@@ -123,7 +123,8 @@ export function isSameSystemApiDefect(
  * build's 426 included, or it answered `E_AUTH_UNAVAILABLE`, which every emitter answers before
  * the route runs: lib/api/proxy.ts before `forward`, python's auth middleware before any route,
  * lib/account/settings.server.ts before its operation or from the identity list's read (its
- * writes answer a silent provider as the outcome `Failed`). Unknown, it may have run: it was sent
+ * writes answer a silent provider as the outcome `Failed`). Chat also answers
+ * `E_GENERATION_RUNTIME_UNAVAILABLE` before admission commits. Unknown, it may have run: it was sent
  * and no answer came, a deadline passed after the send, or the server answered another 5xx. 502
  * and 504 come from past the answerer; `E_DATABASE_BUSY` is a pool checkout a handler may make
  * after its own commit (python/nexus/api/edge.py; services/extension_sessions.py commits, then

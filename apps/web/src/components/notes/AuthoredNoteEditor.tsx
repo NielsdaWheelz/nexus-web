@@ -8,6 +8,8 @@ import { bodyInline, readBody } from "@nexus/authored/documents";
 import type { WritingDocument } from "@/lib/notes/runtime";
 import { useWordsAtRisk } from "@/lib/notes/hooks";
 import type { EditorHistory } from "@/lib/notes/structure";
+import { admitDisplayedText, replayLocalText, TEXT_LIMIT } from "@/lib/notes/textAdmission";
+import { useOutcome } from "@/components/feedback/Feedback";
 import type { NoteInspection, StructuralKeys, NoteEditorHandle, NoteEditorProps } from "./NoteEditor";
 import NoteEditor from "./NoteEditor";
 export default function AuthoredNoteEditor({ document, label, editable = true, onSplit, onJoin, history, structuralKeys, inspection, reference, focus, onSelectionChange, onEditorReady, onAttachmentActiveChange, onLinkInputActiveChange, embedding }: {
@@ -46,10 +48,12 @@ export default function AuthoredNoteEditor({ document, label, editable = true, o
     return () => document.doc.off("update", update);
   }, [document]);
   const wordsAtRisk = useWordsAtRisk([document.ref]);
+  const {say} = useOutcome();
   if(!history && own?.document!==document)return null;
-  return <NoteEditor wordsAtRisk={wordsAtRisk} embedding={embedding} focus={focus} onAttachmentActiveChange={onAttachmentActiveChange} onLinkInputActiveChange={onLinkInputActiveChange} onSelectionChange={onSelectionChange} onEditorReady={onEditorReady} reference={reference} writingDocument={document} writingOrigin={history?.origin ?? own!.origin} body={body} revision={0} editorKey={document.ref}
+  const step = (redo: boolean) => replayLocalText(document, own!.manager, redo, () => say({fact: TEXT_LIMIT}));
+  return <NoteEditor wordsAtRisk={wordsAtRisk} embedding={embedding} focus={focus} onAttachmentActiveChange={onAttachmentActiveChange} onLinkInputActiveChange={onLinkInputActiveChange} onSelectionChange={onSelectionChange} onEditorReady={onEditorReady} reference={reference} writing={{document, admitText: history?.admitText ?? ((baseline, write) => admitDisplayedText(document, baseline, own!.origin, write, own!.manager))}} body={body} revision={0} editorKey={document.ref}
     containingNoteRef={document.ref} inspection={inspection} label={label} editable={editable}
-    history={history ?? { undo: () => own!.manager.undo(), redo: () => own!.manager.redo(), boundary: () => own!.manager.stopCapturing() }}
+    history={history ?? { undo: () => step(false), redo: () => step(true), boundary: () => own!.manager.stopCapturing() }}
     keys={{ ...structuralKeys, ...(document.ref.startsWith("note_block:") && history?.taskPrefix ? {taskPrefix:history.taskPrefix} : {}), ...(onSplit ? { split: (_left,_right,displayed) => {if(!displayed)throw new Error("bound note split requires its displayed baseline");onSplit(displayed);} } : {}), ...(onJoin ? { join: direction => onJoin(direction,document.capture()) } : {}) }}
     onEdit={edit => history?.record(edit)} />;
 }

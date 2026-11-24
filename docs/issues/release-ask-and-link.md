@@ -1,7 +1,8 @@
 # release ask and link
 
-the candidate wraps every question attachment in a private saved-reference and
-capture-scope record. the migration preserves exact references and their order.
+schema 0349 wraps every question attachment in a private saved-reference and
+capture-scope record after the notes-home migration at 0348. it preserves exact
+references and their order.
 historical scopes are null. malformed references abort the migration.
 
 follow the backend's stopped-writer backup and exact-head verification steps.

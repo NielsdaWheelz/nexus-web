@@ -116,22 +116,22 @@ export interface NexusGroup {
   readonly rows: readonly NexusRow[];
 }
 
-/** A query's block and passage tail, the first line fixed at the keystroke, and what enter fires. */
+export type NexusSelection =
+  | { readonly kind: "None" }
+  | { readonly kind: "Automatic"; readonly key: string }
+  | { readonly kind: "Deliberate"; readonly key: string }
+  | { readonly kind: "Withdrawn" };
+
+/** A query's stable bands and the current selection. */
 export interface NexusList {
   readonly identity: string;
   readonly rows: readonly NexusRow[];
   readonly first: string | null;
   /** Keys painted at the keystroke; arrivals keep their landing position. */
   readonly held: readonly string[];
-  readonly armed: string | null;
-  readonly armedAt: number;
-  readonly deliberate: boolean;
-  /** The row armed before the latest arming, only while it is still in rows. */
-  readonly previous: string | null;
+  readonly selection: NexusSelection;
   readonly paintedAt: number;
 }
-
-export type FireTarget = { readonly kind: "Fire"; readonly key: string } | { readonly kind: "Wait"; readonly until: number } | { readonly kind: "None" };
 
 export type NexusSource = "Direct" | "Lexical" | "Hybrid" | "Reference";
 

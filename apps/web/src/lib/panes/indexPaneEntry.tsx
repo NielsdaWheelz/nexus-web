@@ -8,7 +8,6 @@ import { useChangeStamp } from "@/lib/api/changes";
 import type { ReadDescriptor } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import { useLiveGroup } from "@/lib/catalog/provider";
-import { catalogReadPolicy, readCatalog } from "@/lib/chat/catalog";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import type { Catalog, Timeline } from "@/lib/chat/wire";
 import { indexPaneQuery, librarianSearchQuery } from "@/lib/panes/indexPaneQuery";
@@ -109,7 +108,7 @@ function LibrarianEntry({ query, children }: EntryProps) {
   const active = usePaneIsActive();
   const foreground = useRefreshStamp(active, 0);
   const stale = `${useChangeStamp("Chats", "Metadata", "Notes", "NoteBodies")}:${foreground}`;
-  const { enter } = useChatSelection();
+  const { enter, catalog } = useChatSelection();
   const { delivery } = usePaneEntryDelivery();
   const activationId = delivery?.entry.kind === "ComposeChat" || delivery?.entry.kind === "FocusLibrarian" ? delivery.activationId : null;
   const entered = useRef<{ active: boolean; activationId: string | null }>({ active: false, activationId: null });
@@ -129,7 +128,6 @@ function LibrarianEntry({ query, children }: EntryProps) {
   const path = `/api/librarian/messages?${params}` as const;
   const timeline = useMemo(() => ({ key: path, stale,
     load: async (signal: AbortSignal) => (await apiFetch<ApiJson<"/librarian/messages", "get">>(path, { signal })).data }), [path, stale]);
-  const catalog = useMemo(() => ({ key: "/llm-catalog", stale: String(foreground), load: readCatalog, ...catalogReadPolicy }), [foreground]);
   return <Librarian.Provider value={{ timeline, catalog }}><PaneEntryReads reads={searching ? [catalog] : [timeline, catalog]}>{children}</PaneEntryReads></Librarian.Provider>;
 }
 type EntryProps = { params: Record<string, string>; query: URLSearchParams; children: ReactNode };

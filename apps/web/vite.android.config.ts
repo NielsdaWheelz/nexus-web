@@ -12,7 +12,7 @@ import { compileQuery, compileOutlineWindows, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQ
 import { SCOPE_SQL } from "../../node/authored/src/scope";
 import { nativeQueryPlans } from "./src/lib/authored/nativeQuery";
 import type { AuthoredQuery } from "../../node/authored/src/types";
-import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_TO_6_SQL } from "../../node/authored/src/schema";
+import { DEVICE_PRAGMAS, DEVICE_SCHEMA, PENDING_CHANGES_SQL, REBUILD_DEVICE_SQL } from "../../node/authored/src/schema";
 import { appCsp } from "./src/lib/security/csp";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
 import { BRAND_BG_DARK } from "./src/lib/brand";
@@ -47,8 +47,9 @@ export default defineConfig({
           ...Object.fromEntries(STATIC_SECURITY_HEADERS.map(header => [header.key, header.value])),
           "Content-Security-Policy": appCsp({ nonce: "__NEXUS_NONCE__", dev: false, https: false, ws: [], connect }),
         }));
-        writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify(DEVICE_SCHEMA));
-        writeFileSync(path.join(outDir, "authored-upgrade-to-6.json"), JSON.stringify(UPGRADE_TO_6_SQL));
+        writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify({
+          pragmas: DEVICE_PRAGMAS, create: DEVICE_SCHEMA, rebuild: REBUILD_DEVICE_SQL,
+        }));
         const cursor = JSON.stringify(["a0", ""]);
         const workCursors = [null, JSON.stringify(["1", "22222222-2222-4222-8222-222222222222", "note_block:33333333-3333-4333-8333-333333333333"])];
         type PackagedQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;
@@ -68,7 +69,9 @@ export default defineConfig({
           excerpt: [{kind:"excerpt",ref:"",reading_ref:null}],
           source_alias: [{ kind: "source_alias", ref: "" }],
           daily: [{ kind: "daily", local_date: "" }],
-          pages: [null, cursor].map(cursor => ({ kind: "pages", cursor, limit: 100 })),
+          pages: (["worked", "title"] as const).flatMap(order =>
+            [null, order === "worked" ? JSON.stringify([-1, "a", ""]) : cursor].flatMap(cursor =>
+              ["", "filter"].map(title_filter => ({ kind: "pages", order, title_filter, cursor, limit: 100 })))),
           annotations: [{ kind: "annotations", source_ref: "", cursor: null, limit: 100 }],
           backlinks: [{ kind: "backlinks", ref: "", cursor: null, limit: 100 }],
           search: [{ kind: "search", text: "", link_from: null, cursor: null, limit: 100, scopes: [{kind: "all", id: null}], families: null }],

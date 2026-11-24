@@ -7,13 +7,14 @@ import { ExcerptDialog } from "@/components/resources/ExcerptDisclosure";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import Input from "@/components/ui/Input";
 import ModalFrame from "@/components/ui/ModalFrame";
+import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { ContextualActionsInput } from "@/lib/actions/useContextualActions";
 import type { NexusCommandId, NexusRow } from "@/lib/nexus/model";
 import { ARRIVAL_ONSET_MS, PASSAGE_CAP, RULING_DELAY_MS, STAR_GRACE_MS, STAR_ONSET_MS } from "@/lib/nexus/policy";
 import { flattenedPaste, NEXUS_COMMANDS, TODAY_ALIAS } from "@/lib/nexus/query";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { ResourceItem } from "@/lib/resources/items";
-import { SHORTCUTS, shortcutAriaKeys, usesMeta } from "@/lib/shortcuts";
+import { formatShortcut, SHORTCUTS, shortcutAriaKeys, usesMeta } from "@/lib/shortcuts";
 import { revealCollectionItem } from "@/lib/ui/collection";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
@@ -28,6 +29,7 @@ const APPARATUS_ID = "desktop-nexus-apparatus";
 const SEARCH_ID = "desktop-nexus-search";
 const NOTICE_ID = "desktop-nexus-notices";
 const HELP_ID = "desktop-nexus-help";
+type EnterChord = "Follow" | "Fork" | "Nexus.Ask" | "Nexus.Keep" | "Nexus.KeepOpen";
 const LEGEND: readonly { word: string; id: NexusCommandId | "today" }[] = [
   { word: "note", id: "Nexus.Quick.Note" }, { word: "ask", id: "Nexus.Quick.Chat" },
   { word: "import", id: "Nexus.Quick.Import" }, { word: "today", id: "today" },
@@ -50,7 +52,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   const [excerpt, setExcerpt] = useState<ResourceItem | null>(null);
   const [inputFocused, setInputFocused] = useState(false);
   const [legendWord, setLegendWord] = useState<NexusCommandId | "today" | null>(null);
-  const [modifiers, setModifiers] = useState({ shift: false, mod: false });
+  const [chord, setChord] = useState<EnterChord | null>("Follow");
   if (!controller.open && excerpt !== null) setExcerpt(null);
   const typed = controller.rootMode === "Typed";
   const { intent, text } = controller.parsed;
@@ -60,10 +62,12 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   const block = typed ? results.filter(row => row.class !== "Passage") : controller.groups.filter(group => group.id === "Continuations" || group.id === "Recent").flatMap(group => group.rows);
   const apparatus = typed ? results.filter(row => row.class === "Passage") : controller.groups.find(group => group.id === "Closed")?.rows ?? [];
   const catchword = typed ? controller.continuations[0] ?? null : null;
-  const searchLabel = catchword ? lookup ? catchword.label : `all results for “${text}”` : "";
+  const searchPrefix = lookup ? "search for" : "all results for";
   const rows = [...block, ...apparatus, ...(catchword ? [catchword] : [])];
-  const index = rows.findIndex(row => row.key === controller.armed);
+  const index = rows.findIndex(row => row.key === controller.selectedKey);
   const active = rows[index] ?? null;
+  const withdrawn = controller.list.selection.kind === "Withdrawn";
+  const firstDown = block[0] ?? apparatus[0] ?? (lookup || withdrawn ? catchword : null);
   const held = new Set(controller.list.held);
   const listed = new Set(controller.list.rows.map(row => row.key));
   const verbs = active ? nexusRowVerbs(active, active.state === "Current", controller, setExcerpt) : null;
@@ -73,7 +77,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   const pointerPress = useRef<{ key: string; x: number; y: number; moved: boolean } | null>(null);
   const pointerRest = useRef<{ x: number; y: number } | "Travelled" | null>(null);
 
-  useLayoutEffect(() => { pointerRest.current = null; }, [controller.open, controller.query]);
+  useLayoutEffect(() => { pointerRest.current = null; }, [controller.open, controller.query, withdrawn]);
   useLayoutEffect(() => {
     const port = listRef.current;
     if (!controller.open || controller.page.kind !== "Root" || !port) return;
@@ -81,16 +85,18 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   }, [controller.open, controller.page.kind, controller.rootMode, controller.query, controller.rootScroll]);
   useLayoutEffect(() => {
     const port = listRef.current;
-    const item = controller.armed === null ? null : document.getElementById(candidateId(controller.armed));
+    const item = controller.selectedKey === null ? null : document.getElementById(candidateId(controller.selectedKey));
     if (port && item && port.contains(item)) revealCollectionItem(port, item);
-  }, [controller.open, controller.page.kind, controller.armed, index]);
+  }, [controller.open, controller.page.kind, controller.selectedKey, index]);
   useEffect(() => {
     const change = (event: KeyboardEvent) => {
-      const shift = event.shiftKey;
-      const mod = usesMeta(platform) ? event.metaKey : event.ctrlKey;
-      setModifiers(current => current.shift === shift && current.mod === mod ? current : { shift, mod });
+      if (event.metaKey || event.ctrlKey) {
+        const primary = usesMeta(platform) ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+        setChord(primary && !event.shiftKey && !event.altKey ? "Nexus.Ask" : null);
+      } else if (event.altKey) setChord(event.shiftKey ? "Nexus.KeepOpen" : "Nexus.Keep");
+      else setChord(event.shiftKey ? "Fork" : "Follow");
     };
-    const clear = () => setModifiers({ shift: false, mod: false });
+    const clear = () => setChord("Follow");
     document.addEventListener("keydown", change, true);
     document.addEventListener("keyup", change, true);
     window.addEventListener("blur", clear);
@@ -113,7 +119,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       if (Math.hypot(event.clientX - rest.x, event.clientY - rest.y) < 8) return;
       pointerRest.current = "Travelled";
     }
-    if (document.activeElement === inputRef.current) controller.arm(key);
+    if (document.activeElement === inputRef.current) controller.selectRow(key);
   }
 
   function openMenu() {
@@ -121,14 +127,20 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
     caret.current = input ? { start: input.selectionStart ?? 0, end: input.selectionEnd ?? 0, direction: input.selectionDirection ?? "none" } : null;
     triggerRef.current?.click();
   }
-  const target = active?.action.kind === "Available" ? active.action.target : null;
-  const reason = active?.action.kind === "Unavailable" ? active.action.reason : null;
-  const fork = legendWord !== null ? legendWord !== "Nexus.Quick.Import" : active !== null && reason === null && target?.kind !== "OpenImport" && target?.kind !== "RestorePane";
-  let verb = reason ?? (active === null ? null : target?.kind === "RestorePane" ? "reopen"
-    : /^(QuickAction|Intent):/.test(active.key) ? "run" : active.key.startsWith("Import:") ? "import"
-    : active.class === "Passage" ? "open at this passage" : active.key === "Continuation:UseText" ? "use this text"
-    : active === catchword ? "search all results" : "open");
-  if (legendWord !== null) {
+  const { submitRow } = controller;
+  const shortcutWord = chord === "Nexus.Ask" ? "Nexus.Quick.Chat" : chord === "Nexus.Keep" || chord === "Nexus.KeepOpen" ? "Nexus.Quick.Note" : null;
+  const command = shortcutWord ?? legendWord;
+  const target = submitRow?.action.kind === "Available" ? submitRow.action.target : null;
+  const reason = command === null && submitRow?.action.kind === "Unavailable" ? submitRow.action.reason : null;
+  const fork = command !== null ? command !== "Nexus.Quick.Import" : target !== null && target.kind !== "OpenImport" && target.kind !== "RestorePane";
+  const searchAction = catchword !== null && submitRow?.key === catchword.key;
+  const searchCue = searchAction && inputFocused && command === null && chord !== null && reason === null;
+  const enterKey = chord === "Follow" ? "↵" : chord === "Fork" ? "⇧↵" : chord === null ? null
+    : formatShortcut(SHORTCUTS[chord], platform).replace(/enter/i, "↵").toLowerCase();
+  let verb = reason ?? (submitRow === null || searchAction ? null : target?.kind === "RestorePane" ? "reopen"
+    : /^(QuickAction|Intent):/.test(submitRow.key) ? "run" : submitRow.key.startsWith("Import:") ? "import"
+    : submitRow.class === "Passage" ? "open at this passage" : submitRow.key === "Continuation:UseText" ? "use this text" : "open");
+  if (command !== null) {
     const legendVerbs: Record<NexusCommandId | "today", string> = {
       "Nexus.Quick.Note": argument ? "save to today" : "open today at a new line",
       "Nexus.Quick.Chat": argument ? "ask the librarian" : "open the librarian",
@@ -136,13 +148,17 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       "Nexus.Quick.Page": argument ? "new page with this title" : "new page",
       "Nexus.Quick.Library": argument ? "new library with this name" : "new library", "Nexus.Quick.Browse": "browse…",
     };
-    verb = legendVerbs[legendWord];
+    verb = legendVerbs[command];
   }
-  if (modifiers.mod) verb = argument ? "ask the librarian" : "open the librarian";
-  else if (modifiers.shift && fork && verb) verb += " in a new pane";
+  if (fork && verb && (chord === "Fork" || chord === "Nexus.KeepOpen")) {
+    verb = command === "Nexus.Quick.Note" && argument ? "save and open today in a new pane" : `${verb} in a new pane`;
+  }
+  const browseHint = active || !firstDown ? null : firstDown === catchword ? lookup ? "literal search" : "all results"
+    : typed ? firstDown.class === "Passage" ? "first passage" : "first result"
+    : firstDown.key === "Continuation:UseText" ? "selection" : firstDown.key.startsWith("Closed:") ? "closed" : "recent";
 
   const renderRow = (row: NexusRow, sideHead: string) => {
-    const selected = row.key === controller.armed;
+    const selected = row.key === controller.selectedKey;
     const locator = row.state === "Current" ? "here" : row.action.kind === "Available" && row.action.target.kind === "RestorePane" ? "closed" : nexusRowAlias(row, true);
     return <div key={row.key} role="row" aria-selected={selected} className={styles.line} data-active={selected || undefined}
       data-band={listed.has(row.key) && !held.has(row.key) ? "arriving" : undefined}>
@@ -163,7 +179,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
             if (activation.kind === "Unowned") return;
             event.preventDefault();
             if (activation.kind === "Consume") return;
-            controller.arm(row.key);
+            controller.selectRow(row.key);
             controller.activate(row.action, { disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } }, row);
           }}>
           <HeadwordRow row={row} query={controller.query} sideHead={sideHead} />
@@ -171,6 +187,12 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         <span className={styles.locator}>
           {locator}
           {selected && menu ? <ContextualActionMenu {...menu} label={`options for ${row.label}`} triggerAttributes={{ tabIndex: -1 }}
+            renderTrigger={props => <OverflowMenuButton {...props} onClickCapture={() => controller.selectRow(row.key)}
+              onKeyDown={event => {
+                const arrow = !event.defaultPrevented && (event.key === "ArrowUp" || event.key === "ArrowDown");
+                props.onKeyDown(event);
+                if (arrow && event.defaultPrevented) controller.selectRow(row.key);
+              }} />}
             triggerRef={node => { triggerRef.current = node; }} returnFocusTo={() => inputRef.current}
             onOpenChange={open => {
               const input = inputRef.current;
@@ -230,8 +252,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
             else if (plain && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
               event.preventDefault();
               if (event.key === "ArrowUp" && index <= 0) { legendRef.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true }); return; }
-              const next = rows[index < 0 ? 0 : Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))];
-              if (next) controller.arm(next.key);
+              const next = index < 0 ? firstDown : rows[Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))];
+              if (next) controller.selectRow(next.key);
             } else if (event.key === "Enter") {
               const activation = workspaceTargetActivationIntent(event, "activate");
               if (activation.kind === "Unowned") return;
@@ -269,7 +291,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
           const shortcut = id === "Nexus.Quick.Note" ? SHORTCUTS["Nexus.Keep"] : id === "Nexus.Quick.Chat" ? SHORTCUTS["Nexus.Ask"] : null;
           const key = lookup ? alias : shortcut ? usesMeta(platform) ? id === "Nexus.Quick.Note" ? "⌥↵" : "⌘↵" : id === "Nexus.Quick.Note" ? "alt+↵" : "ctrl+↵" : alias;
           const lit = lookup || intent.kind === "Command" && intent.id === id || intent.kind === "Destination" && intent.id === "today" && id === "today"
-            || intent.kind === "ImportLinks" && id === "Nexus.Quick.Import" || modifiers.mod && id === "Nexus.Quick.Chat";
+            || intent.kind === "ImportLinks" && id === "Nexus.Quick.Import" || shortcutWord === id;
           return <button key={id} type="button" tabIndex={-1} className={styles.word} data-lit={lit || undefined}
             aria-keyshortcuts={shortcut ? shortcutAriaKeys(shortcut, platform) : undefined} onFocus={() => setLegendWord(id)}
             onBlur={() => setLegendWord(null)} onClick={event => {
@@ -295,21 +317,34 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         {controller.sources.texts === "Waiting" ? Array.from({ length: PASSAGE_CAP - apparatus.length }, (_, at) => <div key={at} className={styles.waiting} aria-hidden="true" />) : null}
       </div>
       <div className={styles.foot}>
-        <span className={styles.hints} aria-hidden="true">{verb ? <><span>{reason !== null && legendWord === null && !modifiers.mod ? null : "↵ "}<span className={styles.verb}>{verb}</span></span>{fork ? <span>⇧↵ new pane</span> : null}{menu && legendWord === null ? <span>⇥ more</span> : null}</>
-          : <>{!typed ? <span>↓ {block[0]?.key === "Continuation:UseText" ? "selection" : "recent"}</span> : null}<span>↑ commands</span></>}</span>
+        <span className={styles.hints} aria-hidden="true">
+          {inputFocused && chord === "Follow" && browseHint ? <span>↓ {browseHint}</span> : null}
+          {inputFocused && chord === "Follow" && !active && (!typed || !browseHint) && !reason ? <span>↑ commands</span> : null}
+          {(inputFocused || legendWord !== null) && verb && (enterKey || reason) ? <span>{reason ? null : `${enterKey} `}<span className={styles.verb}>{verb}</span></span> : null}
+          {(inputFocused || legendWord !== null) && fork && chord === "Follow" ? <span>⇧↵ new pane</span> : null}
+          {inputFocused && menu && chord === "Follow" ? <span>⇥ more</span> : null}
+        </span>
         {catchword ? <div id={SEARCH_ID} role="rowgroup" aria-label="search" className={styles.search}>
-          <div role="row" aria-selected={catchword.key === controller.armed} data-active={catchword.key === controller.armed || undefined}>
-            <div id={candidateId(catchword.key)} role="gridcell" aria-label={searchLabel} onPointerMove={event => movePointer(catchword.key, event)} onPointerDown={event => event.preventDefault()}
+          <div role="row" aria-selected={catchword.key === controller.selectedKey} data-active={catchword.key === controller.selectedKey || undefined}>
+            <div id={candidateId(catchword.key)} role="gridcell" aria-label={`${searchPrefix} “${text}”`}
+              aria-disabled={catchword.action.kind === "Unavailable" || undefined}
+              onPointerMove={event => movePointer(catchword.key, event)} onPointerDown={event => event.preventDefault()}
               onClick={event => {
                 const activation = workspaceTargetActivationIntent(event);
                 if (activation.kind !== "Open") return;
-                event.preventDefault(); controller.arm(catchword.key);
+                event.preventDefault(); controller.selectRow(catchword.key);
                 controller.activate(catchword.action, { disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } }, catchword);
-              }}>{searchLabel}</div>
+              }}>
+              {searchCue ? <span className={styles.verb}>{enterKey}{chord === "Fork" ? " new pane ·" : ""}</span> : null}
+              <span>{searchPrefix}</span><span className={styles.searchQuery}>“{text}”</span>
+            </div>
           </div>
         </div> : null}
       </div>
-      <span id={HELP_ID} className="sr-only">arrows select; enter activates; shift plus enter opens in a new pane; up arrow on the first result reaches the commands; tab shows the selected result’s options.</span>
+      <span id={HELP_ID} className="sr-only">
+        {submitRow?.action.kind === "Unavailable" ? `${submitRow.action.reason}. ` : searchAction ? "enter opens all results for this query. " : active ? "enter activates the selected result. " : null}
+        arrows select. shift plus enter opens in a new pane where available. up from the first result reaches commands. tab shows the selected result’s options.
+      </span>
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{controller.pending ? null : typed ? `${block.length} results. ${apparatus.length} passages.` : `${controller.groups.find(group => group.id === "Recent")?.rows.length ?? 0} recent.`}</div>
       {excerpt ? <ExcerptDialog item={excerpt} onClose={() => setExcerpt(null)} returnFocusTo={() => inputRef.current} /> : null}
     </>}

@@ -12,8 +12,8 @@ import sqlalchemy as sa
 from alembic import op
 from jsonschema import Draft202012Validator, FormatChecker
 
-revision = "0348"
-down_revision = "0347"
+revision = "0349"
+down_revision = "0348"
 branch_labels = None
 depends_on = None
 
@@ -28,7 +28,7 @@ def upgrade() -> None:
     db = op.get_bind()
     db.execute(sa.text("LOCK TABLE messages IN SHARE ROW EXCLUSIVE MODE"))
     validator = Draft202012Validator(
-        json.loads(Path(__file__).with_name("0348_attachment.schema.json").read_text()),
+        json.loads(Path(__file__).with_name("0349_attachment.schema.json").read_text()),
         format_checker=FormatChecker(),
     )
     for row in db.execute(
@@ -42,10 +42,10 @@ def upgrade() -> None:
             or not isinstance(attachments, list)
             or len(attachments) > 16
         ):
-            raise RuntimeError(f"0348 message {row.id}: malformed question attachments")
+            raise RuntimeError(f"{revision} message {row.id}: malformed question attachments")
         for ref in attachments:
             if not validator.is_valid(ref):
-                raise RuntimeError(f"0348 message {row.id}: malformed saved reference")
+                raise RuntimeError(f"{revision} message {row.id}: malformed saved reference")
             scheme, _, identity = ref["resource_ref"].partition(":")
             try:
                 canonical = str(UUID(identity)) == identity
@@ -91,7 +91,7 @@ def upgrade() -> None:
                             if left in span:
                                 valid &= span[left] < span[right]
             if not valid:
-                raise RuntimeError(f"0348 message {row.id}: malformed saved reference")
+                raise RuntimeError(f"{revision} message {row.id}: malformed saved reference")
     db.execute(
         sa.text("""
         UPDATE messages m SET attachments=(

@@ -5,9 +5,9 @@
  * Adjacency uses the exact (position,link_id) tuple, including prefix/equal keys. */
 import { excerptTextParts, excerptView, scopeExcerpt, type ExcerptScope, type ExcerptNode } from "./excerpt.ts";
 import type { AuthoredQuery, Change, LinkState, OutlineRange, PassageState, QueryResult, QueryRow, ResourceProjection, SelectionCapture, ResourceState, PassageCapture } from "./types.ts";
-import { normalizeQuote } from "./identity.ts";
+import { PAGE_TITLE_MONTHS, pageTitle, paneFilterText } from "./paneFilterText.ts";
+import { normalizeQuote, validateLocalDate } from "./identity.ts";
 import { counter } from "./merge.ts";
-import { validateLocalDate } from "./work.ts";
 import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, SEARCH_FAMILIES, type ScopeInterval, type ScopeReading } from "./scope.ts";
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
 const HIGHLIGHT_TEXT_FIELDS = ["prefix", "quote_exact", "suffix"] as const;
@@ -34,12 +34,7 @@ function readAdjacencyCursor(cursor: string | null): [string, string] | null {
   if (!Array.isArray(pair) || pair.length !== 2 || pair.some(value => typeof value !== "string")) throw new TypeError("Invalid adjacency cursor");
   return [pair[0], pair[1]];
 }
-const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-export function pageTitle(title: string, local_date: string | null): string {
-  if (title) return title;
-  if (local_date === null) return "untitled page";
-  return `${MONTHS[Number(local_date.slice(5,7))-1]} ${Number(local_date.slice(8,10))}, ${local_date.slice(0,4)}`;
-}
+export { pageTitle };
 /** Literal names alone receive name precedence; prose remains lexical evidence. */
 export function searchName(resource: ResourceProjection): string | null {
   if (resource.kind === "page") return pageTitle(resource.title ?? "", resource.local_date);
@@ -51,17 +46,22 @@ export function searchNameMatch(resource: ResourceProjection, text: string): "ex
   const query = text.trim().toLowerCase();
   return !name || !query ? null : name === query ? "exact" : name.startsWith(query) ? "prefix" : name.includes(query) ? "substring" : null;
 }
-const DAILY_TITLE_SQL = `(CASE CAST(substr(local_date,6,2) AS INTEGER) ${MONTHS.map((month,index)=>`WHEN ${index+1} THEN '${month}'`).join(" ")} END || ' ' || CAST(CAST(substr(local_date,9,2) AS INTEGER) AS TEXT) || ', ' || substr(local_date,1,4))`;
+const DAILY_TITLE_SQL = `(CASE CAST(substr(local_date,6,2) AS INTEGER) ${PAGE_TITLE_MONTHS.map((month,index)=>`WHEN ${index+1} THEN '${month}'`).join(" ")} END || ' ' || CAST(CAST(substr(local_date,9,2) AS INTEGER) AS TEXT) || ', ' || substr(local_date,1,4))`;
+const SOURCE_PROJECTION_SQL = `json_object('ref',s.source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),
+  'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'title_key',NULL,
+  'local_date',NULL,'last_work_at_ms',NULL,'source_ref',s.source_ref,'source_publication',json_extract(s.state_json,'$.capture.value.publication'),
+  'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]'),'work',NULL)`;
 const READABLE = `WITH readable AS (
   SELECT ref,json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM resources WHERE visible=1
   UNION ALL
-  SELECT source_ref AS ref,json_object('ref',source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',source_ref,'source_publication',json_extract(state_json,'$.capture.value.publication'),'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]'),'work',NULL) AS projection_json
-  FROM source_stubs WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.ref=source_stubs.source_ref) AND NOT EXISTS (SELECT 1 FROM passages p WHERE p.anchor_id=substr(source_stubs.source_ref,16) AND source_stubs.source_ref='passage_anchor:'||p.anchor_id)
+  SELECT s.source_ref AS ref,${SOURCE_PROJECTION_SQL} AS projection_json
+  FROM source_stubs s WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.ref=s.source_ref) AND NOT EXISTS (SELECT 1 FROM passages p WHERE p.anchor_id=substr(s.source_ref,16) AND s.source_ref='passage_anchor:'||p.anchor_id)
   UNION ALL
   SELECT 'passage_anchor:'||anchor_id AS ref,projection_json FROM passages
 )`;
 /** Rebuild one FTS row from canonical presented content, on either SQLite host. */
 export const PAGE_TITLE_SQL = `COALESCE(NULLIF(title,''),${DAILY_TITLE_SQL},'untitled page')`;
+export const PAGE_WORK_RANK_SQL = "-coalesce(json_extract(projection_json,'$.last_work_at_ms'),0)";
 export const SEARCH_INDEX_SQL = `${READABLE}, indexed AS (
   SELECT ref,projection_json,json_extract(projection_json,'$.kind') AS kind,
   json_extract(projection_json,'$.title') AS title,json_extract(projection_json,'$.local_date') AS local_date FROM readable
@@ -84,7 +84,7 @@ const INCIDENT = `
 const BOUNDED_READABLE = `
   SELECT r.ref,json_set(r.projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM wanted w CROSS JOIN resources r ON r.ref=w.ref WHERE r.visible=1
   UNION ALL
-  SELECT s.source_ref AS ref,json_object('ref',s.source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',s.source_ref,'source_publication',json_extract(s.state_json,'$.capture.value.publication'),'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]'),'work',NULL) AS projection_json
+  SELECT s.source_ref AS ref,${SOURCE_PROJECTION_SQL} AS projection_json
   FROM wanted w CROSS JOIN source_stubs s ON s.source_ref=w.ref WHERE NOT EXISTS(SELECT 1 FROM resources r WHERE r.ref=w.ref) AND NOT EXISTS(SELECT 1 FROM passages p WHERE p.anchor_id=substr(w.ref,16) AND w.ref='passage_anchor:'||p.anchor_id)
   UNION ALL
   SELECT 'passage_anchor:'||p.anchor_id AS ref,p.projection_json
@@ -456,13 +456,38 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
     }
     case "daily": return { sql: "SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,NULL AS link_json FROM resources WHERE local_date=? AND visible=1", params: [query.local_date] };
     case "pages": {
-      const cursor=readAdjacencyCursor(query.cursor);
-      const where=cursor===null?'':`WHERE display_title COLLATE NOCASE>=? AND(display_title COLLATE NOCASE,ref)>(?,?)`;
-      // The register: undated pages by ascii-folded title, then ref. Unanalysed, the planner reads
-      // `local_date IS NULL` as a point lookup on the unique index, then sorts every undated
-      // resource; INDEXED BY holds the ordered partial index and fails to prepare if it drifts.
-      // A row value cannot seek an expression index; the scalar bound before it does.
-      return {sql:`WITH pages AS(SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,ref,${PAGE_TITLE_SQL} AS display_title FROM resources INDEXED BY resources_register WHERE kind='page' AND visible=1 AND local_date IS NULL) SELECT projection_json,NULL AS link_json,json_array(display_title,ref) AS cursor_json FROM pages ${where} ORDER BY display_title COLLATE NOCASE,ref LIMIT ?`,params:[...cursor?[cursor[0],cursor[0],cursor[1]]:[],limit]};
+      const worked = query.order === "worked";
+      const index = worked ? "resources_worked" : "resources_register";
+      const keys = worked ? "work_rank,display_title COLLATE NOCASE,ref" : "display_title COLLATE NOCASE,ref";
+      const needle = paneFilterText(query.title_filter.trim());
+      const params: CompiledQuery["params"] = [];
+      const conditions: string[] = [];
+      if (needle !== "") {
+        conditions.push("instr(json_extract(projection_json,'$.title_key'),?)>0");
+        params.push(needle);
+      }
+      if (query.cursor !== null) {
+        if (worked) {
+          const cursor: unknown = JSON.parse(query.cursor);
+          if (!Array.isArray(cursor) || cursor.length !== 3 || typeof cursor[0] !== "number" ||
+              !Number.isSafeInteger(cursor[0]) || cursor[0] > 0 || typeof cursor[1] !== "string" || typeof cursor[2] !== "string")
+            throw new TypeError("Invalid worked-page cursor");
+          // The scalar bound lets SQLite seek the expression index before checking the tuple.
+          conditions.push(`work_rank>=? AND (${keys})>(?,?,?)`);
+          params.push(cursor[0], cursor[0], cursor[1], cursor[2]);
+        } else {
+          const [title, ref] = readAdjacencyCursor(query.cursor)!;
+          conditions.push(`display_title COLLATE NOCASE>=? AND (${keys})>(?,?)`);
+          params.push(title, title, ref);
+        }
+      }
+      params.push(limit + 1);
+      return { sql: `WITH pages AS (
+        SELECT projection_json,ref,${PAGE_TITLE_SQL} AS display_title,${PAGE_WORK_RANK_SQL} AS work_rank
+          FROM resources INDEXED BY ${index} WHERE kind='page' AND visible=1 AND local_date IS NULL
+      ) SELECT projection_json,NULL AS link_json,json_array(${keys}) AS cursor_json FROM pages
+        ${conditions.length === 0 ? "" : "WHERE " + conditions.join(" AND ")}
+        ORDER BY ${keys} LIMIT ?`, params };
     }
     case "annotations": return { sql: "SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,NULL AS link_json FROM resources WHERE kind='highlight' AND visible=1 AND source_ref=? AND ref>? ORDER BY ref LIMIT ?", params: [query.source_ref, query.cursor ?? "", limit] };
     case "backlinks": return { sql: "SELECT json_set(r.projection_json,'$.authored_by_viewer',json('true')) AS projection_json,NULL AS link_json FROM reference_index i JOIN resources r ON r.ref=i.owner_ref WHERE i.target_ref=? AND r.visible=1 AND r.ref>? ORDER BY r.ref LIMIT ?", params: [query.ref, query.cursor ?? "", limit] };
