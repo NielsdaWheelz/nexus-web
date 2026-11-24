@@ -416,6 +416,7 @@ def surroundings(
                 viewer_id=viewer_id,
                 ref=ref,
                 byte_limit=policy("chat").input_max_bytes,
+                use_captured_reading=True,
             )
         except (NotFoundError, PromptEvidenceTooLarge):
             # justify-ignore-error: a retained primary can survive loss of optional source access.

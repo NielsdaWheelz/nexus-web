@@ -69,8 +69,20 @@ def upgrade() -> None:
                         and quad["y1"] == quad["y2"] < quad["y3"] == quad["y4"]
                     )
             if loc:
+                # JSON Schema treats 1.0 as an integer, unlike the old strict reader locators.
                 for span in (loc, loc.get("time_range")):
                     if span:
+                        valid &= all(
+                            type(span[key]) is int
+                            for key in (
+                                "start_offset",
+                                "end_offset",
+                                "start_ms",
+                                "end_ms",
+                                "page_number",
+                            )
+                            if key in span
+                        )
                         for left, right in (
                             ("start_offset", "end_offset"),
                             ("start_ms", "end_ms"),

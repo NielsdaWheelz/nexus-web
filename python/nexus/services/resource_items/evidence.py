@@ -514,6 +514,7 @@ def capture_prompt_evidence(
     viewer_id: UUID,
     ref: ResourceRef,
     byte_limit: int,
+    use_captured_reading: bool = False,
 ) -> CapturedEvidence:
     """Freeze one explicitly attached passage without discovering or loading its source.
 
@@ -583,7 +584,23 @@ def capture_prompt_evidence(
                 if located is not None
                 else CapturedUnavailableTarget(owner_ref=owner.uri, field=field),
             )
-        return capture_evidence(db, viewer_id=viewer_id, ref=ref)
+        reading = None
+        if use_captured_reading and stored is not None:
+            from nexus.services.resource_graph.refs import (
+                ResourceRefParseFailure,
+                parse_resource_ref,
+            )
+
+            extent = stored["capture"]["value"]["excerpt"].get("source_extent")
+            if extent is not None:
+                captured_reading = parse_resource_ref(extent["reading_ref"])
+                if isinstance(captured_reading, ResourceRefParseFailure):
+                    raise missing
+                if captured_reading.scheme == "media":
+                    if not can_read_media(db, viewer_id, captured_reading.id):
+                        raise missing
+                    reading = captured_reading.id
+        return capture_evidence(db, viewer_id=viewer_id, ref=ref, reading_media_id=reading)
     queries = {
         "content_chunk": "SELECT c.owner_kind,c.owner_id,c.chunk_text AS body,c.summary_locator AS locator,NULL::text AS resolver_kind,NULL::jsonb AS selector,NULL::text AS label FROM content_chunks c WHERE c.id=:id",
         "evidence_span": "SELECT owner_kind,owner_id,span_text AS body,NULL::jsonb AS locator,resolver_kind,selector,citation_label AS label FROM evidence_spans WHERE id=:id",
