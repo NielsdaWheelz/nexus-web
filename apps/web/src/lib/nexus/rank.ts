@@ -14,9 +14,13 @@ export interface Ranked {
   readonly recency: number;
 }
 
+export function compareTiers(a: RankTier, b: RankTier): number {
+  return TIERS.indexOf(a) - TIERS.indexOf(b);
+}
+
 /** Tier, then frecency, recency, stream and key: deterministic for equal inputs. */
 export function compareRank(a: Ranked, b: Ranked): number {
-  return TIERS.indexOf(a.rank.tier) - TIERS.indexOf(b.rank.tier)
+  return compareTiers(a.rank.tier, b.rank.tier)
     || b.frecency - a.frecency
     || b.recency - a.recency
     || STREAMS.indexOf(a.rank.stream) - STREAMS.indexOf(b.rank.stream)

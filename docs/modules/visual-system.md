@@ -475,8 +475,12 @@ solar uses serif titles and its vine rule.
 press's query is regular sans at `--text-xl`; study and solar use the room's
 name face. the asterism counts device, names and texts: waiting dims
 a star after 150ms, answered relights over 200ms, failure stays dim. idle is lit.
-empty waiting apparatus lines rule after 200ms. legend and catchword use the
-active word fill. no hover wash or animated armed-position movement occurs.
+empty waiting apparatus lines rule after 200ms. the legend and deliberately
+selected catchword use the active word fill. unselected browse cues name the
+first drawn result or passage. the catchword carries the enter cue when it
+owns the action. a selected passage changes the foot to `↵ open at this passage`.
+the query suffix elides before the action or browse cue. the frame and foot
+keep their geometry. no hover wash or animated selection movement occurs.
 
 child pages retain their 40px title/caret gutter. the phone's thumb index has a
 3.25rem sign column and minimum line height, with one-line titles and glosses.
@@ -484,8 +488,9 @@ typed rank one is at the head; band names share the trailing locator column.
 passages show the excerpt then italic work without a glyph. the page reads down
 above a fixed 3.5rem legend and 3.75rem field. place signs are 2.875rem wide;
 the account mark, or search sign and `ask`/`note`, cover the legend's inline end.
-solar uses serif titles and the vine rule. the field names the armed target as
-`go · {name}` and carries the three-source asterism. no focus accent rule or
+solar uses serif titles and the vine rule. the field names the submission target as
+`go · {name}` or `go · all results` and carries the three-source asterism.
+withdrawal clears the echo. no focus accent rule or
 hover wash is painted.
 
 desktop opening keeps 120ms bloom and scrim fade; closing is instant. arrivals
