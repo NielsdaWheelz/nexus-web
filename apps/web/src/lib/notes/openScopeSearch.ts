@@ -4,16 +4,15 @@ import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {isApiError, isSameSystemApiDefect} from "@/lib/api/client";
 import {useChangeStamp} from "@/lib/api/changes";
 import {useAuthoredAccountId} from "@/lib/authored/provider";
-import {useRemoteGeneration} from "@/lib/native/admissionHooks";
 import {queryConnections} from "@/lib/resourceGraph/links";
 import {remoteConnectionScope, type OpenOutlineScope, type OutlineScopeResult} from "@/lib/resourceGraph/openOutlineScopes";
 
 type Match = {kind: "ready"; order: readonly string[]; ids: ReadonlySet<string>} | Extract<OutlineScopeResult, {kind: "failed"}>;
 
 export function useOpenScopeSearch(text: string, scopes: ReadonlyMap<string, OpenOutlineScope>) {
-  const account = useAuthoredAccountId(), metadata = useChangeStamp("Metadata"), availability = useRemoteGeneration();
+  const account = useAuthoredAccountId(), metadata = useChangeStamp("Metadata");
   const [state, setState] = useState<{ scopes: typeof scopes; key: string; items: ReadonlyMap<string, Match>; defect: {error: unknown} | null } | null>(null);
-  const key = JSON.stringify([account, text, metadata, availability]);
+  const key = JSON.stringify([account, text, metadata]);
   const reload = useRef<((id: string) => void) | null>(null);
   useEffect(() => {
     if (text === "" || !scopes.size) return;
@@ -27,9 +26,10 @@ export function useOpenScopeSearch(text: string, scopes: ReadonlyMap<string, Ope
       const publish = (match: Match | null, defect: {error: unknown} | null) => {
         if (abort.signal.aborted || requests.get(id) !== ticket) return;
         setState(previous => {
-          const items = new Map(previous?.key === key && previous.scopes === scopes ? previous.items : []);
+          const current = previous?.key === key && previous.scopes === scopes ? previous : null;
+          const items = new Map(current?.items);
           if (match) items.set(id, match);
-          return {scopes, key, items, defect};
+          return {scopes, key, items, defect: defect ?? current?.defect ?? null};
         });
       };
       void queryConnections({...remoteConnectionScope(scope.ref), match_text: text}, abort.signal).then(data => {
