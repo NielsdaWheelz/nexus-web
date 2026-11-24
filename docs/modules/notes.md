@@ -301,6 +301,12 @@ reads bounded ranks and locates saved references at that revision. long titles
 retain their register slot and resolve only when mounted. `New page` opens
 an empty focused title on the paper. authored devices store no edit timestamps.
 
+while the register is moving, its captured ranks and heading positions stay
+fixed. bounded slices join that order to current visible pages and paint their
+current titles. unread or withdrawn rows keep their extent without controls.
+release resolves the captured ordinal against current membership before placing
+the new view, even when that row was never read during the movement.
+
 one local sql transaction commits touched merge bytes, projections, indexes,
 source sequence, store revision and immutable pending change. only durable commit
 acknowledges saved writing. uncertain replies reconcile the same source sequence;
