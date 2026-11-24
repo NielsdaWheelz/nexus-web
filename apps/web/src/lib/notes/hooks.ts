@@ -91,6 +91,8 @@ export function useWritingDocument(ref: string | null, prelude: readonly Intent[
  * supersedes an in-flight traversal; mixed-revision pages are never published. */
 type CursorQuery = Extract<AuthoredQuery, { cursor: string | null }>;
 
+export class AuthoredContinuationCursorError extends Error {}
+
 /** One admitted first-page subscription and one outstanding cursor. A demand
  * reads just that cursor; only its own live account, query and revision can append. */
 export function useAuthoredContinuation(query: CursorQuery | null) {
@@ -148,7 +150,7 @@ export function useAuthoredContinuation(query: CursorQuery | null) {
           return null;
         }
         if (next.scope_available && next.next_cursor !== null && (next.next_cursor === cursor || spent.has(next.next_cursor))) {
-          failedCursor = true; publish(false, new Error("Local search returned a previous cursor")); return null;
+          failedCursor = true; publish(false, new AuthoredContinuationCursorError("Local search returned a previous cursor")); return null;
         }
         spent.add(cursor);
         data = next.scope_available ? {...next, rows: [...base.rows, ...next.rows]} : {...next, rows: [], next_cursor: null};

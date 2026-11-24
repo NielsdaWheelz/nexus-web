@@ -52,7 +52,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const metadata = useChangeStamp("Metadata");
   const [refreshTick, setRefreshTick] = useState(0);
   const reload = useCallback(() => setRefreshTick((value) => value + 1), []);
-  const remote = useRemoteConnections(selfRef, `connections:${selfRef}`, `${refreshKey}:${refreshTick}:${metadata}`);
+  const remote = useRemoteConnections(selfRef, `${refreshKey}:${refreshTick}:${metadata}`);
   const self = useAuthoredQuery({ kind: "resource", ref: selfRef });
   const linked = useAuthoredQuery({ kind: "adjacency", ref: selfRef, cursor: null, limit: 1 });
   const mentions = useAuthoredPages({ kind: "backlinks", ref: selfRef, cursor: null, limit: 100 });
@@ -64,8 +64,8 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   for (const read of local) if (read.error !== null && !isAuthoredStorageFailure(read.error)) throw read.error;
   const unread = local.find(read => read.error !== null && read.data === null);
   const empty = linked.data?.rows.length === 0 && mentions.data?.rows.length === 0 && self.data !== null &&
-    embedded.length === 0 && remote.complete && remote.items.length === 0;
-  const shown = Boolean(linked.data?.rows.length || mentions.data?.rows.length || embedded.length || remote.items.length);
+    embedded.length === 0 && remote.status === "ready" && remote.data.edge_ids.length === 0;
+  const shown = Boolean(linked.data?.rows.length || mentions.data?.rows.length || embedded.length || remote.status === "ready" && remote.data.edge_ids.length);
   const opening = !shown && unread === undefined && remote.status !== "failed"
     && (local.some(read => read.data === null && read.pending) || remote.status === "loading");
 

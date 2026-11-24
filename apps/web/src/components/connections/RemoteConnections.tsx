@@ -1,65 +1,108 @@
 "use client";
 
-// Server-owned facts about one resource: citations, librarian links
-// and document embeds. Authored links, highlight notes and note-body embeds are
-// local and never read here. This section fails on its own; it never hides or
-// replaces local results beside it. A first read that fails stands where its rows
-// would; a refresh that fails over a list already shown, even an empty one, says
-// nothing; a later page that fails stands beneath the rows.
-import { useContext } from "react";
+import { useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { Failed } from "@/components/feedback/Fact";
-import {FactRemovalsContext, useFactRemovals} from "@/lib/resourceGraph/useFactRemovals";
 import ResourceOutlineList, { ResourceBranch } from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
-import { usePaneFreeServerList, type ServerList } from "@/lib/api/useServerList";
-import { usePaneIsActive } from "@/lib/panes/paneRuntime";
-import { queryConnections, type ConnectionOut } from "@/lib/resourceGraph/links";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import { FactRemovalsContext, useFactRemovals } from "@/lib/resourceGraph/useFactRemovals";
+import { queryConnections, resolveConnections } from "@/lib/resourceGraph/links";
+import { PaneRefreshAnchor } from "@/lib/workspace/paneReturnMemento";
 import styles from "./ConnectionsSurface.module.css";
 
-const REMOTE_ORIGINS: NonNullable<NonNullable<Parameters<typeof queryConnections>[0]["filters"]>["origins"]> =
-  ["citation", "discovery", "assistant", "document_embed"];
+export function remoteConnectionScope(ownerRef: string) {
+  return {
+    refs: [ownerRef], direction: "both", rollup: "owner",
+    filters: { origins: ["citation", "discovery", "assistant", "document_embed"] },
+  } satisfies Omit<Parameters<typeof queryConnections>[0], "match_text">;
+}
 
-/** One read per mounted section: `occurrencePrefix` keeps sections with different invalidation apart. */
-export function useRemoteConnections(ownerRef: string, occurrencePrefix: string, stale: string): ServerList<ConnectionOut> {
-  const active = usePaneIsActive();
-  return usePaneFreeServerList<ConnectionOut>({
-    key: `connections:remote:${occurrencePrefix}:${ownerRef}`,
-    stale,
-    pageSize: 100,
-    active,
-    id: (connection) => connection.edge_id,
-    fetchPage: async (cursor, limit, signal) => {
-      const page = await queryConnections({ refs: [ownerRef], direction: "both", rollup: "owner",
-        filters: { origins: REMOTE_ORIGINS }, limit: Math.min(limit, 100), cursor }, signal);
-      return { items: page.items, next_cursor: page.next_cursor };
-    },
-  });
+export function useRemoteConnections(ownerRef: string, stale: string) {
+  const load = useCallback((signal: AbortSignal) => queryConnections({...remoteConnectionScope(ownerRef), match_text: null}, signal), [ownerRef]);
+  return usePaneFreeServerValue({key: `connections:remote:${ownerRef}`, stale, load});
 }
 
 export default function RemoteConnections({ ownerRef, occurrencePrefix, list, onChanged }: {
   ownerRef: string;
   occurrencePrefix: string;
-  list: ServerList<ConnectionOut>;
+  list: ReturnType<typeof useRemoteConnections>;
   onChanged: () => void;
 }) {
   const branch = useContext(ResourceBranch);
   const removals = useFactRemovals(occurrencePrefix);
-  // The fact this branch entered through comes back from a both-directions read; it is not another connection.
-  const items = list.items.filter((connection) => !branch.traversedEdgeIds.has(connection.edge_id));
-  const failure = list.failure;
-  const retry = { run: list.retry, busy: list.running !== null };
+  const order = list.status === "ready" ? list.data.edge_ids : null;
+  const ids = useMemo(() => order?.filter(id => !branch.traversedEdgeIds.has(id)) ?? [], [order, branch]);
+  const element = useRef<HTMLUListElement | null>(null);
+  const [margin, setMargin] = useState(0);
+  const [pinned, setPinned] = useState<string | null>(null);
+  const getPort = useCallback(() => {
+    const node = element.current;
+    for (let ancestor = node?.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      if (/^(auto|scroll)$/u.test(getComputedStyle(ancestor).overflowY)) return ancestor;
+    }
+    return null;
+  }, []);
+  useLayoutEffect(() => {
+    const root = element.current, port = getPort();
+    if (!root || !port) return;
+    const read = () => setMargin(root.getBoundingClientRect().top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop);
+    read();
+    const resize = new ResizeObserver(read);
+    resize.observe(port);
+    resize.observe(root);
+    return () => resize.disconnect();
+  }, [getPort, ids.length]);
+  const index = useVirtualizer({
+    count: ids.length, getScrollElement: getPort, getItemKey: rank => ids[rank]!,
+    estimateSize: () => 80, scrollMargin: margin, overscan: 4,
+    rangeExtractor(range) {
+      const pin = pinned === null ? -1 : ids.indexOf(pinned);
+      const visible = defaultRangeExtractor(range);
+      return pin < 0 || visible.includes(pin) ? visible : [...visible, pin].sort((a, b) => a - b);
+    },
+    scrollToFn: () => {},
+  });
+  index.shouldAdjustScrollPositionOnItemSizeChange = () => false;
+  const slots = index.getVirtualItems();
+  const wanted = slots.slice(0, 100).map(slot => ids[slot.index]!);
+  const key = JSON.stringify([ownerRef, wanted]);
+  const load = (signal: AbortSignal) => resolveConnections({...remoteConnectionScope(ownerRef), edge_ids: wanted}, signal);
+  const details = usePaneFreeServerValue({key: wanted.length ? key : null,
+    stale: list.status === "ready" ? String(list.generation) : "", load});
+  const items = useMemo(() => new Map(details.status === "ready" ? details.data.items.map(row => [row.edge_id, row]) : []), [details]);
+  const refetched = useRef<string | null>(null);
+  if (refetched.current !== null && refetched.current !== key) refetched.current = null;
+  useLayoutEffect(() => {
+    if (details.status !== "ready" || !details.fresh || items.size === wanted.length || refetched.current === key) return;
+    refetched.current = key;
+    void list.refetch().catch(() => undefined);
+  }, [details, items.size, wanted.length, key, list]);
   return <FactRemovalsContext value={removals}>
-    {failure !== null && list.status === "failed" ? <Failed error={failure.error} noun="other connections" retry={retry} /> : null}
-    {items.length ? <section aria-label="other connections">
+    {list.status === "failed" ? <Failed error={list.error} noun="other connections" retry={{run: list.refetch, busy: list.retrying}}/> : null}
+    {ids.length > 0 ? <section aria-label="other connections">
       <h3 className={styles.subtitle}>other connections</h3>
-      <ResourceOutlineList scope={`remote:${occurrencePrefix}`} ariaLabel="other connections" ancestorRef={ownerRef}>
-        {items.map((connection) => <ResourceOutlineRow key={connection.edge_id} item={connection.other}
-          occurrenceKey={`${occurrencePrefix}/${connection.edge_id}`} connection={connection}
-          incoming={{ kind: "edge", edge_id: connection.edge_id, origin: connection.origin, mutation: connection.mutation, creation: connection.creation }}
-          historical={connection.origin === "citation" && connection.ordinal !== null} onChanged={onChanged} />)}
-      </ResourceOutlineList>
+      {details.status === "failed" ? <Failed error={details.error} noun="visible connections"
+        retry={{run: details.refetch, busy: details.retrying}}/> : null}
+      <PaneRefreshAnchor identity={occurrencePrefix} value={order} ready>
+        <ResourceOutlineList scope={`remote:${occurrencePrefix}`} ariaLabel="other connections" ancestorRef={ownerRef}
+          listProps={{ref: element, style: {height: index.getTotalSize()}, onBlur: event => {
+            if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setPinned(null);
+          }}}>
+          {slots.map(slot => {
+            const id = ids[slot.index]!, connection = items.get(id);
+            const style = {position: "absolute", insetInline: 0, top: slot.start - margin} as const;
+            return connection === undefined ? <li key={id} aria-hidden="true" role="presentation" style={style}/>
+              : <ResourceOutlineRow key={id} item={connection.other} rowRef={index.measureElement}
+                occurrenceKey={`${occurrencePrefix}/${id}`} connection={connection}
+                rootProps={{style, "data-index": slot.index, "aria-posinset": slot.index + 1, "aria-setsize": ids.length,
+                  "data-collection-row-id": id, onFocus: () => setPinned(id)}}
+                incoming={{kind: "edge", edge_id: id, origin: connection.origin, mutation: connection.mutation, creation: connection.creation}}
+                historical={connection.origin === "citation" && connection.ordinal !== null} onChanged={onChanged}/>;
+          })}
+        </ResourceOutlineList>
+      </PaneRefreshAnchor>
     </section> : null}
     {removals.holds}
-    {failure?.op === "More" ? <Failed error={failure.error} noun="the remaining connections" retry={retry} /> : null}
   </FactRemovalsContext>;
 }

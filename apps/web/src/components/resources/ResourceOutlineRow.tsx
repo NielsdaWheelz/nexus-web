@@ -34,7 +34,7 @@ import {usePaneRuntime} from "@/lib/panes/paneRuntime";
 import { paneForkLink } from "@/lib/panes/paneForkLink";
 import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import {activateTargetLink} from "@/lib/panes/targetLinkActivation";
-import {type ConnectionMutation, type ConnectionOut} from "@/lib/resourceGraph/links";
+import {type ConnectionMutation, type ResolvedConnection} from "@/lib/resourceGraph/links";
 import {FactRemovalsContext, type FactRemovalCommand} from "@/lib/resourceGraph/useFactRemovals";
 import {hasAuthoredContent, parseResourceRef} from "@/lib/resourceGraph/resourceRef";
 import {resolveResourceItem} from "@/lib/resources/items";
@@ -64,13 +64,13 @@ type Item = Schema<"ResourceItemOut">;
  * failed commit's retry at the outline root, which outlives this row. */
 export type Incoming =
   | {kind: "link"; linkId: string; parentLabel: string; unlink(): void}
-  | {kind: "edge"; edge_id: string; origin: ConnectionOut["origin"]; mutation: ConnectionMutation | null;
-    creation: ConnectionOut["creation"]}
+  | {kind: "edge"; edge_id: string; origin: ResolvedConnection["origin"]; mutation: ConnectionMutation | null;
+    creation: ResolvedConnection["creation"]}
   | null;
 type Shared = {
   occurrenceKey: string;
   incoming: Incoming;
-  connection?: ConnectionOut;
+  connection?: ResolvedConnection;
   occurrenceLabel?: string;
   onChanged?: () => void;
   /** The host shows this passage already: the row is its quote, with no provenance. */
@@ -81,7 +81,7 @@ type Shared = {
   resourceDetails?: ReactNode;
   details?: ReactNode;
   omitResourceActions?: readonly string[];
-  rootProps?: HTMLAttributes<HTMLElement> & {"data-active"?: boolean; "data-selected"?: boolean};
+  rootProps?: HTMLAttributes<HTMLElement> & {"data-active"?: boolean; "data-selected"?: boolean; "data-index"?: number; "data-collection-row-id"?: string};
   rowRef?: Ref<HTMLLIElement>;
   authoredByViewer?: boolean;
   historical?: boolean;
@@ -403,8 +403,8 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
           {sourceContent}
           {presentation.status}
           {resourceDetails}
-          {connection?.snapshot?.rationale ? <div className={styles.details}><MachineText variant="inline" origin={{label: "librarian"}}>
-            {connection.snapshot.rationale}</MachineText></div> : null}
+          {connection?.rationale ? <div className={styles.details}><MachineText variant="inline" origin={{label: "librarian"}}>
+            {connection.rationale}</MachineText></div> : null}
           {details}
 
         </div>
@@ -428,7 +428,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
 /** An expanded occurrence: its local links, then its separately failable server facts. */
 function Children({ownerRef, localOwnerRef, occurrenceKey}: {ownerRef: string; localOwnerRef:string|null; occurrenceKey: string}) {
   const branch=useContext(ResourceBranch);
-  const remote = useRemoteConnections(ownerRef, occurrenceKey, useChangeStamp("Metadata"));
+  const remote = useRemoteConnections(ownerRef, useChangeStamp("Metadata"));
   return <>
     {localOwnerRef&&localOwnerRef!==ownerRef?<ResourceBranch value={enterOutlineOccurrence({branch,ref:localOwnerRef,target:{kind:"occurrence",key:occurrenceKey},edgeIds:[]})}><LocalOutline rootRef={localOwnerRef} occurrencePrefix={`${occurrenceKey}/owner`}/></ResourceBranch>:null}
     <RemoteConnections ownerRef={ownerRef} occurrencePrefix={occurrenceKey} list={remote}
