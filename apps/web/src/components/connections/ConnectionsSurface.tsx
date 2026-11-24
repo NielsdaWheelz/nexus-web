@@ -150,7 +150,7 @@ function MentionedIn({selfRef, description, revision, liveRevision, returnOrder,
   return <section aria-label="mentioned in">
     <h3 className={styles.subtitle}>mentioned in</h3>
     <ResourceOutlineList scope={scope} ariaLabel="mentioned in" ancestorRef={selfRef}
-      listProps={{ref: list, style: index.windowed ? {position: "relative", height: index.height} : undefined}}>
+      listProps={{ref: list, style: index.windowed ? {position: "relative", height: index.height, overflowAnchor: "none"} : undefined}}>
       {index.slots.map(({id, rank, top, size}) => {
         const style = top === undefined ? undefined : {position: "absolute", insetInline: 0, top, blockSize: size, overflow: size === undefined ? undefined : "clip"} as const;
         return members.has(id)

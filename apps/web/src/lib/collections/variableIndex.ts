@@ -12,7 +12,7 @@ type CompanionLanding = {
   rank: number;
   line: number;
   order: ReturnOrder;
-  release(): void;
+  release: (() => void) | null;
   proof?: {revision: string; id?: string; unpin?: () => void};
 };
 
@@ -60,7 +60,7 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
     if (current === null) return;
     landing.current = null;
     current.proof?.unpin?.();
-    current.release();
+    current.release?.();
   }, []);
   useLayoutEffect(() => () => {
     forgetLanding();
@@ -98,6 +98,10 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
   }, [getPort, count, list, windowed]);
 
   const getItemKey = useCallback((rank: number) => keyIds?.[rank] ?? rank, [keyIds]);
+  const mayAdjustCompanion = () => {
+    const pending = landing.current;
+    return !held && (pending === null || pending.input !== position?.current.input);
+  };
   const index = useVirtualizer<HTMLElement, HTMLLIElement>({
     count, enabled: windowed, getScrollElement: getPort,
     anchorTo: origin?.companion && position === null ? "end" : "start",
@@ -120,15 +124,14 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
     },
     scrollToFn(offset, {adjustments = 0, behavior}, instance) {
       const port = instance.scrollElement;
-      const pending = landing.current;
-      if (!held && (pending === null || pending.input !== position?.current.input) && port?.hasAttribute("data-companion-scrollport"))
+      if (mayAdjustCompanion() && port?.hasAttribute("data-companion-scrollport"))
         writeScrollPosition(port, offset + adjustments, behavior);
     },
   });
   // The pane memento reconciles its own port. A companion measures and corrects its own landing.
   index.shouldAdjustScrollPositionOnItemSizeChange = (slot, _delta, instance) => {
     const port = instance.scrollElement;
-    return !held && port?.hasAttribute("data-companion-scrollport") === true && slot.end <= port.scrollTop + 0.5;
+    return mayAdjustCompanion() && port?.hasAttribute("data-companion-scrollport") === true && slot.end <= port.scrollTop + 0.5;
   };
   const virtual = windowed ? index.getVirtualItems() : [];
   const slots = windowed ? virtual.flatMap(slot => {
@@ -160,7 +163,9 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
       const companionPort = getPort();
       const input = position.current.input;
       const live = companionRevision.live;
-      if (landing.current !== null && (held || landing.current.port !== companionPort || landing.current.input !== input))
+      const previous = landing.current;
+      if (previous !== null && (held || previous.port !== companionPort || previous.input !== input ||
+        previous.release === null && previous.proof?.revision !== live))
         forgetLanding();
       if (!held && landing.current === null && live !== null && live !== before?.observation &&
         before?.returnOrder && before.scrollport === companionPort &&
@@ -192,10 +197,13 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
         }
         const id = saved.proof.id;
         const row = id === undefined || companionRevision.shown !== live ? null : element(id);
-        if (row && row.getBoundingClientRect().height > 0) {
-          const top = saved.port.scrollTop + row.getBoundingClientRect().top - saved.port.getBoundingClientRect().top - saved.line;
-          forgetLanding();
-          writeScrollPosition(saved.port, top);
+        const box = row?.getBoundingClientRect();
+        if (box && box.height > 0) {
+          // The admitted row owns the eye line while rich measurements catch up.
+          const delta = box.top - saved.port.getBoundingClientRect().top - saved.line;
+          if (Math.abs(delta) > 0.5) writeScrollPosition(saved.port, saved.port.scrollTop + delta);
+          saved.release?.();
+          saved.release = null;
         }
       }
     }
