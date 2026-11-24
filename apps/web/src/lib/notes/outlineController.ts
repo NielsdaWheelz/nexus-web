@@ -2565,7 +2565,10 @@ export class OutlineController {
       // the host stays an insertion's: its context is frozen when the query begins, before a newborn has its link.
       // an empty item takes the reference in its own place and settles as a replacement does: true closes the query,
       // false leaves it standing after a refusal. every true has placed the reference or said why it could not.
-      return {source_ref: parent_ref, label: parent_ref, replacement: null, onSelected: insert, consume: (target, item) => {
+      const source_materialized = !(parent_ref === this.rootRef &&
+        this.windows.get(this.pending.root_id)?.rootResource?.visible !== true &&
+        this.prelude.some(intent => intent.kind === "create_page" && intent.ref === parent_ref));
+      return {source_ref: parent_ref, source_materialized, label: parent_ref, replacement: null, onSelected: insert, consume: (target, item) => {
         const observed = this.consumable(row) ? this.pending.observedLink(row_id) ?? row.link : null;
         if (observed === null) return null;
         const lease = this.lease(), birth = this.pending.birthAttempt(row_id);

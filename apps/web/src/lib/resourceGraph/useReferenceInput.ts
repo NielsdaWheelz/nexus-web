@@ -22,6 +22,8 @@ import { useEditorDraft } from "@/lib/notes/editorHost";
 
 export type ReferenceInputHost = {
   source_ref: string | null;
+  /** A latent authored destination has placement and self-exclusion but no hosted link lookup. */
+  source_materialized?: boolean;
   label: string;
   onActiveChange?(active: boolean): void;
 } & (
@@ -68,7 +70,7 @@ export function useReferenceInput(
   const sourceRef = state?.host.source_ref ?? null;
   const search = useLinkTargets(
     state?.raw ?? "",
-    sourceRef,
+    state?.host.source_materialized === false ? null : sourceRef,
     state !== null && state.row_id === row_id,
     pickerOpen,
     sourceRef,

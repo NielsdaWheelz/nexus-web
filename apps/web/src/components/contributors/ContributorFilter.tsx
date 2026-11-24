@@ -90,8 +90,8 @@ export default function ContributorFilter({
   const run = () => { if (canContinue) search.fetchAhead(); };
   const slots = useDiscoveryOptions({ key: q, viewport, open: active && live, rows: suggestions,
     id: item => item.handle, forward: run });
-  useInitialDiscoveryDemand({ key: search.requestedKey, current: search.current, active: canContinue && search.active,
-    viewport: () => viewport.current === null ? null : discoveryViewport(viewport.current), run });
+  useInitialDiscoveryDemand({ key: search.requestedKey, current: search.current, active: canContinue && search.active && suggestions.length === 0,
+    viewport: () => viewport.current, run });
   return (
     <div className={styles.filter}>
       <label className={styles.label}>
