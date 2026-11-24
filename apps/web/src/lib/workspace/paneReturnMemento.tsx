@@ -490,7 +490,8 @@ export function createPaneReturnMemento(guard: WorkGuard) {
           ? eyeLine : survivingAnchor(port, eyeLine, snapshot.anchors);
         if (anchor !== null) {
           const entry = geometryFor(port, anchor);
-          if (entry?.frame?.observation !== undefined && entry.frame.position(anchor.id).kind === "pending") {
+          const anchorPosition = entry?.frame?.position(anchor.id);
+          if (entry?.frame?.observation !== undefined && anchorPosition?.kind === "pending" && anchorPosition.estimate === null) {
             const key = anchorKey(anchor);
             if (!snapshot.mounted.has(key)) snapshot.mounted.set(key, entry.geometry.demand(anchor.id));
             return;

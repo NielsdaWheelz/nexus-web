@@ -3,6 +3,7 @@
 /** Date geometry and admission only. Outline sessions own their writing and rows. */
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { flushSync } from "react-dom";
+import type {DailyIndexResult} from "@nexus/authored/types";
 import { defaultRangeExtractor, observeElementOffset, useVirtualizer } from "@tanstack/react-virtual";
 import { usePaneBeforeLayout, type AnchorGeometry, type AnchorGeometryFrame } from "@/lib/workspace/paneReturnMemento";
 
@@ -11,7 +12,52 @@ export interface JournalOrder {
   observation: string | null;
   dates: readonly string[];
   dateAt(rank: number): string | undefined;
-  rankOf(date: string): number | null | undefined;
+  rankOf(date: string): number | null;
+}
+
+/** A large description carries the whole civil order as occupied days per month.
+ * Bit zero is the first day. Both month records and days order newest first. */
+export function journalOrder(description: Extract<DailyIndexResult, {kind: "description"}> | null): JournalOrder {
+  const count = description?.total ?? 0;
+  const dates = description?.items.map(day => day.local_date) ?? [];
+  if (description === null || dates.length === count) {
+    const ranks = new Map(dates.map((date, rank) => [date, rank]));
+    return {count, observation: null, dates, dateAt: rank => dates[rank], rankOf: date => ranks.get(date) ?? null};
+  }
+  const bitCount = (mask: number) => {
+    let count = 0;
+    for (; mask !== 0; mask &= mask - 1) count++;
+    return count;
+  };
+  let start = 0;
+  const months = description.months.map(([month, mask]) => {
+    const entry = {month, mask, start};
+    start += bitCount(mask);
+    return entry;
+  });
+  if (start !== count) throw new Error("journal date description has inconsistent extent");
+  const byMonth = new Map(months.map(entry => [entry.month, entry]));
+  return {count, observation: JSON.stringify(description.months), dates,
+    dateAt(rank) {
+      if (rank < 0 || rank >= count) return undefined;
+      let low = 0, high = months.length;
+      while (low + 1 < high) {
+        const middle = (low + high) >>> 1;
+        if (months[middle].start <= rank) low = middle; else high = middle;
+      }
+      const {month, start, mask} = months[low];
+      let rest = mask;
+      for (let skip = start; skip < rank; skip++) rest ^= 1 << (31 - Math.clz32(rest));
+      return `${month}-${String(32 - Math.clz32(rest)).padStart(2, "0")}`;
+    },
+    rankOf(date) {
+      const entry = byMonth.get(date.slice(0, 7));
+      const day = Number(date.slice(8));
+      if (entry === undefined || !Number.isInteger(day) || day < 1 || day > 31) return null;
+      const bit = 1 << (day - 1);
+      return (entry.mask & bit) === 0 ? null : entry.start + bitCount(entry.mask & ~(bit | (bit - 1)));
+    },
+  };
 }
 
 export function useJournalWindow(order: JournalOrder, root: RefObject<HTMLDivElement | null>, indexState: "pending" | "ready" | "failed",
@@ -36,15 +82,11 @@ export function useJournalWindow(order: JournalOrder, root: RefObject<HTMLDivEle
   const syncOffset = useRef<(() => void) | null>(null);
   const frame = useRef<AnchorGeometryFrame | null>(null);
   const committed = useRef({ rankOf: order.rankOf, origin: 0, revision: 0 });
-  const measuredPlaces = useRef({ observation: order.observation, slots: new Map<string, number>() });
-  const placements = new Map<string, number>();
+  const measuredObservation = useRef(order.observation);
   const sizes = new Map<number, number>();
   for (const [date, height] of heights.current) {
-    const current = order.rankOf(date);
-    const rank = current === undefined && measuredPlaces.current.observation === order.observation
-      ? measuredPlaces.current.slots.get(date) : current;
-    if (rank === undefined || rank === null || rank >= order.count) continue;
-    placements.set(date, rank);
+    const rank = order.rankOf(date);
+    if (rank === null) continue;
     sizes.set(rank, height);
   }
   const scrollport = useCallback(() => root.current?.closest<HTMLElement>("[data-pane-content]") ?? null, [root]);
@@ -58,7 +100,7 @@ export function useJournalWindow(order: JournalOrder, root: RefObject<HTMLDivEle
     scrollMargin: committed.current.origin,
     rangeExtractor: range => [...new Set([...defaultRangeExtractor(range), ...wanted.flatMap(date => {
       const rank = order.rankOf(date);
-      return rank === undefined || rank === null ? [] : [rank];
+      return rank === null ? [] : [rank];
     })])].sort((a, b) => a - b),
     observeElementOffset: (instance, receive) => {
       const release = observeElementOffset(instance, receive);
@@ -72,6 +114,10 @@ export function useJournalWindow(order: JournalOrder, root: RefObject<HTMLDivEle
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
   virtualizer.getTotalSize();
   const slots = virtualizer.getVirtualItems();
+  const dates = slots.flatMap(slot => {
+    const date = order.dateAt(slot.index);
+    return date === undefined ? [] : [date];
+  });
   useLayoutEffect(() => {
     request?.(slots.flatMap(slot => [slot.index - 1, slot.index, slot.index + 1].filter(rank => rank >= 0)), wanted);
   });
@@ -95,11 +141,8 @@ export function useJournalWindow(order: JournalOrder, root: RefObject<HTMLDivEle
       if ((tops[middle + 1] ?? height) - trailing <= top) low = middle + 1;
       else high = middle;
     }
-    for (let rank = low; rank < order.count && tops[rank] < bottom; rank++) {
-      const date = order.dateAt(rank);
-      if (date !== undefined) return {id: date, offset: tops[rank]};
-    }
-    return null;
+    const date = order.dateAt(low);
+    return date !== undefined && tops[low] < bottom ? {id: date, offset: tops[low]} : null;
   };
 
   const measure = useCallback((date: string, element: HTMLElement | null) => {
@@ -148,18 +191,18 @@ export function useJournalWindow(order: JournalOrder, root: RefObject<HTMLDivEle
     const origin = root.current.getBoundingClientRect().top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop;
     const mounted = new Set([...elements.current].filter(([, element]) => !element.hidden).map(([date]) => date));
     const proof = new Map(admissions.current);
-    if (measuredPlaces.current.observation !== order.observation) {
+    if (measuredObservation.current !== order.observation) {
       virtualizer.measure();
       for (const [rank, size] of sizes) virtualizer.resizeItem(rank, size);
     }
-    measuredPlaces.current = {observation: order.observation, slots: placements};
-    frame.current = { revision: epoch, observation: order.observation ?? undefined, root: root.current, scrollport: port, origin, anchors: order.dates,
+    measuredObservation.current = order.observation;
+    frame.current = { revision: epoch, observation: order.observation ?? undefined, root: root.current, scrollport: port, origin,
+      anchors: order.observation === null ? order.dates : dates,
       firstVisible,
       position(date) {
         if (indexState === "failed") return { kind: "failed" };
         if (indexState === "pending") return { kind: "pending", estimate: null };
         const index = order.rankOf(date);
-        if (index === undefined) return {kind: "pending", estimate: null};
         if (index === null) return {kind: "missing"};
         if (proof.get(date) === "failed") return { kind: "failed" };
         return mounted.has(date) && proof.get(date) === "ready" ? { kind: "ready", offset: tops[index] } : { kind: "pending", estimate: tops[index] };
@@ -192,7 +235,7 @@ export function useJournalWindow(order: JournalOrder, root: RefObject<HTMLDivEle
         for (const [date, element] of elements.current) {
           if (element.hidden) continue;
           const index = committed.current.rankOf(date), height = element.getBoundingClientRect().height;
-          if (index !== undefined && index !== null && height > 0) {
+          if (index !== null && height > 0) {
             heights.current.set(date, height);
             measured.push({ index, height });
           }
@@ -223,7 +266,7 @@ export function useJournalWindow(order: JournalOrder, root: RefObject<HTMLDivEle
         const date = element.dataset.journalDate;
         if (!date || element.hidden) continue;
         const index = rankOf(date), height = element.getBoundingClientRect().height;
-        if (index !== undefined && index !== null && height > 0 && heights.current.get(date) !== height) updates.push({ index, date, height });
+        if (index !== null && height > 0 && heights.current.get(date) !== height) updates.push({ index, date, height });
       }
       if (updates.length === 0) return;
       const finish = beforeLayout();
@@ -251,8 +294,5 @@ export function useJournalWindow(order: JournalOrder, root: RefObject<HTMLDivEle
     };
   }, [beforeLayout, root, virtualizer, port]);
   const visible = port === null ? null : firstVisible(port.scrollTop - origin, port.scrollTop - origin + port.clientHeight)?.id ?? null;
-  return {geometry, measure, admit, dates: slots.flatMap(slot => {
-    const date = order.dateAt(slot.index);
-    return date === undefined ? [] : [date];
-  }), tops, height, visible};
+  return {geometry, measure, admit, dates, tops, height, visible};
 }

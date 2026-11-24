@@ -114,7 +114,10 @@ export type DailyIndexRequest = DailyIndexSource & (
   | {at: {kind: "describe"}; expected_revision: null}
   | {at: {kind: "range"; start: number; limit: number} | {kind: "locate"; dates: LocalDate[]}; expected_revision: Counter}
 );
-export type DailyIndexResult = RankedIndexResult<DailyIndexEntry, {attachments: (DailyIndexEntry & {rank: number})[]}>;
+export type DailyIndexResult = RankedIndexResult<DailyIndexEntry, {
+  months: [month: string, days: number][];
+  attachments: (DailyIndexEntry & {rank: number})[];
+}>;
 export type HabitIndexRequest = {kind: "habits"} & RankedIndexRequest;
 export type MentionIndexRequest = {kind: "mentions"; ref: ResourceRef} & RankedIndexRequest;
 export type WorkRegisterSource = {local_date: LocalDate} & ({kind: "work_pending"} | {kind: "work_completed"});

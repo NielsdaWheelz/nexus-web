@@ -506,6 +506,9 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
               LIMIT (SELECT CASE WHEN total<=200 THEN total ELSE 24 END FROM extent))
             SELECT json_object('kind','description','total',total,'groups',json('[]'),
               'items',json((SELECT json_group_array(${item}) FROM sample d)),
+              'months',json((SELECT json_group_array(json_array(month,days)) FROM (
+                SELECT substr(local_date,1,7) AS month,sum(1 << (CAST(substr(local_date,9,2) AS INTEGER)-1)) AS days
+                FROM dates WHERE total>200 GROUP BY month ORDER BY month DESC))),
               'attachments',json((SELECT json_group_array(${location}) FROM added d WHERE total>200))) AS register FROM extent`,
             params};
         case "range": {
