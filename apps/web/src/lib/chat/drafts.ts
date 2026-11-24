@@ -8,7 +8,7 @@ import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
 import { bindChatWorkGuard, revokeChatPreparation, setChatCommandAccount, suspendChatCommands } from "./commands";
 import type { ReaderQuote } from "./readerIntent";
-import type { SelectionEditor } from "./selection";
+import { selectionKey, type SelectionEditor } from "./selection";
 import type { AcceptedReceipt, Refusal, Turn } from "./wire";
 
 export type Draft = Readonly<{ text: string; selection: SelectionEditor; quote: ReaderQuote | null }>;
@@ -48,7 +48,12 @@ function createDraft(accountId: string, viewId: string, guard: WorkGuard) {
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     setDraft: write,
     setText: (text: string) => write({ ...value.draft, text }),
-    setSelection: (selection: SelectionEditor) => { if (selection !== value.draft.selection) write({ ...value.draft, selection }); },
+    setSelection(selection: SelectionEditor) {
+      const current = value.draft.selection;
+      if (current === selection || current.kind === "Selected" && selection.kind === "Selected" &&
+        selectionKey(current.selection) === selectionKey(selection.selection)) return;
+      write({ ...value.draft, selection });
+    },
     setQuote: (quote: ReaderQuote | null) => write({ ...value.draft, quote }),
     seed: (text: string) => write({ ...value.draft, text, quote: null }),
     refuse: (refusal: Refusal | null) => { value = { ...value, refusal }; emit(); },

@@ -178,17 +178,20 @@ reordering controls.
 typed order is the best named row known at the keystroke, then `do` (two),
 `places` (three), and `resources`, to eight names in all. the first line does
 not consume its band's cap; a latch there reads `usual`. three passages sit
-below, independently capped. arrivals preserve shown positions; only a named
-arrival within the arming window can take enter. the catchword is the last
-arrow stop and is armed when no named row is armed. desktop paints
-`all results for “{text}”`; the phone paints its search sign at the legend's
-end, followed by `ask` and `note` for a plain search. its field echoes
-`go · {armed name}`, or `go · all results`; unarmed lookup and an absent arm have no
-echo. typed use-text is absent. both empty name blocks read
-`nothing by that name.` after device and names settle. both surfaces use the
-[arming contract](search.md#launcher).
-repeat and composition never activate. retirement announces
-`selection no longer available`; unavailable targets explain refusal.
+below, independently capped. arrivals preserve shown positions. an eligible named
+arrival within 200 ms can take the automatic highlight. desktop shows
+`all results for “{text}”` as the last arrow stop. with no chosen row in
+ordinary search it is the enter action, without selection paint. phone retains
+the search sign, then `ask` and `note` for a plain search. its field echoes
+`go · {name}` or `go · all results` for the action go will run.
+typed use-text is absent. both empty name blocks read
+`nothing by that name.` after device and names settle.
+[selection and activation](search.md#launcher) are shared.
+
+a withdrawn choice clears the highlight and phone echo silently. enter or go
+says `that result is no longer listed.` through the existing outcome.
+a fresh displayed choice restores activation. unavailable primaries explain
+their refusal and keep any usable options. repeat and composition never activate.
 
 the registry owns exact case-insensitive slash heads: `/n`, `/p`, `/c` or `/a`,
 `/l`, `/i`, `/b`. `/t` alone is the today place; `/t` with an argument is unknown.
@@ -253,22 +256,28 @@ on desktop, tab or right at the query's end opens the armed row's contextual
 menu. its occurrence section starts with open and new pane (only new pane for
 the current row). the menu exists only for a resource or occurrence verbs;
 commands, places and closed lines have none. only the armed row mounts `…`.
-closing restores the field's caret and selection. desktop menus omit pane close.
+opening its menu makes that row a deliberate choice. closing restores the
+field's caret and selection. desktop menus omit pane close.
 mobile holds activate `Fork` directly; its palette has no contextual menu or
 full-excerpt dialog. resource-specific verbs remain in their own panes.
 only primary row activation learns.
 
 desktop uses a combobox with a one-column grid; `aria-activedescendant` names
-the mounted armed candidate while the query has focus. plain up/down browses
-clamped block, apparatus and catchword order; up from the first reaches the
-legend. only the block scrolls. the grid owns apparatus and catchword rowgroups
-outside that scrollport. the foot states the armed action, fork and menu hints;
-held shift restates the fork and held mod restates ask, clearing on focus loss.
-space edits the query;
-home/end and modified editing retain native meaning. menus retain query and
-selection. accepted close repairs only lost focus, yields to surviving controls
-and overlays, and uses the committed displayed successor. renderers forward
-gestures; the controller owns arming, dispatch, guards and announcements.
+the mounted selected cell while the query has focus. from an unselected search
+down enters at the first drawn result and leaves the field unselected while
+there are zero matches. after withdrawal, down enters at the first survivor
+or selects full search when it is the sole stop. up from the unselected field
+or first row reaches commands. down from the last match selects full search,
+where down stops and up returns to the last match or commands. lookup can
+deliberately select literal search.
+
+only the block scrolls. the grid owns apparatus and catchword rowgroups
+outside that scrollport. the foot states the primary gesture and available fork
+and menu hints. shift restates the fork. the field description names full
+search when it is the implicit action. space edits the query, and home/end
+and modified editing retain native meaning. menus retain query and selection.
+accepted close repairs only lost focus, yields to surviving controls and
+overlays, and uses the committed displayed successor.
 
 desktop root escape closes with or without text. mobile root back/escape clears
 text, then closes; a nested overlay, child page or running drag wins
@@ -391,7 +400,7 @@ actions remain accessible through nexus and ordinary controls.
 | nexus candidates, duplicate ownership, groups, places and caps | `apps/web/src/lib/nexus/rows.ts`                                                                                   |
 | nexus retrieval, per-open usage map and selection records | `apps/web/src/lib/nexus/useNexusFind.ts`                                                                           |
 | nexus name tiers, canonical href, latch and comparator | `apps/web/src/lib/nexus/rank.ts` |
-| nexus held/arriving bands, arming and fire target | `apps/web/src/lib/nexus/list.ts` |
+| nexus held/arriving bands and selection | `apps/web/src/lib/nexus/list.ts` |
 | nexus timing and rail preference constants | `apps/web/src/lib/nexus/policy.ts` |
 | nexus verb presentation | `apps/web/src/components/nexus/NexusVerbRail.tsx` |
 | contextual action source and shared descriptor activation | `apps/web/src/lib/actions/useContextualActions.ts` and `apps/web/src/lib/ui/actionDescriptor.ts` |

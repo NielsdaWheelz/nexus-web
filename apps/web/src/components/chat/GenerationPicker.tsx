@@ -7,26 +7,24 @@ import { Section } from "react-stately/Section";
 import { useListState, type ListState } from "react-stately/useListState";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
+import { sentence } from "@/components/feedback/stage";
 import PickerSurface from "@/components/ui/PickerSurface";
 import { ControlContents } from "@/components/ui/control";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import type { ServerValue } from "@/lib/api/serverState";
 import {
-  catalogRoute,
   choiceUnavailable,
   chooseModel,
   chooseThinking,
-  editorRoute,
-  editorVariant,
-  MODEL_UNAVAILABLE,
-  modelKeyOf,
   modelVariants,
   routeKey,
   unreadyReason,
   type ModelVariant,
   type Route,
+  type ResolvedSelection,
   type SelectionEditor,
 } from "@/lib/chat/selection";
-import type { Catalog } from "@/lib/chat/wire";
+import type { Catalog, Selection } from "@/lib/chat/wire";
 import { revealCollectionItem } from "@/lib/ui/collection";
 import * as Icon from "@/lib/ui/icons";
 import { wasOverlayInvokedByTouch } from "@/lib/ui/overlay";
@@ -42,12 +40,12 @@ type ModelOption = {
 type ProviderSection = { id: string; label: string; reason: string | null; options: ModelOption[] };
 
 /** One exact model/effort choice. Navigation never commits; effort changes keep the panel open. */
-export default function GenerationPicker({ catalogRead, value, onChange, waiting, unavailable, returnFocus }: {
+export default function GenerationPicker({ catalogRead, choice, refused, recallPending, onChange, returnFocus }: {
   catalogRead: ServerValue<Catalog>;
-  value: SelectionEditor;
+  choice: ResolvedSelection;
+  refused(value: Selection): boolean;
+  recallPending: boolean;
   onChange(value: SelectionEditor): void;
-  waiting: boolean;
-  unavailable: string | null;
   returnFocus(): void;
 }) {
   const [open, setOpen] = useState(false);
@@ -56,24 +54,22 @@ export default function GenerationPicker({ catalogRead, value, onChange, waiting
   const trigger = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLUListElement>(null);
   const panel = useRef<HTMLDivElement>(null);
-  const range = useRef<HTMLInputElement>(null);
   const focusReplacement = useRef(false);
   const skipReturn = useRef(false);
   const touch = useRef(false);
   const id = useId();
+  const descriptionId = useId();
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
-  const route = editorRoute(value);
-  const routeRow = catalog && route ? catalogRoute(catalog, route) : null;
-  const variant = catalog ? editorVariant(catalog, value) : null;
+  const { value, route, model, modelKey, effort, variant, reason } = choice;
+  const currentKey = value.kind === "Selected" ? value.selection.reasoning : null;
   const sections: ProviderSection[] = catalog?.routes.map(row => ({
     id: routeKey(row.route),
     label: row.label,
     reason: row.readiness.kind === "Ready" ? null : unreadyReason(row.readiness),
-    options: modelVariants(row).map(item => ({
+    options: modelVariants(row, refused).map(item => ({
       id: JSON.stringify([routeKey(row.route), item.key]),
       label: item.mode === null ? item.model.label : `${item.model.label} · ${item.reasoning[0].mode_label}`,
-      unavailable_reason: row.readiness.kind !== "Ready" ? unreadyReason(row.readiness)
-        : item.reasoning.some(choice => choice.chat_state.kind === "Selectable") ? null : choiceUnavailable(item.reasoning[0]),
+      unavailable_reason: item.unavailable,
       route: row.route,
       variant: item,
     })),
@@ -81,13 +77,10 @@ export default function GenerationPicker({ catalogRead, value, onChange, waiting
   const selectedId = value.kind === "Uninitialized" ? null
     : JSON.stringify([route ? routeKey(route) : null, variant?.key ?? JSON.stringify(value)]);
   if (catalog && selectedId !== null && !sections.some(section => section.options.some(option => option.id === selectedId))) {
-    const modelKey = value.kind === "Selected" ? modelKeyOf(value.selection)
-      : value.kind === "DefaultUnavailable" ? value.model_key : null;
-    const knownModel = routeRow?.models.find(model => model.key === modelKey);
     const missing: ModelOption = {
       id: selectedId,
-      label: knownModel ? `${knownModel.label} · mode unavailable` : modelKey ?? "model unavailable",
-      unavailable_reason: routeRow && routeRow.readiness.kind !== "Ready" ? unreadyReason(routeRow.readiness) : MODEL_UNAVAILABLE,
+      label: model?.label ?? modelKey ?? "model unavailable",
+      unavailable_reason: currentKey && reason ? `${currentKey} · ${reason}` : reason,
       route: null,
       variant: null,
     };
@@ -96,22 +89,22 @@ export default function GenerationPicker({ catalogRead, value, onChange, waiting
     else sections.unshift({
       id: route ? routeKey(route) : "unknown provider",
       label: route?.kind === "ProviderApi" ? route.provider : route?.kind === "CodexPersonal" ? "Codex" : "unknown provider",
-      reason: route ? "this provider isn’t available now." : MODEL_UNAVAILABLE,
+      reason,
       options: [missing],
     });
   }
   const options = sections.flatMap(section => section.options);
   const current = options.find(option => option.id === selectedId);
-  const choices = variant?.reasoning.filter(choice => choice.chat_state.kind === "Selectable") ?? [];
-  const currentKey = value.kind === "Selected" ? value.selection.reasoning : null;
-  const effort = value.kind === "Selected" && modelKeyOf(value.selection) === variant?.model.key
-    ? variant.reasoning.find(choice => choice.key === currentKey) ?? null : null;
+  const choices = variant?.selectable ?? [];
   const fixed = effort !== null && variant?.reasoning.length === 1;
   const index = choices.findIndex(choice => choice.key === currentKey);
   const ladder = JSON.stringify(choices.map(choice => choice.key));
-  const busy = waiting || catalogRead.status === "loading" || (catalogRead.status === "failed" && catalogRead.retrying);
-  const cold = waiting || catalog === null;
-  const effortLabel = effort?.effort_label ?? "effort unavailable";
+  const waiting = value.kind === "Uninitialized";
+  const busy = (waiting && recallPending) || catalogRead.status === "loading" || (catalogRead.status === "failed" && catalogRead.retrying);
+  const modelLabel = current?.label ?? modelKey ?? "model unavailable";
+  const effortLabel = effort?.effort_label ?? currentKey ?? "effort unavailable";
+  const description = reason ?? (catalogRead.status === "loading" ? "models are loading."
+    : catalogRead.status === "failed" ? sentence(TRANSPORT_LINES[transportOf(catalogRead.error)].read("models")) : null);
   const native = catalog?.routes.find(row => row.route.kind === "CodexPersonal");
   const state = useListState<ModelOption>({
     children: sections.map(section => <Section key={section.id} title={section.label}>
@@ -126,10 +119,9 @@ export default function GenerationPicker({ catalogRead, value, onChange, waiting
     onSelectionChange: keys => {
       if (keys === "all") return;
       const key = keys.values().next().value;
-      if (key === selectedId) { setOpen(false); return; }
       const option = options.find(option => option.id === key);
-      if (!catalog || !option || option.variant === null) return;
-      const next = chooseModel(catalog, option.route, option.variant.model.key, option.variant.mode, value);
+      if (!option || option.unavailable_reason !== null || option.variant === null) return;
+      const next = chooseModel(option.route, option.variant);
       onChange(next);
       if (next.kind !== "Selected") return;
       skipReturn.current = !touch.current;
@@ -144,9 +136,8 @@ export default function GenerationPicker({ catalogRead, value, onChange, waiting
     shouldSelectOnPressUp: true,
     shouldFocusOnHover: true,
   }, state, list);
-  const setRange = useCallback((node: HTMLInputElement | null) => {
-    if (node === null && range.current === document.activeElement) focusReplacement.current = true;
-    range.current = node;
+  const watchEffortFocus = useCallback((node: HTMLElement | null) => {
+    if (node) return () => { if (node === document.activeElement) focusReplacement.current = true; };
   }, []);
   useLayoutEffect(() => {
     const key = state.selectionManager.focusedKey;
@@ -160,14 +151,8 @@ export default function GenerationPicker({ catalogRead, value, onChange, waiting
     focusReplacement.current = false;
     const content = panel.current;
     if (!open || !content || (document.activeElement !== document.body && !content.contains(document.activeElement))) return;
-    (range.current ?? content.querySelector<HTMLElement>("[data-effort-choice]") ?? list.current)?.focus({ preventScroll: true });
+    (content.querySelector<HTMLElement>("[data-effort-choice]") ?? list.current)?.focus({ preventScroll: true });
   });
-  // Complete only the committed unresolved intent. An exact choice is never normalized.
-  useLayoutEffect(() => {
-    if (!catalog || value.kind !== "DefaultUnavailable") return;
-    const next = chooseModel(catalog, value.route, value.model_key, value.mode, value);
-    if (next.kind === "Selected") onChange(next);
-  }, [catalog, value, onChange]);
   const show = () => {
     if (open) return;
     touch.current = wasOverlayInvokedByTouch();
@@ -179,8 +164,8 @@ export default function GenerationPicker({ catalogRead, value, onChange, waiting
   return <>
     <button ref={trigger} type="button" className={styles.trigger}
       style={pressSize ? { minInlineSize: pressSize.width, minBlockSize: pressSize.height } : undefined}
-      aria-label={cold ? "model" : `model and effort: ${current?.label ?? "model unavailable"}, ${effortLabel}`}
-      aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} aria-busy={busy || undefined}
+      aria-label={waiting ? "model" : `model and effort: ${modelLabel}, ${effortLabel}`}
+      aria-describedby={description ? descriptionId : undefined} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} aria-busy={busy || undefined}
       onPointerDown={event => {
         if (event.button !== 0 || !event.isPrimary) return;
         // A focus-triggered recall may shorten the label before this press clicks.
@@ -198,17 +183,18 @@ export default function GenerationPicker({ catalogRead, value, onChange, waiting
         }
       }}>
       <span className={styles.model}>
-        {!cold && unavailable !== null ? <Icon.Warning size={16} aria-hidden="true" className={styles.warning} /> : null}
-        {cold ? "model" : current?.label ?? "model unavailable"}
+        {reason !== null || catalogRead.status === "failed" ? <Icon.Warning size={16} aria-hidden="true" className={styles.warning} /> : null}
+        {waiting ? "model" : modelLabel}
       </span>
       <span className={styles.effortValue}>
-        {!cold ? <>
+        {!waiting ? <>
           {!fixed && index >= 0 && choices.length > 1 ? <Icon.Effort size={16} aria-hidden="true" position={index / (choices.length - 1)} /> : null}
           {effortLabel}
         </> : null}
         <span className={styles.chevron}><ControlContents busy={busy} icon={<Icon.Choose size={12} aria-hidden="true" />} /></span>
       </span>
     </button>
+    {description ? <span id={descriptionId} className="sr-only">{description}</span> : null}
     <PickerSurface active={open} onClose={() => setOpen(false)} anchor={() => trigger.current}
       skipReturnFocus={() => skipReturn.current} title="model and effort" panelId={id} placement="above" className={styles.surface}
       slipContent={list}
@@ -233,10 +219,10 @@ export default function GenerationPicker({ catalogRead, value, onChange, waiting
               {sections.map(section => <Models key={section.id} section={section} state={state} />)}
             </ul>
             {options.length === 0 ? <p className={styles.reason}>no chat models available.</p> : null}
-            {fixed ? null : <div className={styles.effort} role="group" aria-label="effort">
+            {fixed || !variant ? null : <div className={styles.effort} role="group" aria-label="effort">
               {effort && choiceUnavailable(effort) ? <p className={styles.reason}>{choiceUnavailable(effort)}</p> : null}
               {index >= 0 && choices.length > 1 ? <div className={styles.rail}>
-                <input key={ladder} ref={setRange} type="range" min={0} max={choices.length - 1} step={1}
+                <input key={ladder} ref={watchEffortFocus} data-effort-choice="true" type="range" min={0} max={choices.length - 1} step={1}
                   value={index} aria-label="effort" aria-valuetext={choices[index].effort_label}
                   onChange={event => {
                     const choice = choices[Number(event.currentTarget.value)];
@@ -246,12 +232,11 @@ export default function GenerationPicker({ catalogRead, value, onChange, waiting
                   {choices.map((choice, position) => <span key={choice.key} data-current={position === index || undefined}>{choice.effort_label}</span>)}
                 </div>
               </div> : choices.length > 0 ? <div className={styles.choices}>
-                {choices.map(choice => <button type="button" data-effort-choice="true" key={choice.key}
+                {choices.map(choice => <button type="button" ref={watchEffortFocus} data-effort-choice="true" key={choice.key}
                   onClick={() => {
-                    focusReplacement.current = panel.current?.contains(document.activeElement) === true;
                     if (route && variant) onChange(chooseThinking(route, variant.model.key, choice.key));
                   }}>{choice.effort_label}</button>)}
-              </div> : <p className={styles.reason}>{variant ? choiceUnavailable(variant.reasoning[0]) ?? "effort unavailable" : "model unavailable"}</p>}
+              </div> : <p className={styles.reason}>{reason ?? "effort unavailable"}</p>}
             </div>}
             {native && native.readiness.kind !== "Ready" ? <div className={styles.footer}><Fact
               line={{ fact: `${native.label}: ${unreadyReason(native.readiness)}` }}

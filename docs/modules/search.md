@@ -527,27 +527,25 @@ passages are absorbed only into owners admitted in the same arrival. a passage
 whose owner is shown, absent or cut remains in the apparatus. updates keep a
 shown row's class and position; deliberate arming does not freeze arrivals.
 
-the keystroke arms its best named row and remembers the old arm while shown.
-only a named better-tier arrival in the first 200ms can re-arm: lexical,
-semantic and passage arrivals never do. without a named arm, the controller
-arms the catchword. arrows and pointer travel of at least 8px are deliberate;
-modifiers and a resting pointer are not. `select` records its timestamp, marks
-the selection deliberate and forgets the previous row; deliberate enter fires
-at once. blank desktop opens unarmed and arrivals cannot change that.
+the keystroke selects its best known name. an eligible, better-tier named
+arrival in the first 200 ms can change an automatic choice. lexical, semantic
+and passage arrivals cannot. a deliberate choice stays fixed while arrivals
+fill the list. blank opens unselected and late recents cannot select themselves.
 
-enter fires a deliberately armed row immediately, or an automatic row armed for
-at least 120ms. before that it fires the remembered previous row if still shown;
-otherwise it waits until the later of armed-at + 120ms and painted-at + 200ms,
-then fires once. with no row to fire it is a silent no-op and keeps field focus.
-desktop enter and mobile go use that same target decision. repeat/composition
-never activate; shift retains the captured fresh-pane disposition.
+desktop enter and phone go immediately activate the displayed submission
+target. the controller derives that target from selection and the current
+query. ordinary search without a selection submits full search. an empty
+blank query has no default, and unselected slash lookup explains its guidance.
+shift-enter keeps the target and uses the existing adjacent-pane disposition.
 
-explicit pane operations retain their committed successor/focus rules. capped
-omission does not mean deletion: bounded local `search_admission` distinguishes
-revoked query/scope/evidence admission from preview omission. removal retires the
-armed action without selecting a replacement; enter and a waiting enter announce
-retirement until the next query, before considering any remembered previous row.
-there is no interaction-frozen branch, legacy ranker or compatibility mode.
+a bounded local `search_admission` read distinguishes revoked query, scope
+or evidence admission from capped preview omission. a pending read or an
+extant disabled row cannot establish withdrawal. new local matches wait for
+held-row admission at the preview revision or later. confirmed loss of a displayed
+selection takes precedence over a new arrival in the same update. the list
+stays withdrawn through later arrivals. enter or go explains the loss, and a
+new choice, query edit or opening restores submission. viewport and focus
+repair preserve withdrawal.
 
 command and lookup views are separate from retrieval. exact slash heads accept
 end-of-input or whitespace; unknown heads retain command lookup, never search.

@@ -243,7 +243,8 @@ async def _resolve(
         )
         return (code, error.state.explanation), None
     except InvalidSelection:
-        return ("invalid_configuration", "the selection is not in the current catalog"), None
+        code = "runtime_unavailable" if owner.kind == "chat_run" else "invalid_configuration"
+        return (code, "the selection is not in the current catalog"), None
     if not isinstance(row.readiness, Ready):
         code = (
             "invalid_configuration"

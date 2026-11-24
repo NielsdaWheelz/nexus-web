@@ -1,7 +1,7 @@
 "use client";
 
 // The Nexus session: open/closed, the page state machine, the list (list.ts holds its bands and
-// arming), pane recency and close marks, and the one activation core every
+// selection), pane recency and close marks, and the one activation core every
 // row, verb, keybinding, open request and workflow goes through.
 import { useRecent } from "@/lib/recent/store";
 import { recentTargetKey } from "@/lib/recent/model";
@@ -24,7 +24,7 @@ import { useImportIntake, useImportPresentation, type Admission } from "@/lib/im
 import { batchSlip, colophon, spokenCount } from "@/lib/imports/lineView";
 import { createLibrary } from "@/lib/libraries/api";
 import { useNexusOpenRequests } from "@/lib/nexus/events";
-import { arrive, EMPTY, fireTarget, keystroke, remove, select } from "@/lib/nexus/list";
+import { arrive, EMPTY, keystroke, remove, select, selectedKey } from "@/lib/nexus/list";
 import {
   PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
   type MaterializedOpenDailyPageTarget,
@@ -74,7 +74,7 @@ const CREATE_REFUSALS: Readonly<Record<string, Line>> = {
   E_RESOURCE_CONFLICT: { fact: CREATED },
 };
 const NO_USAGE: UsageMap = {};
-const RETIRED = "that result is gone.";
+const WITHDRAWN = "that result is no longer listed.";
 
 type Dispatchable = Extract<NexusTarget, { kind: "InternalHref" | "PaneOpen" }> | MaterializedOpenDailyPageTarget;
 /** What leaving the current page means; leaving a draft may first need the user's confirmation. */
@@ -169,20 +169,12 @@ export function useNexusController() {
   }, [setShown, beginVisit]);
   const [focusRevision, setFocusRevision] = useState(0);
   const [list, setList] = useState(EMPTY);
-  const latestList = useRef(list);
-  latestList.current = list;
   /** A reader selection read at open. */
   const [useText, setUseText] = useState<string | null>(null);
   const [marked, setMarked] = useState<readonly string[]>([]);
-  /** The armed row was removed; enter announces until a new query. */
-  const retired = useRef(false);
-  const pendingFire = useRef<ReturnType<typeof setTimeout> | null>(null);
   const announce = useCallback((fact: string) => { say({ fact }); }, [say]);
   const [reorderSpeech, setReorderSpeech] = useState("");
   const [paneFocus, setPaneFocus] = useState<{ key: string | null; revision: number }>({ key: null, revision: 0 });
-  /** The enter wait fires through the latest render: the row it names may have arrived after submit. */
-  const latestFire = useRef(fire);
-  latestFire.current = fire;
   const [defect, setDefect] = useState<{ readonly error: unknown } | null>(null);
   const suppressReturnFocus = useRef(false);
   const handoffPaneId = useRef<string | null>(null);
@@ -319,8 +311,10 @@ export function useNexusController() {
   }, [latestWorkspace, open, viewport.isMobile]);
 
   function requestPaneFocus(key: string | null) {
-    if (key?.startsWith("Pane:")) arm(key);
-    setPaneFocus((current) => ({ key, revision: current.revision + 1 }));
+    if (key !== null) {
+      setList(current => current.selection.kind !== "Withdrawn" && current.rows.some(row => row.key === key) ? select(current, key) : current);
+    }
+    setPaneFocus(current => ({ key: list.selection.kind === "Withdrawn" ? null : key, revision: current.revision + 1 }));
   }
   const paneListPresented = open && page.kind === "Root" && rootMode === "Blank";
   // Dragging is available only while every pane has its blank-page slot.
@@ -332,61 +326,66 @@ export function useNexusController() {
   });
   const reordering = reorder.draggingPaneId !== null;
   const latched = parsed.text && find.usage ? latchedHref(normalizeQuery(parsed.text), find.usage) : null;
-  const shape = JSON.stringify([parsed.text, reordering, viewport.isMobile, useText]);
-  const lastShape = useRef<string | null>(null);
+  const layout = !parsed.text ? JSON.stringify([viewport.isMobile, reordering, useText])
+    : parsed.intent.kind === "CommandLookup" && viewport.isMobile ? "phone lookup" : "typed";
+  const lastRoot = useRef<{ query: string; layout: string } | null>(null);
+  const opening = list === EMPTY;
   const continuationRows = useMemo(() => continuations(parsed), [parsed]);
   useLayoutEffect(() => {
-    if (!open || page.kind !== "Root") { lastShape.current = null; return; }
-    const fresh = lastShape.current !== shape;
-    lastShape.current = shape;
+    if (!open || page.kind !== "Root") return;
+    const newQuery = opening || lastRoot.current?.query !== query;
+    const rebuild = newQuery || lastRoot.current?.layout !== layout;
+    lastRoot.current = { query, layout };
     const now = performance.now();
     const usage = find.usage ?? NO_USAGE;
-    const previous = latestList.current;
-    // Keep the first snapshot's order during an open; new recents fill only its remaining places.
-    const heldRecent = !fresh && !viewport.isMobile && !parsed.text ? previous.rows.flatMap(row => row.recentEntry ? [recentTargetKey(row.recentEntry.target)] : []) : [];
-    const blank = { panes, mru, recent: [
-      ...heldRecent.flatMap(key => recentItems.filter(item => recentTargetKey(item.entry.target) === key)),
-      ...recentItems.filter(item => !heldRecent.includes(recentTargetKey(item.entry.target))),
-    ], useText, tabs: viewport.isMobile, closed: closedItems, closedCap: viewport.isMobile ? Infinity : PASSAGE_CAP };
-    const blankCandidates = blankRows(blank);
-    const sync = { query: parsed, panes, mru, recent: recentItems, usage, latched,
-      reference: find.reference, referenceFailed: find.referenceFailed, localReference: find.localReference, localReferenceMissing: find.localReferenceMissing };
-    if (fresh) clearTimeout(pendingFire.current ?? undefined);
-    let next = previous;
-    if (fresh || previous === EMPTY) {
-      if (!parsed.text) {
-        const rows = blankCandidates;
-        // Nothing is armed at open; a blank rebuild in this opening keeps the reader's own arm.
-        const kept = previous.identity === "" && previous.armed !== null && rows.some(row => row.key === previous.armed) ? previous.armed : null;
-        const armed = viewport.isMobile ? kept : null;
-        next = { identity: "", rows, first: null, held: rows.map(row => row.key), armed, armedAt: now, deliberate: true, previous: null, paintedAt: now };
-      } else {
-        const latchedKey = latched === null ? null : previous.rows.find(row => row.href !== null && canonicalHref(row.href) === latched)?.key ?? null;
-        // Explicit grammar replaces discovery; only a search retains rows across keystrokes.
-        next = parsed.intent.kind === "Search" ? keystroke(previous, parsed.text, syncRows(sync), latchedKey, now)
-          : keystroke(EMPTY, parsed.text, parsed.intent.kind === "CommandLookup" && !viewport.isMobile ? [] : syncRows(sync), null, now);
-        // Lookup arms nothing until the user does (target behaviour, `/`).
-        if (parsed.intent.kind === "CommandLookup") next = { ...next, armed: null, previous: null };
+    setList(previous => {
+      // Keep a desktop opening's recent order; new recents fill its remaining places.
+      const heldRecent = !rebuild && !viewport.isMobile && !parsed.text ? previous.rows.flatMap(row => row.recentEntry ? [recentTargetKey(row.recentEntry.target)] : []) : [];
+      const blankCandidates = !parsed.text ? blankRows({ panes, mru, recent: [
+        ...heldRecent.flatMap(key => recentItems.filter(item => recentTargetKey(item.entry.target) === key)),
+        ...recentItems.filter(item => !heldRecent.includes(recentTargetKey(item.entry.target))),
+      ], useText, tabs: viewport.isMobile, closed: closedItems, closedCap: viewport.isMobile ? Infinity : PASSAGE_CAP }) : [];
+
+      // Confirm loss against the displayed choice before an arrival can outrank it.
+      const gone = new Set(Array.from(find.missingLocal, ref => `Resource:${ref}`));
+      for (const row of previous.rows) {
+        const target = row.action.kind === "Available" ? row.action.target : null;
+        if (target?.kind === "PaneOpen" && !panes.some(pane => pane.id === target.paneId)) gone.add(row.key);
+        if (row.recentEntry && presentations.isRecentRemoved(row.recentEntry)) gone.add(row.key);
+        if (target?.kind === "RestorePane" && row.key.startsWith("Closed:") && !closedItems.some(item => item.id === target.paneId)) gone.add(row.key);
       }
-    } else if (!parsed.text) next = arrive(previous, blankCandidates, now);
-    if (parsed.text) next = arrive(next, arrivalRows({ ...sync, preview: find.preview, local: find.local, missingLocal: find.missingLocal, shown: next.rows }), now);
-    const gone = new Set<string>();
-    for (const row of next.rows) {
-      if (!parsed.text && (row.key.startsWith("Closed:") || row.recentEntry) && !blankCandidates.some(candidate => candidate.key === row.key)) gone.add(row.key);
-      if (row.action.kind === "Available" && row.action.target.kind === "PaneOpen" && !panes.some(pane => row.action.kind === "Available" && row.action.target.kind === "PaneOpen" && pane.id === row.action.target.paneId)) gone.add(row.key);
-      if (row.localMatch && find.missingLocal.has(row.localMatch.resource.ref)) gone.add(row.key);
-      if (row.recentEntry && presentations.isRecentRemoved(row.recentEntry)) gone.add(row.key);
-    }
-    if (next.armed !== null && gone.has(next.armed)) retired.current = true;
-    latestList.current = remove(next, gone);
-    setList(latestList.current);
-  }, [open, page.kind, shape, parsed, panes, mru, recentItems, useText, latched, find.usage, find.reference, find.referenceFailed, find.localReference, find.localReferenceMissing, find.preview, find.local, find.missingLocal, presentations, viewport.isMobile, closedItems]);
+      let next = remove(previous, gone);
+      const key = selectedKey(next.selection);
+      if (!parsed.text) {
+        const shown = new Set(blankCandidates.map(row => row.key));
+        const keep = !newQuery && (next.selection.kind === "Withdrawn" || key !== null && shown.has(key));
+        return { ...EMPTY, rows: blankCandidates, held: rebuild ? [...shown] : next.held.filter(key => shown.has(key)),
+          selection: keep ? next.selection : EMPTY.selection, paintedAt: rebuild ? now : next.paintedAt };
+      }
+
+      const sync = { query: parsed, panes, mru, recent: recentItems, usage, latched,
+        reference: find.reference, referenceFailed: find.referenceFailed, localReference: find.localReference, localReferenceMissing: find.localReferenceMissing };
+      if (rebuild) {
+        const held = parsed.intent.kind === "Search" ? next : EMPTY;
+        const latchedKey = latched === null ? null : held.rows.find(row => row.href !== null && canonicalHref(row.href) === latched)?.key ?? null;
+        const candidates = parsed.intent.kind === "CommandLookup" && !viewport.isMobile ? [] : syncRows(sync);
+        const before = next.selection;
+        next = keystroke(held, query, candidates.filter(row => !gone.has(row.key)), latchedKey, now);
+        if (parsed.intent.kind === "CommandLookup") {
+          const keep = !newQuery && (before.kind === "Withdrawn" || [...next.rows, ...continuationRows].some(row => row.key === key));
+          next = { ...next, selection: keep ? before : EMPTY.selection };
+        }
+      }
+      const arrivals = arrivalRows({ ...sync, preview: find.preview, local: find.localArrivals, missingLocal: find.missingLocal, shown: next.rows });
+      return arrive(next, arrivals.filter(row => !gone.has(row.key)), now);
+    });
+  }, [open, opening, page.kind, query, layout, parsed, continuationRows, panes, mru, recentItems, useText, latched, find.usage, find.reference, find.referenceFailed, find.localReference, find.localReferenceMissing, find.preview, find.localArrivals, find.missingLocal, presentations, viewport.isMobile, closedItems]);
   const groups = useMemo(() => nexusGroups({ blank: rootMode === "Blank", rows: list.rows, continuations: continuationRows }),
     [rootMode, list.rows, continuationRows]);
   const allRows = rootMode === "Blank" ? list.rows : [...list.rows, ...continuationRows];
-  // Zero principals, or nothing armed for a typed query, lands on `search all results`.
-  const fallbackKey = rootMode === "Typed" && !retired.current && parsed.intent.kind !== "CommandLookup" ? continuationRows[0]?.key ?? null : null;
-  const armed = list.armed ?? fallbackKey;
+  const key = selectedKey(list.selection);
+  const submitRow = list.selection.kind === "None" && parsed.intent.kind === "Search"
+    ? continuationRows[0] ?? null : allRows.find(row => row.key === key) ?? null;
   // Capture focus before the retiring shell disappears. The desktop query also
   // owns pane browsing; arranging panes does not imply mobile text entry.
   if (shell.current !== viewport.isMobile) {
@@ -402,19 +401,17 @@ export function useNexusController() {
   }
 
   function activate(action: NexusAction, activation: NexusTargetActivation, row?: NexusRow): WorkspaceTargetActivationResult | null {
-    // An explicit activation supersedes a waiting enter; selecting a different row does not.
-    clearTimeout(pendingFire.current ?? undefined);
-    pendingFire.current = null;
     const target = action.kind === "Available" ? action.target : null;
     if (target?.kind === "PaneOpen" && marked.includes(target.paneId)) {
       setMarked(current => current.filter(id => id !== target.paneId));
       if (rootMode === "Blank") return null;
     }
+    const local = row?.localMatch;
+    if (local && find.missingLocal.has(local.resource.ref)) { announce(WITHDRAWN); return null; }
     if (action.kind === "Unavailable") { say({ fact: /[….?!]$/.test(action.reason) ? action.reason : `${action.reason}.` }); return null; }
-    if (row?.localMatch && (find.missingLocal.has(row.localMatch.resource.ref)
-      || !find.local.some(match => match.resource.ref === row.localMatch?.resource.ref
-        && (match.matchedField === "annotation") === (row.localMatch?.matchedField === "annotation")) && !find.localValidationReady)) {
-      say({ fact: find.missingLocal.has(row.localMatch.resource.ref) ? "that result is gone." : "still checking that result." });
+    if (local && !find.localValidationReady && !find.local.some(match => match.resource.ref === local.resource.ref
+      && (match.matchedField === "annotation") === (local.matchedField === "annotation"))) {
+      say({ fact: "still checking that result." });
       return null;
     }
     const current = currentPage.current;
@@ -487,7 +484,7 @@ export function useNexusController() {
       !guard.confirmLoss({ scopes: [], ownerIds: sourceOwnerIds(target) })) return { kind: "Cancelled" };
     switch (target.kind) {
       case "RestorePane":
-        if (!latestWorkspace().recentlyClosedPanes.some(closed => closed.pane.id === target.paneId)) { announce(RETIRED); return null; }
+        if (!latestWorkspace().recentlyClosedPanes.some(closed => closed.pane.id === target.paneId)) { announce(WITHDRAWN); return null; }
         restoreClosed(target.paneId);
         return null;
       case "Resource": {
@@ -660,7 +657,6 @@ export function useNexusController() {
 
   /** An open request resets to Root or Import; an empty root query may carry selected text (law 7). */
   function openIntent(intent: NexusOpenIntent, trigger: HTMLElement | null) {
-    retired.current = false;
     reorder.cancel({ silent: true });
     if (!open) {
       opener.current = trigger ?? (document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null);
@@ -691,47 +687,18 @@ export function useNexusController() {
     setUseText(null);
     if (!reordering) setReorderSpeech("");
     setQueryState(next);
-    if (next !== query) {
-      retired.current = false;
-      rootScroll.current.Typed = 0;
-    }
+    if (next !== query) rootScroll.current.Typed = 0;
   }
 
-  /** Deliberate arming (law 3): arrows, tab, pointer travel, focus on a row's control. */
-  function arm(key: string) {
-    setList(current => current.armed === key && current.deliberate ? current : select(current, key, performance.now()));
+  function selectRow(key: string) {
+    setList(current => current.rows.some(row => row.key === key) || continuationRows.some(row => row.key === key)
+      ? select(current, key) : current);
   }
 
-  function armedRow(): NexusRow | null {
-    return allRows.find(row => row.key === armed) ?? null;
-  }
-
-  function fire(key: string | null, activation: NexusTargetActivation) {
-    const row = key === null ? null : allRows.find(candidate => candidate.key === key);
-    if (!row) { if (key !== null || retired.current) announce(RETIRED); return; }
-    activate(row.action, activation, row);
-  }
-
-  /** Enter (law 2): what the user has seen for PERCEIVED_MS, or the row it replaced, or wait for the window once. */
   function submit(activation: NexusTargetActivation) {
-    clearTimeout(pendingFire.current ?? undefined);
-    pendingFire.current = null;
-    if (viewport.isMobile && rootMode === "Blank" && armed === null) return;
-    if (retired.current) { announce(RETIRED); return; }
-    if (rootMode === "Blank") { const row = armedRow(); if (row) activate(row.action, activation, row); return; }
-    if (lookupGuidance !== null && !list.deliberate) { announce(lookupGuidance); return; }
-    const now = performance.now();
-    const target = fireTarget(list, now);
-    if (target.kind === "Fire") { fire(target.key, activation); return; }
-    if (target.kind === "None") { fire(fallbackKey, activation); return; }
-    pendingFire.current = setTimeout(() => {
-      pendingFire.current = null;
-      if (!visible.current) return;
-      if (retired.current) { announce(RETIRED); return; }
-      // The window has closed: the armed row once, whatever its age; nothing armed lands on the fallback.
-      const list = latestList.current;
-      latestFire.current(list.armed ?? fallbackKey, activation);
-    }, Math.max(0, target.until - now));
+    if (submitRow) activate(submitRow.action, activation, submitRow);
+    else if (list.selection.kind === "Withdrawn") announce(WITHDRAWN);
+    else if (lookupGuidance !== null) announce(lookupGuidance);
   }
 
   /** Esc, the scrim and android back step back only to a palette that opened the page and has sent nothing this visit. */
@@ -760,7 +727,9 @@ export function useNexusController() {
       rootFocus.current = viewport.isMobile
         ? !sent && mode === "Typed" ? "Search" : sent || control === "Search" ? "QuickAction:Nexus.Quick.Import" : control
         : sent || control === "Search" ? null : control;
-      if (!viewport.isMobile) setList(EMPTY);
+      if (!viewport.isMobile && mode === "Blank") {
+        setList(current => selectedKey(current.selection) === null ? current : { ...current, selection: EMPTY.selection });
+      }
     }
     if (page.kind === "CreateLibrary" && page.returnTo.kind === "ChooseCreate") {
       rootFocus.current = "Choice:library";
@@ -773,10 +742,7 @@ export function useNexusController() {
       setPage(destination);
       return;
     }
-    if (destination?.kind === "Root") {
-      rootFocus.current = destination.origin.control;
-      if (destination.origin.control === "Continuation:UseText") arm("Continuation:UseText");
-    }
+    if (destination?.kind === "Root") rootFocus.current = destination.origin.control;
     performExit(exit);
   }
 
@@ -874,7 +840,6 @@ export function useNexusController() {
   useEffect(() => {
     if (open) suppressReturnFocus.current = false;
   }, [open]);
-  useEffect(() => () => clearTimeout(pendingFire.current ?? undefined), []);
 
   if (defect) throw defect.error;
   // The held list keeps its ranking; the live import count decorates only its presentation.
@@ -897,9 +862,8 @@ export function useNexusController() {
     list,
     groups: counted,
     continuations: continuationRows,
-    /** Every row enter or an arrow may reach, in presentation order. */
-    rows: allRows,
-    armed,
+    selectedKey: key,
+    submitRow,
     marked,
     choices: choiceRows(page),
     lookupGuidance,
@@ -944,7 +908,7 @@ export function useNexusController() {
       return null;
     },
     submit,
-    arm,
+    selectRow,
     retry: find.retry,
     activate,
     /** Explicit destination controls capture their own gesture, through the page's guard. */
@@ -972,28 +936,23 @@ export function useNexusController() {
       transferFocus.current = null;
       const control = (key: string | null) => key === null ? null
         : [...container.querySelectorAll<HTMLElement>("[data-nexus-control]")].find((node) => node.dataset.nexusControl === key) ?? null;
-      if (transfer === "PaneList") {
-        const key = rootFocus.current;
-        rootFocus.current = null;
-        if (key !== null) arm(key);
-        if (!viewport.isMobile) return container.querySelector<HTMLElement>('[role="combobox"]');
-        return control(key) ?? container.querySelector<HTMLElement>("[data-switchboard-heading]");
-      }
-      if (transfer === "Heading") return container.querySelector<HTMLElement>("[data-switchboard-heading]");
-      if (page.kind === "Import") return container.querySelector<HTMLElement>('[role="combobox"]');
       const requested = rootFocus.current;
       rootFocus.current = null;
-      if (requested && !viewport.isMobile && page.kind === "Root") {
-        if (allRows.some(row => row.key === requested)) arm(requested);
-      } else if (requested) {
+      const heading = () => container.querySelector<HTMLElement>("[data-switchboard-heading]");
+      const field = () => container.querySelector<HTMLElement>('[role="combobox"]');
+      if (transfer === "PaneList") return viewport.isMobile ? control(key === requested ? key : null) ?? heading() : field();
+      if (transfer === "Heading") return heading();
+      if (page.kind === "Root" && (transfer === "Field" || requested === "Search")) return field();
+      if (page.kind === "Import") return field();
+      if (requested && (page.kind !== "Root" || viewport.isMobile && list.selection.kind !== "Withdrawn")) {
+        // A workflow may return to its legend button. A result receives repaired focus only while selected.
         const target = control(requested);
-        if (target) return target;
+        if (target && (page.kind !== "Root" || !allRows.some(row => row.key === requested) || requested === key)) return target;
       }
       if (page.kind === "CreateLibrary") return container.querySelector<HTMLElement>("[data-switchboard-library-name]");
-      if (page.kind !== "Root") return container.querySelector<HTMLElement>("[data-switchboard-heading]");
-      // The phone opens on its heading; explicit workflow returns can request a control above.
-      if (viewport.isMobile) return control(armed) ?? container.querySelector<HTMLElement>("[data-switchboard-heading]");
-      return container.querySelector<HTMLElement>('[role="combobox"]');
+      if (page.kind !== "Root") return heading();
+      if (viewport.isMobile) return list.selection.kind === "Deliberate" ? control(key) ?? heading() : heading();
+      return field();
     },
     setLibraryName(name: string) {
       const current = currentPage.current;

@@ -187,10 +187,10 @@ export function useNexusFind({ open, composing, query, retainedLocalTargets }: {
     saved: remotePreview.saved.filter(row => !row.item.authored_by_viewer).map(withoutAuthoredPassage),
     passages: remotePreview.passages.filter(row => !row.item.authored_by_viewer) }, [remotePreview]);
   const localShown = useMemo(() => {
-    if (!local.matches) return EMPTY_LOCAL;
+    if (local.pending || local.error !== null || !local.matches) return EMPTY_LOCAL;
     const remote = new Set([...preview?.resources ?? [], ...preview?.saved ?? [], ...preview?.passages ?? []].map(row => row.item.ref));
     return local.matches.filter(match => match.resource.authored_by_viewer || !remote.has(match.resource.ref));
-  }, [local.matches, preview]);
+  }, [local.pending, local.error, local.matches, preview]);
   const remoteBusy = identityKey !== null && best?.phase !== "hybrid" && ((best?.phase !== "lexical" && !directSettled) || (wantsLexical && !lexicalSettled) || (wantsHybrid && !hybridSettled))
     || (open && !composing && referenceRef !== null && !localRow?.authored_by_viewer && reference.status === "loading");
   const pending = remoteBusy || local.pending || retainedLocal.pending || localRead.pending || localSource.read.pending;
@@ -266,6 +266,8 @@ export function useNexusFind({ open, composing, query, retainedLocalTargets }: {
     reference: referenceRef !== null && reference.status === "ready" && !reference.data.authored_by_viewer ? reference.data : null,
     referenceFailed: localReference === null && referenceRef !== null && reference.status === "failed",
     local: localShown,
+    // Admit new matches only after the held rows are checked at the preview's revision.
+    localArrivals: retainedLocalTargets.length === 0 || localValidationReady ? localShown : EMPTY_LOCAL,
     missingLocal,
     localValidationReady,
     localReference,

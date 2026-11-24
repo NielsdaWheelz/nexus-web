@@ -293,7 +293,8 @@ presentation. inline
 markers and figures share source activation; annotation fields open their owning
 highlight. unavailable citations retain their ordinal. exact selection words never
 substitute a leading preview; invalid coordinates retain source navigation.
-drafts use the same projection after their committed authored prefix uploads.
+drafts use the same projection. references wait for their committed authored
+prefix to upload. raw reader selections resolve against canonical server text.
 preview admission writes nothing. selection refusals retain the draft, explain
 the reason and offer remove quote; transport failures also offer retry.
 
@@ -336,6 +337,13 @@ saved identities remain explicit unavailable rows; nothing substitutes a runnabl
 choice. native-route retry stays outside the listbox. navigation changes only
 the active row; selection commits the exact model and its declared default.
 without a default the panel stays open for explicit effort choice.
+
+the catalog resolves the exact saved provider, model and reasoning key. the
+picker retains the saved identity and describes the unavailable part. a
+definitive selection rejection refreshes the shared catalog read once and
+blocks the attempted tuple through that read. an unconfirmed command retains
+its uuid and frozen request for replay. a blocked reader prefill remains a
+draft until an explicit send. only an accepted send or retry changes recall.
 
 the effort region uses the selectable ordered efforts: a range for a selected
 member of a multi-effort range, buttons to repair an unresolved or unavailable

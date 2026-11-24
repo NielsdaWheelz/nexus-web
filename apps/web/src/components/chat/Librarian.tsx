@@ -11,7 +11,7 @@ import { useServerValue } from "@/lib/api/serverState";
 import { assertNever } from "@/lib/assertNever";
 import { commandKey, getLibrarianCommands, IDLE_COMMAND, pendingReason, sayRefusal, unsureFact } from "@/lib/chat/commands";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
-import { unavailability } from "@/lib/chat/selection";
+import { resolveSelection, type SelectionEditor } from "@/lib/chat/selection";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { useChatDraft, type Draft } from "@/lib/chat/drafts";
@@ -19,11 +19,11 @@ import { useLibrarianEntryReads } from "@/lib/panes/indexPaneEntry";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
 import { readerSurfaceStyle } from "@/lib/reader/typography";
-import { requirePaneRuntime, usePaneEntryDelivery, usePaneRuntime, usePaneRouter } from "@/lib/panes/paneRuntime";
+import { requirePaneRuntime, usePaneEntryDelivery, usePaneIsActive, usePaneRuntime, usePaneRouter } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey, type PaneVisitDataKey, usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import type { Visit } from "@/lib/api/serverState";
-import type { Catalog, Timeline, Turn } from "@/lib/chat/wire";
+import type { Catalog, Selection, Timeline, Turn } from "@/lib/chat/wire";
 import ChatOperationBoundary from "./ChatOperationBoundary";
 import ChatComposer from "./ChatComposer";
 import LibrarianTranscript, { type LibrarianTranscriptHandle } from "./LibrarianTranscript";
@@ -55,10 +55,24 @@ export default function Librarian() {
   const { settleAdopted } = draft;
   const memory = useChatSelection();
   const catalog = useServerValue({ ...reads.catalog, visit: CATALOG_VISIT });
+  const active = usePaneIsActive();
+  const wasActive = useRef(active);
+  useLayoutEffect(() => {
+    const revisit = active && !wasActive.current;
+    wasActive.current = active;
+    if (revisit) catalog.revalidate();
+  }, [active, catalog]);
   const currentCatalog = catalog.status === "ready" ? catalog.data : null;
   const selection = draft.draft.selection.kind === "Uninitialized" ? memory.fresh(currentCatalog) ?? draft.draft.selection : draft.draft.selection;
-  const modelReason = currentCatalog && selection.kind !== "Uninitialized" ? unavailability(currentCatalog, selection) : null;
-  const retryBlocked = pendingReason(command) ?? (currentCatalog === null ? "models haven’t loaded." : selection.kind === "Uninitialized" ? "choose a model." : modelReason);
+  const refused = (value: Selection) => catalog.status === "ready" && commandOwner.selectionRejected(value, catalog.acceptedStale);
+  const resolve = (value: SelectionEditor) => resolveSelection(currentCatalog, value, refused);
+  const choice = resolve(selection);
+  const currentSelection = () => {
+    if (!currentCatalog || draft.entry.getSnapshot().draft !== draft.draft) return null;
+    const current = draft.draft.selection.kind === "Uninitialized" ? memory.fresh(currentCatalog) : draft.draft.selection;
+    return current?.kind === "Selected" && resolve(current).reason === null ? current.selection : null;
+  };
+  const retryBlocked = pendingReason(command) ?? (currentCatalog === null ? "models haven’t loaded." : selection.kind === "Uninitialized" ? "choose a model." : choice.reason);
   const history = useServerValue({ ...(reads.timeline ?? DORMANT_TIMELINE), visit: TIMELINE_VISIT });
   const timeline = history.status === "ready" ? history.data : null;
   const latest = reads.query.kind === "Timeline" && reads.query.messageId === null;
@@ -91,8 +105,9 @@ export default function Librarian() {
   const slips = useOutcome();
   const resend = useResendFeedback();
   const retryTurn = (runId: string) => {
-    if (retryBlocked !== null || selection.kind !== "Selected") return;
-    void commandOwner.execute({ kind: "RetryTurn", sourceRunId: runId, runId: createRandomId(), selection: selection.selection, viewId: runtime.paneId },
+    const selected = currentSelection();
+    if (retryBlocked !== null || !selected) return;
+    void commandOwner.execute({ kind: "RetryTurn", sourceRunId: runId, runId: createRandomId(), selection: selected, viewId: runtime.paneId },
       receipt => {
         const visit = workspace().state.panes.find(pane => pane.id === runtime.paneId)?.current_visit;
         draft.accept(receipt, null, visit?.id === runtime.visitId && new URL(visit.href, "https://nexus.invalid").pathname === "/librarian", runtime.visitId);
@@ -141,7 +156,7 @@ export default function Librarian() {
       <div className={styles.composerSlot} data-has-messages={search.searching || (timeline?.order.length ?? 0) > 0 || adopted.length > 0 || undefined} onWheel={event => transcript.current?.onComposerWheel(event)}>
         {commandFeedback}
         {!search.searching && history.status === "ready" && history.error ? <Fact line={{ fact: "messages stopped updating." }} verbs={[{ label: "retry", commandKey: "refresh librarian", run: history.refetch }]} /> : null}
-        <ChatComposer selection={selection} reason={modelReason} autoSend={autoSend} catalog={catalog} command={command} owner={commandOwner} focusKey={focus} recall={recall} />
+        <ChatComposer choice={choice} refused={refused} currentSelection={currentSelection} autoSend={autoSend} catalog={catalog} command={command} owner={commandOwner} focusKey={focus} recall={recall} />
       </div>
     </div>;
 }
