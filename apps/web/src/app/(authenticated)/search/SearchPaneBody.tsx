@@ -70,6 +70,24 @@ const HYBRID_VISIT = definePaneVisitDataKey<ListSnapshot<Row, Metadata>>("Search
 const UNFIXABLE = ["E_INVALID_REQUEST", "E_NOT_FOUND"];
 const VIEWS = [{ value: "resources", label: "resources" }, { value: "passages", label: "passages" }];
 const phaseRank = { lexical: 0, hybrid: 1 };
+const GROUPS = [
+  { key: "exact", label: "exact matches" },
+  { key: "primary", label: "resources" },
+  { key: "saved", label: "saved passages" },
+  { key: "inside", label: "inside sources" },
+] as const;
+
+function resourceGroup(row: Row): number | null {
+  if (!("section" in row)) return null;
+  const { section } = row;
+  switch (section) {
+    case "primary": return row.name_match === "exact" ? 0 : 1;
+    case "saved": return 2;
+    case "inside": return 3;
+    default: return assertNever(section);
+  }
+}
+
 /** What the last key showed, rows or none, so the next key can stand them dimmed until it adopts. */
 type Shown = { readonly accountId: string; readonly view: SearchQuery["view"]; readonly rows: readonly Row[] };
 
@@ -194,7 +212,18 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
     .map(row => "matching_passage" in row && row.matching_passage && row.matching_passage.item.authored_by_viewer ? { ...row, matching_passage: null } : row),
   [visit.adopted, selected.items]);
   const presented = useRef(incoming);
-  const results = motion === "still" ? incoming : presented.current;
+  const results = useMemo(() => {
+    if (motion === "still") return incoming;
+    const previous = presented.current;
+    if (motion !== "travel" || incoming.length <= previous.length
+      || !previous.every((row, index) => incoming[index].item.ref === row.item.ref)) return previous;
+    const additions = incoming.slice(previous.length);
+    if (query.view === "resources") {
+      const lastGroup = previous.reduce((group, row) => Math.max(group, resourceGroup(row) ?? 0), 0);
+      if (additions.some(row => (resourceGroup(row) ?? 0) < lastGroup)) return previous;
+    }
+    return [...previous, ...additions];
+  }, [incoming, motion, query.view]);
   useLayoutEffect(() => { presented.current = results; }, [results]);
   const remoteRefs = useMemo(() => new Set(results.map(row => row.item.ref)), [results]);
   const localApplies = localSearchApplies(query);
@@ -378,12 +407,7 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
     query: { kind: "Collation", collation },
     header: { kind: "Section", meta: count ? { kind: "Count", value: count, unit: query.view === "passages" ? "passage" : "result" } : { kind: "None" } },
   });
-  const sections = [
-    { key: "exact", label: "exact matches", rows: rows.filter(row => "section" in row && row.section === "primary" && row.name_match === "exact") },
-    { key: "primary", label: "resources", rows: rows.filter(row => "section" in row && row.section === "primary" && row.name_match !== "exact") },
-    { key: "saved", label: "saved passages", rows: rows.filter(row => "section" in row && row.section === "saved") },
-    { key: "inside", label: "inside sources", rows: rows.filter(row => "section" in row && row.section === "inside") },
-  ];
+  const sections = GROUPS.map((group, index) => ({...group, rows: rows.filter(row => resourceGroup(row) === index)}));
   // Where results stand: the reason there are none, a wait, a failure, or the rows.
   const state = blank ? <Fact line={{ fact: query.view === "passages" ? "type text to find passages in your sources." : "type a name or text to search your nexus." }} />
     : unsupported ? query.view === "passages"
