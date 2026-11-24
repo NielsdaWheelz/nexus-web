@@ -526,46 +526,52 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
     case "work_pending":
     case "work_completed": {
       validateLocalDate(query.local_date);
-      const task = "json_extract(state_json,'$.work.task_completed_on.value')";
-      const kind = "json_extract(state_json,'$.work.designation.value.kind')";
-      const habitDay = "EXISTS(SELECT 1 FROM json_each(state_json,'$.work.habit_checks') day WHERE day.key=?1 AND json_extract(day.value,'$.value')=1)";
-      const where = query.kind === "work_completed" ? `(${task}=?1 OR ${habitDay})`
-        : `json_extract(state_json,'$.work.designation.value.enabled')=1 AND ((${kind}='task' AND ${task} IS NULL) OR (${kind}='habit' AND NOT ${habitDay}))`;
-      const selected = `FROM resources INDEXED BY resources_work_capture WHERE ${WORK_REGISTER_MEMBERSHIP} AND ${where}`;
-      const columns = `ref,${WORK_LABEL_SQL} AS label,json_extract(projection_json,'$.work') AS work`;
+      const completed = query.kind === "work_completed";
+      const sameDay = "EXISTS(SELECT 1 FROM json_each(state_json,'$.work.habit_checks') day WHERE day.key=?1 AND json_extract(day.value,'$.value')=1)";
+      const rankKeys = `SELECT ref,${WORK_CAPTURE_LAMPORT} AS lamport,${WORK_CAPTURE_REPLICA} AS replica FROM resources`;
+      const tasks = completed
+        ? `${rankKeys} INDEXED BY resources_task_days WHERE ${WORK_TASK_HISTORY} AND ${WORK_TASK_DAY}=?1`
+        : `${rankKeys} INDEXED BY resources_open_tasks WHERE ${WORK_OPEN_TASK}`;
+      const habits = completed
+        ? `${rankKeys} INDEXED BY resources_habit_history WHERE ${WORK_HABIT_HISTORY} AND ${WORK_TASK_DAY} IS NOT ?1 AND ${sameDay}`
+        : `${rankKeys} INDEXED BY resources_active_habits WHERE ${WORK_ACTIVE_HABIT} AND NOT ${sameDay}`;
+      const eligible = `eligible AS NOT MATERIALIZED (${tasks} UNION ALL ${habits})`;
+      const order = "lamport,replica,ref";
+      // Only selected keys look up labels and work facts in the resource table.
+      const detail = `detail AS (SELECT slice.*,${WORK_LABEL_SQL} AS label,json_extract(projection_json,'$.work') AS work
+        FROM slice JOIN resources ON resources.ref=slice.ref)`;
       const item = `'ref',ref,'label',CASE WHEN length(CAST(json_quote(label) AS BLOB))<=512 THEN label END,
         'work',json_set(work,'$.habit_dates',json('[]'))`;
       switch (query.at.kind) {
         case "describe":
-          return {sql: `WITH extent AS (SELECT count(*) AS total ${selected}),
-            slice AS (SELECT ${columns} ${selected} ORDER BY ${WORK_CAPTURE_ORDER}
-              LIMIT (SELECT CASE WHEN total<=${COMPLETE_REGISTER_ROWS} THEN total ELSE 24 END FROM extent))
+          return {sql: `WITH ${eligible},extent AS (SELECT count(*) AS total FROM eligible),
+            slice AS (SELECT * FROM eligible ORDER BY ${order}
+              LIMIT (SELECT CASE WHEN total<=${COMPLETE_REGISTER_ROWS} THEN total ELSE 24 END FROM extent)),${detail}
             SELECT json_object('kind','description','total',total,'groups',json('[]'),
-              'items',json((SELECT json_group_array(json_object(${item})) FROM slice))) AS register FROM extent`, params: [query.local_date]};
+              'items',json((SELECT json_group_array(json_object(${item}) ORDER BY ${order}) FROM detail))) AS register FROM extent`, params: [query.local_date]};
         case "range": {
           const {start,limit} = query.at;
           if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > AUTHORED_INDEX_RANGE)
             throw new RangeError("Invalid work range");
-          return {sql: `WITH slice AS (SELECT ${columns} ${selected} ORDER BY ${WORK_CAPTURE_ORDER} LIMIT ?2 OFFSET ?3)
-            SELECT json_object('kind','range','start',?3,'items',json_group_array(json_object(${item}))) AS register FROM slice`, params: [query.local_date,limit,start]};
+          return {sql: `WITH ${eligible},slice AS (SELECT * FROM eligible ORDER BY ${order} LIMIT ?2 OFFSET ?3),${detail}
+            SELECT json_object('kind','range','start',?3,'items',json_group_array(json_object(${item}) ORDER BY ${order})) AS register FROM detail`,
+            params: [query.local_date,limit,start]};
         }
         case "locate": {
           if (query.at.refs.length > 100) throw new RangeError("Too many work locations");
-          return {sql: `WITH targets AS (SELECT ${columns},${WORK_CAPTURE_LAMPORT} AS lamport,${WORK_CAPTURE_REPLICA} AS replica
-              ${selected} AND ref IN (SELECT value FROM json_each(?2))),
-            ranked AS (SELECT targets.*, (SELECT count(*) ${selected} AND (${WORK_CAPTURE_ORDER}) <
-              (targets.lamport,targets.replica,targets.ref)) AS rank FROM targets)
-            SELECT json_object('kind','locations','items',json_group_array(json_object(${item},'rank',rank))) AS register FROM ranked`,
+          return {sql: `WITH ${eligible},slice AS (SELECT target.*, (SELECT count(*) FROM eligible WHERE
+            (${order}) < (target.lamport,target.replica,target.ref)) AS rank FROM eligible target WHERE ref IN (SELECT value FROM json_each(?2))),${detail}
+            SELECT json_object('kind','locations','items',json_group_array(json_object(${item},'rank',rank))) AS register FROM detail`,
             params: [query.local_date,JSON.stringify(query.at.refs)]};
         }
         case "place": {
           if (query.at.rows.length > AUTHORED_INDEX_RANGE) throw new RangeError("Too many retained work rows");
-          return {sql: `WITH overlays AS (SELECT json_extract(value,'$.ref') AS ref,
+          return {sql: `WITH ${eligible},overlays AS (SELECT json_extract(value,'$.ref') AS ref,
               CAST(json_extract(value,'$.captured.lamport') AS INTEGER) AS lamport,
               json_extract(value,'$.captured.replica_id') AS replica FROM json_each(?2)),
-            positions AS (SELECT overlays.ref, (SELECT count(*) ${selected} AND (${WORK_CAPTURE_ORDER}) <
+            positions AS (SELECT overlays.ref, (SELECT count(*) FROM eligible WHERE (${order}) <
               (overlays.lamport,overlays.replica,overlays.ref)) AS rank,
-              EXISTS(SELECT 1 ${selected} AND resources.ref=overlays.ref) AS present FROM overlays)
+              EXISTS(SELECT 1 FROM eligible WHERE eligible.ref=overlays.ref) AS present FROM overlays)
             SELECT json_object('kind','placements','items',json_group_array(json_object('ref',ref,'rank',rank,
               'present',json(iif(present,'true','false'))))) AS register FROM positions`, params: [query.local_date,JSON.stringify(query.at.rows)]};
         }
