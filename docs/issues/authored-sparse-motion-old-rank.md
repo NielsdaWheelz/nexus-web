@@ -18,6 +18,12 @@ only mounted page was still the original first page after 30 seconds.
 this happened before the case's explicit prepend. the fixture sent
 trusted pointer input and used an independent worker port for observation.
 
+in stock headless firefox at `7e4b82265`, run
+`20261124-061845-7573f980966e` independently reached old habit rank 408
+at −120 css px. deleting the first habit left the held extent at 83,322
+px. returning to the same 65,457 px offset while pressed showed an empty
+viewport. release picked a different durable occurrence.
+
 retain the read observation in the sqlite owner for the held interaction.
 verify a native hold, a write that reorders rows, motion to a previously
 uncached rank, and a release that preserves the old landing occurrence
