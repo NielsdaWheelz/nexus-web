@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type AnimationEventHandler } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type AnimationEventHandler } from "react";
 import { Failed } from "@/components/feedback/Fact";
 import CollectionView, { type CollectionViewRowRenderProps } from "@/components/collections/CollectionView";
 import IndexedMediaRow from "@/components/collections/IndexedMediaRow";
@@ -60,8 +60,14 @@ export default function Register({ selected, onSelect }: {
   const [from] = useState(() => retainedFrom ?? registerFrom(new Date(), display.displayTimeZone));
   const { digest, revision } = useImports();
   const observing = useObservationDemand(usePaneIsPresented());
-  const register = useServerValue({ key: `/imports?${new URLSearchParams({ from })}`, stale: `${revision}:${digest}`,
+  const [indexDigest, setIndexDigest] = useState(digest);
+  const register = useServerValue({ key: `/imports?${new URLSearchParams({ from })}`, stale: `${revision}:${indexDigest}`,
     visit: VISIT, enabled: observing, load: signal => fetchImportIndex(from, signal) });
+  // A first summary that arrives during entry may ask for a fresh index after
+  // adoption. It never aborts the cold read it was forbidden to gate.
+  useEffect(() => {
+    if (register.status !== "loading") setIndexDigest(digest);
+  }, [register.status, digest]);
   const items = register.status === "ready" ? register.data.items : [];
   const batches = register.status === "ready" ? register.data.batches : [];
   const all = usePaneFreeServerValue({ key: "imports:all", stale: "",
