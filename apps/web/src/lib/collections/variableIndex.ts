@@ -1,7 +1,7 @@
 "use client";
 
 import {useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject} from "react";
-import {defaultRangeExtractor, measureElement, useVirtualizer} from "@tanstack/react-virtual";
+import {defaultRangeExtractor, measureElement, observeElementOffset, useVirtualizer} from "@tanstack/react-virtual";
 import type {RankedIndex} from "./measuredIndexWindow";
 import {writeScrollPosition} from "./scrollMotion";
 import {usePaneAnchorGeometry, usePaneScrollMotion, type AnchorGeometry, type AnchorGeometryFrame} from "@/lib/workspace/paneReturnMemento";
@@ -77,9 +77,14 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
     measureElement: (element, entry, instance) => held
       ? instance.itemSizeCache.get(getItemKey(instance.indexFromElement(element))) ?? estimate
       : measureElement(element, entry, instance),
-    scrollToFn(offset, {adjustments}, instance) {
+    observeElementOffset(instance, observe) {
       const port = instance.scrollElement;
-      if (adjustments !== undefined && port?.hasAttribute("data-companion-scrollport")) writeScrollPosition(port, offset + adjustments);
+      if (port !== null) observe(port.scrollTop, false);
+      return observeElementOffset(instance, observe);
+    },
+    scrollToFn(offset, {adjustments = 0, behavior}, instance) {
+      const port = instance.scrollElement;
+      if (!held && port?.hasAttribute("data-companion-scrollport")) writeScrollPosition(port, offset + adjustments, behavior);
     },
   });
   // The pane memento reconciles its own port. A companion measures and corrects its own landing.
