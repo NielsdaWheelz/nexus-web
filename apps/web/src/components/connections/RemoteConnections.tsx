@@ -6,15 +6,17 @@ import { Fact, Failed } from "@/components/feedback/Fact";
 import ResourceOutlineList, { ResourceBranch } from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import { useChangeStamp } from "@/lib/api/changes";
 import { FactRemovalsContext, useFactRemovals } from "@/lib/resourceGraph/useFactRemovals";
 import { queryConnections, resolveConnections } from "@/lib/resourceGraph/links";
 import { OpenOutlineScopes, ParentOutlineScope, remoteConnectionScope } from "@/lib/resourceGraph/openOutlineScopes";
 import { PaneRefreshAnchor, usePaneScrollMotion } from "@/lib/workspace/paneReturnMemento";
 import styles from "./ConnectionsSurface.module.css";
 
-export function useRemoteConnections(ownerRef: string, stale: string, enabled = true) {
+export function useRemoteConnections(ownerRef: string, refresh = "", enabled = true) {
+  const stamp = useChangeStamp("Metadata", "Entries", "Libraries", "Feeds", "PodcastEpisodes");
   const load = useCallback((signal: AbortSignal) => queryConnections({...remoteConnectionScope(ownerRef), match_text: null}, signal), [ownerRef]);
-  return usePaneFreeServerValue({key: enabled ? `connections:remote:${ownerRef}` : null, stale, load});
+  return usePaneFreeServerValue({key: enabled ? `connections:remote:${ownerRef}` : null, stale: `${refresh}:${stamp}`, load});
 }
 
 export default function RemoteConnections({ ownerRef, occurrencePrefix, list, onChanged, label }: {
@@ -40,11 +42,18 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
   const current = useMemo(() => new Set(ids), [ids]);
   const motion = usePaneScrollMotion();
   const admitted = useRef({ids: [] as string[], generation: ""});
-  // Seek with structural slots. Resolve new evidence only for the landed viewport.
-  const demand = motion === "still" ? {
-    ids: index.slots.filter(slot => current.has(slot.id)).slice(0, 100).map(slot => slot.id),
-    generation: list.status === "ready" ? String(list.generation) : "",
-  } : admitted.current;
+  let demand = admitted.current;
+  if (motion === "still" && index.viewport !== null) {
+    const generation = list.status === "ready" ? String(list.generation) : "";
+    const slots = index.slots.filter(slot => current.has(slot.id)).map(slot => slot.id);
+    if (slots.length === 0 || generation !== demand.generation || slots.some(id => !demand.ids.includes(id))) {
+      // A collapsed outline head is at least 24px. Include the rows a landing
+      // can expose when its estimates shrink, plus the measured window's overscan.
+      const capacity = Math.min(100, Math.ceil(index.viewport.height / 24) + 8);
+      const first = Math.max(0, Math.min(index.viewport.first - 4, ids.length - capacity));
+      demand = {ids: slots.length === 0 ? [] : [...new Set([...slots, ...ids.slice(first, first + capacity)])].slice(0, 100), generation};
+    }
+  }
   useLayoutEffect(() => {admitted.current = demand;});
   const key = JSON.stringify([ownerRef, demand.ids]);
   const load = (signal: AbortSignal) => resolveConnections({...remoteConnectionScope(ownerRef), edge_ids: demand.ids}, signal);

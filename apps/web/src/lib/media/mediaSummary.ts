@@ -9,9 +9,9 @@ export type MediaDuration = Schema<"MediaDurationOut">;
 export type MediaSummary = Schema<"MediaSummaryOut">;
 
 /** A supplied live body joins the existing batched owner; frozen evidence stays captured. */
-export function useResolvedResourceItem(item: ResourceItem, historical = false): ResourceItem {
+export function useResolvedResourceItem(item: ResourceItem, supplied = false): ResourceItem {
   const body = item.preview.body;
-  const seed = !historical && body.kind === "media" ? body.media_summary : null;
+  const seed = !supplied && body.kind === "media" ? body.media_summary : null;
   const summaries = useMediaSummaries(seed ? [seed] : []);
   if (seed === null) return item;
   const summary = summaries.resolve(seed);

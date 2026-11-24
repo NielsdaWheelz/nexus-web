@@ -24,7 +24,8 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
   useLayoutEffect(() => {previous.current = ids;}, [ids]);
   const frame = useRef<AnchorGeometryFrame | null>(null);
   const [demands, setDemands] = useState<ReadonlyMap<symbol, string>>(() => new Map());
-  const [margin, setMargin] = useState(0);
+  const [origin, setOrigin] = useState<number | null>(null);
+  const margin = origin ?? 0;
   const byId = useMemo(() => new Map(ids.map((id, rank) => [id, rank])), [ids]);
   const getPort = useCallback(() => {
     for (let node = list.current?.parentElement; node; node = node.parentElement) {
@@ -37,7 +38,7 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
     if (!windowed) return;
     const root = list.current, port = getPort();
     if (!root || !port) return;
-    const read = () => setMargin(root.getBoundingClientRect().top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop);
+    const read = () => setOrigin(root.getBoundingClientRect().top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop);
     read();
     const resize = new ResizeObserver(read);
     // A preceding section can move the list without resizing the list or its port.
@@ -104,5 +105,7 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
     refreshRange: () => index.getVirtualItems(),
   }), [index, list]);
   usePaneAnchorGeometry({scope, geometry: windowed ? geometry : null, ready: !windowed || slots.length > 0});
-  return {slots, height, count: ids.length, measure: windowed ? index.measureElement : undefined};
+  const viewport = origin !== null && index.range !== null && index.scrollRect !== null
+    ? {first: index.range.startIndex, height: index.scrollRect.height} : null;
+  return {slots, height, count: ids.length, viewport, measure: windowed ? index.measureElement : undefined};
 }

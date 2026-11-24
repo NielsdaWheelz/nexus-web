@@ -172,7 +172,7 @@ function remotePresentation(item: Item, props: Shared): Presentation {
   const activation = item.activation, body = item.preview.body;
   const unavailable = activation.unavailable_reason === "location_unavailable" ? "quoted location unavailable"
     : activation.unavailable_reason === "source_unavailable" ? "source unavailable" : null;
-  const content = <FullResourceBody item={item} historical={props.historical}/>;
+  const content = <FullResourceBody item={item} historical={props.historical || props.connection !== undefined}/>;
   const quote = props.inSource && body.kind === "passage" ? body : null;
   const title = item.preview.source?.title?.trim();
   const parts = metadata.parts.filter(({key}) => quote ? key !== "source" && key !== "location"
@@ -196,7 +196,7 @@ function remotePresentation(item: Item, props: Shared): Presentation {
 }
 
 function RemoteRow(props: Shared & {item: Item}) {
-  const item = useResolvedResourceItem(props.item, props.historical);
+  const item = useResolvedResourceItem(props.item, props.historical || props.connection !== undefined);
   return <Occurrence {...props} presentation={remotePresentation(item, props)}/>;
 }
 
@@ -443,7 +443,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
 function Children({ownerRef, label, localOwnerRef, occurrenceKey}: {ownerRef: string; label: string; localOwnerRef:string|null; occurrenceKey: string}) {
   const branch=useContext(ResourceBranch);
   const search = useContext(OpenOutlineScopes);
-  const remote = useRemoteConnections(ownerRef, useChangeStamp("Metadata"), !search?.filter);
+  const remote = useRemoteConnections(ownerRef, "", !search?.filter);
   return <>
     {localOwnerRef&&localOwnerRef!==ownerRef?<ResourceBranch value={enterOutlineOccurrence({branch,ref:localOwnerRef,target:{kind:"occurrence",key:occurrenceKey},edgeIds:[]})}><LocalOutline rootRef={localOwnerRef} occurrencePrefix={`${occurrenceKey}/owner`}/></ResourceBranch>:null}
     <RemoteConnections ownerRef={ownerRef} label={label} occurrencePrefix={occurrenceKey} list={remote}
