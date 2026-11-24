@@ -17,8 +17,7 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
     const released = heldLayout.current && !held;
     heldLayout.current = held;
     if (!released) return;
-    const frame = requestAnimationFrame(() => sweep.current?.());
-    return () => cancelAnimationFrame(frame);
+    queueMicrotask(() => { if (!heldLayout.current) sweep.current?.(); });
   }, [held]);
   const heights = useRef(new Map<string, number>());
   const elements = useRef(new Map<string, HTMLElement>());
