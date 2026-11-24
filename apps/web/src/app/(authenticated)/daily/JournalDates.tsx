@@ -74,7 +74,7 @@ export default function JournalDates({ readingDate, today, directory, choose, di
     // The store can publish the destination in choose(), retiring this overlay.
     leaving.current = true;
     const result = choose(date);
-    leaving.current = result === "committed";
+    leaving.current = result !== "cancelled";
     if (result !== "cancelled") dismiss();
   };
 

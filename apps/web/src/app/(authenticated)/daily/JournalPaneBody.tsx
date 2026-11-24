@@ -153,19 +153,20 @@ function Journal({ arrival }: { arrival: string }) {
   const yielded = seen !== null && seen.target === (showBand ? bandRef.current : target) && seen.intersecting;
   const choose = useCallback((chosen: string): WorkspaceNavigationResult => {
     const actual = chosen === today ? bandRef.current : window.geometry.element(chosen);
-    const frame = window.geometry.read();
-    const port = actual?.closest<HTMLElement>("[data-pane-content]") ?? frame?.scrollport;
-    if (port) {
-      const band = paneVisibleBand(port);
-      const position = frame?.position(chosen);
-      const edge = actual && !actual.hidden ? actual.getBoundingClientRect().top + port.scrollTop
-        : frame && chosen !== today && position?.kind === "pending" && position.estimate !== null
-          ? frame.origin + position.estimate + port.getBoundingClientRect().top + port.clientTop
-          : null;
-      if (edge !== null && Math.abs(port.scrollTop - Math.min(Math.max(0, edge - band.top), port.scrollHeight - port.clientHeight)) <= 1) return "unchanged";
+    const port = actual?.closest<HTMLElement>("[data-pane-content]");
+    if (actual && !actual.hidden && port) {
+      const top = port.scrollTop + actual.getBoundingClientRect().top - paneVisibleBand(port).top;
+      const landing = Math.min(Math.max(0, top), port.scrollHeight - port.clientHeight);
+      if (Math.abs(port.scrollTop - landing) <= 1) {
+        const valid = inputLease();
+        requestAnimationFrame(() => {
+          if (valid()) actual.focus({preventScroll: true});
+        });
+        return "unchanged";
+      }
     }
     return pane.router.push(`/daily/${chosen}`, { newVisit: true, entry: { kind: "RevealDailyDate", focus: true } });
-  }, [window.geometry, pane.router, today]);
+  }, [window.geometry, pane.router, today, inputLease]);
   const chrome = useMemo(() => ({ displayTitle: "journal", navigation: { label: "journal dates", content: <div {...type} className={styles.navigation}>
     <Button ref={datesTrigger} aria-haspopup="dialog" aria-expanded={pickerDate !== null} aria-description={name} onClick={() => setPickerDate(readingDate)}>
       dates <span className={styles.runningName} aria-hidden="true" data-yielded={yielded || undefined}>{name}</span>
