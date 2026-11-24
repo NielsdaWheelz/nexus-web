@@ -1,8 +1,10 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useLayoutEffect, useMemo } from "react";
 import Button from "@/components/ui/Button";
-import ResourceList from "@/components/ui/ResourceList";
+import ResourceRow from "@/components/ui/ResourceRow";
+import CollectionView from "@/components/collections/CollectionView";
+import type { CollectionRowView } from "@/lib/collections/types";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
@@ -16,9 +18,7 @@ import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import type { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
-import { definePaneVisitDataKey, PaneRefreshAnchor } from "@/lib/workspace/paneReturnMemento";
-import { useVariableIndex } from "@/lib/collections/variableIndex";
-import { INDEX_WINDOW_THRESHOLD } from "@/lib/collections/measuredIndexWindow";
+import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import { recordDate, recordTime } from "@/lib/consumption/recordText";
 import styles from "./Sittings.module.css";
 
@@ -106,21 +106,21 @@ export default function Sittings({ visible, active, stale, draft }: {
       draft.set(value => ({ ...value, sending: null }));
     }
   };
-  const readList = useRef<HTMLUListElement>(null);
-  const [focused, setFocused] = useState<string | null>(null);
-  const { ids, entries } = useMemo(() => {
-    const entries = new Map<string, Sitting | string>();
-    let previous: string | null = null;
-    for (const row of sittings) {
-      if (row.day !== previous) entries.set(`day:${row.day}`, row.day);
-      entries.set(sittingKey(row), row);
-      previous = row.day;
+  const { rows, entries, heads } = useMemo(() => {
+    const entries = new Map<string, Sitting>();
+    const heads = new Map<string, string>();
+    const rows: CollectionRowView[] = [];
+    let day: string | null = null;
+    for (const sitting of sittings) {
+      const id = sittingKey(sitting);
+      entries.set(id, sitting);
+      if (sitting.day !== day) heads.set(id, sitting.day);
+      day = sitting.day;
+      rows.push({ id, kind: "settings_row", presentation: "Index", title: { text: sitting.title }, primary: { kind: "static" },
+        contributors: [], publicationDate: null, context: null, resourceRef: null, selected: false });
     }
-    return { ids: [...entries.keys()], entries };
+    return { rows, entries, heads };
   }, [sittings]);
-  const pinned = useMemo(() => new Set(focused === null ? [] : [focused]), [focused]);
-  const windowed = sittings.length > INDEX_WINDOW_THRESHOLD;
-  const index = useVariableIndex({scope: SCOPE, ids, list: readList, estimate: 46, pinned, windowed});
   return <>
     {draft.value.held.map(correction => <Hold key={correction.id} id={correction.id} attempt={correction.attempt}
       {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }, resend: {
@@ -131,35 +131,29 @@ export default function Sittings({ visible, active, stale, draft }: {
       {list.status !== "loading" && list.error !== null
         ? <Failed error={list.error} noun="sittings" retry={{ run: list.refetch, busy: list.status === "ready" ? list.refreshing : list.retrying }} /> : null}
       {list.status === "ready" && sittings.length === 0 ? <Fact line={{ fact: "no sittings yet." }} /> : null}
-      <PaneRefreshAnchor identity={SCOPE} value={ids} ready={list.status !== "loading"}>
-        <div data-pane-return-scope={SCOPE}>
-          <ResourceList ref={readList} ariaLabel="sittings" windowed={windowed} height={index.height}>
-            {index.slots.map(({id, rank, top, size}) => {
-              const row = entries.get(id);
-              const style = top === undefined ? undefined : {position: "absolute", insetInline: 0, top, blockSize: size, overflow: size === undefined ? undefined : "clip"} as CSSProperties;
-              if (row === undefined) return <li key={id} role="presentation" aria-hidden="true" style={style} />;
-              if (typeof row === "string") return <li key={id} role="presentation" ref={index.measure} style={style} data-index={rank} data-collection-row-id={id}>
-                <h2 className={styles.day}><time dateTime={row}>{recordDate(row)}</time></h2>
-              </li>;
-              const held = draft.value.held.some(correction => correction.kind === "Restore"
-                ? correction.id === row.exclusion_id : sittingKey(correction.body) === id);
-              return <li key={id} className={styles.row} ref={index.measure} style={style} data-index={rank} data-collection-row-id={id}
-                onFocus={() => setFocused(id)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(null); }}>
-                {row.exclusion_id !== null ? <s>not counted · {row.title} · {recordTime(row.active_ms)}</s>
-                  : <span>{row.title} · {recordTime(row.active_ms)}{row.from_place !== null && row.to_place !== null
-                    ? ` · ${Math.round(row.from_place * 100)} → ${Math.round(row.to_place * 100)}%` : null}</span>}
-                <Button disabled={sending || held || list.status !== "ready" || !list.fresh} onClick={() => {
-                  if (row.exclusion_id !== null) void send({ kind: "Restore", id: row.exclusion_id });
-                  else void send({ kind: "Exclude", id: crypto.randomUUID(), body: {
-                    media_id: row.media_id, modality: row.modality, device_id: row.device_id,
-                    started_at: row.started_at, ended_at: row.ended_at,
-                  } });
-                }}>{row.exclusion_id !== null ? "Restore" : "Don’t count"}</Button>
-              </li>;
-            })}
-          </ResourceList>
-        </div>
-      </PaneRefreshAnchor>
+      {!rows.length ? null : <CollectionView returnScope={SCOPE} rows={rows} ariaLabel="sittings" status="ready" surface={false} geometry="UniformIndex"
+        headBefore={row => {
+          const day = heads.get(row.id);
+          return day === undefined ? null : <h3><time dateTime={day}>{recordDate(day)}</time></h3>;
+        }}
+        renderRow={({row: view, as, listPosition, rowActionsAvailable}) => {
+          const row = entries.get(view.id)!;
+          const held = draft.value.held.some(correction => correction.kind === "Restore"
+            ? correction.id === row.exclusion_id : sittingKey(correction.body) === view.id);
+          return <ResourceRow as={as} title={row.exclusion_id === null ? row.title : <s>{row.title}</s>} primary={view.primary}
+            rootProps={{"data-collection-row-id":view.id, "aria-posinset":listPosition ? listPosition.index + 1 : undefined, "aria-setsize":listPosition?.count}}
+            content={{kind:"Index", metadata:<span className={styles.time}>
+              {row.exclusion_id === null ? null : "not counted · "}{recordTime(row.active_ms)}
+              {row.from_place !== null && row.to_place !== null ? ` · ${Math.round(row.from_place * 100)} → ${Math.round(row.to_place * 100)}%` : null}
+            </span>}}
+            controls={!rowActionsAvailable ? null : <Button data-row-primary-control="" disabled={sending || held || list.status !== "ready" || !list.fresh} onClick={() => {
+              if (row.exclusion_id !== null) void send({ kind: "Restore", id: row.exclusion_id });
+              else void send({ kind: "Exclude", id: crypto.randomUUID(), body: {
+                media_id: row.media_id, modality: row.modality, device_id: row.device_id,
+                started_at: row.started_at, ended_at: row.ended_at,
+              } });
+            }}>{row.exclusion_id !== null ? "Restore" : "Don’t count"}</Button>} />;
+        }} />}
     </div> : null}
   </>;
 }
