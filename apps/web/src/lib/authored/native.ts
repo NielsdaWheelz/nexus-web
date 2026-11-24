@@ -86,29 +86,29 @@ async function call<T>(op: string, input: Record<string, unknown> = {}, signal?:
   }
   const transfer_id = crypto.randomUUID();
   try {
-  let byte_count: number;
-  const timeout = op === "snapshot" ? 300_000 : 30_000;
-  if (bytes.byteLength <= 24 * 1024) {
-    const result = await frame<{ kind: "inline"; byte_count: number; base64: string } | { kind: "transfer"; byte_count: number }>("invoke_inline", { transfer_id, base64: base64(bytes) }, signal, timeout);
-    if (result.kind === "inline") {
-      const raw = unbase64(result.base64);
-      if (raw.byteLength !== result.byte_count || raw.byteLength > 24 * 1024) throw new Error("invalid native authored inline framing");
-      return JSON.parse(new TextDecoder().decode(raw));
+    let byte_count: number;
+    const timeout = op === "snapshot" ? 300_000 : 30_000;
+    if (bytes.byteLength <= 24 * 1024) {
+      const result = await frame<{ kind: "inline"; byte_count: number; base64: string } | { kind: "transfer"; byte_count: number }>("invoke_inline", { transfer_id, base64: base64(bytes) }, signal, timeout);
+      if (result.kind === "inline") {
+        const raw = unbase64(result.base64);
+        if (raw.byteLength !== result.byte_count || raw.byteLength > 24 * 1024) throw new Error("invalid native authored inline framing");
+        return JSON.parse(new TextDecoder().decode(raw));
+      }
+      byte_count = result.byte_count;
+    } else {
+      await frame("begin", { transfer_id, byte_count: bytes.byteLength }, signal);
+      for (let offset = 0; offset < bytes.byteLength; offset += 24 * 1024) await frame("chunk", { transfer_id, offset, base64: base64(bytes.subarray(offset, offset + 24 * 1024)) }, signal);
+      ({ byte_count } = await frame<{ byte_count: number }>("invoke", { transfer_id }, signal, timeout));
     }
-    byte_count = result.byte_count;
-  } else {
-    await frame("begin", { transfer_id, byte_count: bytes.byteLength }, signal);
-    for (let offset = 0; offset < bytes.byteLength; offset += 24 * 1024) await frame("chunk", { transfer_id, offset, base64: base64(bytes.subarray(offset, offset + 24 * 1024)) }, signal);
-    ({ byte_count } = await frame<{ byte_count: number }>("invoke", { transfer_id }, signal, timeout));
-  }
-  const output = new Uint8Array(byte_count);
-  for (let offset = 0; offset < byte_count;) {
-    const chunk = await frame<{ base64: string; next_offset: number }>("read", { transfer_id, offset }, signal);
-    const raw = unbase64(chunk.base64);
-    if (chunk.next_offset !== offset + raw.byteLength || raw.byteLength === 0) throw new Error("invalid native authored result framing");
-    output.set(raw, offset); offset = chunk.next_offset;
-  }
-  return JSON.parse(new TextDecoder().decode(output));
+    const output = new Uint8Array(byte_count);
+    for (let offset = 0; offset < byte_count;) {
+      const chunk = await frame<{ base64: string; next_offset: number }>("read", { transfer_id, offset }, signal);
+      const raw = unbase64(chunk.base64);
+      if (chunk.next_offset !== offset + raw.byteLength || raw.byteLength === 0) throw new Error("invalid native authored result framing");
+      output.set(raw, offset); offset = chunk.next_offset;
+    }
+    return JSON.parse(new TextDecoder().decode(output));
   } catch (error) {
     void frame("discard_transfer", { transfer_id }).catch(reportError);
     throw error;
