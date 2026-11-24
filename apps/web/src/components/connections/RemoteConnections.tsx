@@ -83,7 +83,8 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
           {index.slots.map(({id, rank, top, size}) => {
             const connection = current.has(id) ? items.get(id) : undefined;
             const style = {position: "absolute", insetInline: 0, top, blockSize: size, overflow: size === undefined ? undefined : "clip"} as const;
-            return connection === undefined ? <li key={id} aria-hidden="true" role="presentation" style={style}/>
+            return connection === undefined ? <li key={id} aria-hidden="true" role="presentation" style={style}
+              data-collection-row-id={id}/>
               : <ResourceOutlineRow key={id} item={connection.other} rowRef={index.measure}
                 occurrenceKey={`${occurrencePrefix}/${id}`} connection={connection}
                 rootProps={{style, "data-index": rank, "aria-posinset": rank + 1, "aria-setsize": index.count,

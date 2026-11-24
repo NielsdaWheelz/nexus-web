@@ -2,6 +2,7 @@
 
 import {useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject} from "react";
 import {defaultRangeExtractor, measureElement, useVirtualizer} from "@tanstack/react-virtual";
+import {writeScrollPosition} from "./scrollMotion";
 import {usePaneAnchorGeometry, usePaneScrollMotion, type AnchorGeometry, type AnchorGeometryFrame} from "@/lib/workspace/paneReturnMemento";
 
 export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, windowed}: {
@@ -63,9 +64,16 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
     measureElement: (element, entry, instance) => held
       ? instance.itemSizeCache.get(ids[instance.indexFromElement(element)]!) ?? estimate
       : measureElement(element, entry, instance),
-    scrollToFn: () => {},
+    scrollToFn(offset, {adjustments}, instance) {
+      const port = instance.scrollElement;
+      if (adjustments !== undefined && port?.hasAttribute("data-companion-scrollport")) writeScrollPosition(port, offset + adjustments);
+    },
   });
-  index.shouldAdjustScrollPositionOnItemSizeChange = () => false;
+  // The pane memento reconciles its own port. A companion measures and corrects its own landing.
+  index.shouldAdjustScrollPositionOnItemSizeChange = (slot, _delta, instance) => {
+    const port = instance.scrollElement;
+    return !held && port?.hasAttribute("data-companion-scrollport") === true && slot.end <= port.scrollTop + 0.5;
+  };
   const slots = windowed ? index.getVirtualItems().map(slot => ({
     id: ids[slot.index]!, rank: slot.index, top: slot.start - margin, size: held ? slot.size : undefined,
   })) : ids.map((id, rank) => ({id, rank, top: undefined, size: undefined}));
