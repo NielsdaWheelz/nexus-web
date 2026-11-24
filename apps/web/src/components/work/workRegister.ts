@@ -30,13 +30,14 @@ export function useWorkRegister(kind: WorkRegisterSource["kind"], date: string |
     rankOf: ref => ranks.get(ref) ?? (sparse ? window.positions?.get(ref) : null),
     request: (ranks, refs) => {if (motion === "still") window.request(ranks, refs);},
   };
-  return {read, revision, sparse, count, ranked, rows, ranks, error: window.error, retry: window.retry};
+  return {read, revision, sparse, count, ranked, rows, error: window.error, retry: window.retry};
 }
 
 /** Local dwell, undo and focused editors are the only rows that can amend the
  * register. Their positions name gaps in one canonical revision. */
 export function amendWorkOrder(base: Omit<RankedIndex, "heads">, placements: readonly Placement[],
   retained: ReadonlyMap<string, WorkIndexItem>, expired: ReadonlySet<string>) {
+  if (placements.length === 0) return base;
   const members = placements.filter(p => p.present);
   const placed = new Map(members.map(p => [p.ref, p.rank]));
   const placedAt = new Map(members.map(p => [p.rank, p.ref]));
@@ -62,7 +63,7 @@ export function amendWorkOrder(base: Omit<RankedIndex, "heads">, placements: rea
   };
   return {
     ...base, count: base.count + shift,
-    revision: JSON.stringify([base.revision, events.map(({ref, present}) => [ref, present])]),
+    revision: events.length === 0 ? base.revision : JSON.stringify([base.revision, events.map(({ref, present}) => [ref, present])]),
     idAt(rank: number) {
       const slot = slotAt(rank);
       return "added" in slot ? slot.added : base.idAt(slot.original) ?? placedAt.get(slot.original);

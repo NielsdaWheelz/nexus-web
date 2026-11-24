@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Ref } from "react";
+import {readBody} from "@nexus/authored/documents";
 import type { WorkIndexItem } from "@nexus/authored/types";
 import { useOutcome } from "@/components/feedback/Feedback";
 import AccountCalendarUnavailable from "@/components/notes/AccountCalendarUnavailable";
@@ -17,7 +18,7 @@ import {useVariableIndex} from "@/lib/collections/variableIndex";
 import { IndexRowWindow } from "@/lib/collections/indexRowWindow";
 import { useAccountToday } from "@/lib/notes/accountDay";
 import { captureTaskToday } from "@/lib/notes/api";
-import { useAuthoredQuery, useWritingDocument, useWritingRuntime } from "@/lib/notes/hooks";
+import { useAuthoredQuery, useWorkLabel, useWritingDocument, useWritingRuntime } from "@/lib/notes/hooks";
 import { useAuthoredAccountId } from "@/lib/authored/provider";
 import { LocalCommitError, type LocalCommit } from "@/lib/notes/runtime";
 import type { OutlineHistory } from "@/lib/notes/structure";
@@ -182,7 +183,7 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
             ? <Receipt key={resource.ref} slot={slot} completion={completion} history={history} step={step} fail={fail}
               recover={() => signOf([resource.ref, ...around(position)])} />
             : <WorkRow key={resource.ref} slot={slot} resource={resource} retained={!view.pending.has(resource.ref)} today={today} history={history} hold={hold}
-              completion={completion} step={step} onComplete={press => complete(resource, position, press)}
+              completion={completion} step={step} onComplete={(snapshot, press) => complete(snapshot, position, press)}
               recover={() => list.current?.querySelector<HTMLElement>(`[data-work-ref="${CSS.escape(resource.ref)}"] [data-receipt-undo]`) ?? signOf(around(position))} />;
         })}
       </ResourceList>
@@ -217,7 +218,7 @@ function Receipt({slot, completion, history, step, fail, recover}:{
     const timer = setTimeout(() => step(ref, press, current => current.phase === "receipt" && !current.undoing ? {...pressed(current), phase:"expired"} : current), RECEIPT_MS);
     return () => clearTimeout(timer);
   }, [ref, press, undoing, step]);
-  const line = snapshot.label === null ? "name too large to display" : snapshot.label || "empty note";
+  const {label: line, read} = useWorkLabel(snapshot);
   // The inverse is the completion's own civil day cleared, sent only once the completion itself is durable. A refused
   // completion sends nothing: its record is already gone and the row is back. A completion's defect is the section's.
   const undo = () => {
@@ -230,6 +231,7 @@ function Receipt({slot, completion, history, step, fail, recover}:{
   };
   return <li {...slot} ref={node => {root.current = node; if (typeof slot.ref === "function") slot.ref(node);}} className={styles.receipt} data-work-ref={ref} data-collection-row-id={ref}>
     <span className={styles.receiptLine}>completed<span aria-hidden="true"> · </span>{line}</span>
+    <AuthoredReadFailure {...read} noun="this task name" />
     <Button className={styles.undo} data-receipt-undo="" aria-label={`undo: ${line}`} aria-busy={undoing} onClick={undo}>undo</Button>
   </li>;
 }
@@ -267,7 +269,7 @@ function WorkRow({slot,resource:initial,retained,today,history,hold,completion,s
   slot: WorkSlot;
   resource:WorkIndexItem;retained:boolean;today:string|null;history:OutlineHistory;
   hold(resource:WorkIndexItem,keep:boolean):void;completion:Completion | undefined;step:Step;
-  onComplete(completion:WorkCompletion):void;
+  onComplete(snapshot:WorkIndexItem,completion:WorkCompletion):void;
   /** Where focus goes when the focused control leaves with the row: its own receipt's undo, in place, else the next sign. */
   recover():HTMLElement|null;
 }) {
@@ -278,6 +280,8 @@ function WorkRow({slot,resource:initial,retained,today,history,hold,completion,s
   const overlay = useContext(WorkOverlayContext);
   const opened = useWritingDocument(resource.ref);
   const document = opened.document;
+  const label = useMemo(() => resource.label ?? (document === null ? null
+    : readBody(document.doc).body_text.split("\n", 1)[0]!.trim()), [document, resource]);
   // Where focus is in this row. Focus on the sign alone is not a use of the row: the receipt replaces it and takes it.
   const [focus,setFocus] = useState<"none" | "sign" | "other">("none");
   const [pins,setPins] = useState(0);
@@ -328,7 +332,8 @@ function WorkRow({slot,resource:initial,retained,today,history,hold,completion,s
       if (event.relatedTarget instanceof Node && root.current?.contains(event.relatedTarget)) return;
       queueMicrotask(() => {if (!root.current?.contains(window.document.activeElement)) setFocus("none");});
     }}>
-    <span className={styles.sign}>{deleted ? null : <WorkCheckbox resource={resource} today={today} history={history} presentDone={presentDone} onComplete={onComplete} />}</span>
+    <span className={styles.sign}>{deleted ? null : <WorkCheckbox resource={{...resource, label}} today={today} history={history} presentDone={presentDone}
+      onComplete={press => onComplete({...resource, label}, press)} />}</span>
     <div className={styles.writing}>
       {deleted ? <p className={styles.muted}>this note was deleted.</p> : null}
       <AuthoredReadFailure {...opened} noun="this task" />
@@ -337,6 +342,6 @@ function WorkRow({slot,resource:initial,retained,today,history,hold,completion,s
     </div>
     {resource.work?.designation.kind === "habit" ? <span className={styles.tail}>daily</span> : null}
     <span className={styles.menu}>{deleted ? null : <ContextualActionMenu subjectKey={`work:${resource.ref}`} resourceRef={canonicalResourceRef({scheme:"note_block",id:resource.ref.slice(11)})}
-      title={resource.label || "note"} navigation={null} sections={[]} onOpenChange={setMenuOpen} />}</span>
+      title={label || "note"} navigation={null} sections={[]} onOpenChange={setMenuOpen} />}</span>
   </li></IndexRowWindow>;
 }

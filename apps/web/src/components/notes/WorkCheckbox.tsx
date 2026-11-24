@@ -20,7 +20,7 @@ export default function WorkCheckbox({resource,today,history,presentDone = false
   resource:WorkIndexItem | ResourceProjection; today:string|null; history:OutlineHistory; presentDone?:boolean;
   onComplete?:(completion:WorkCompletion)=>void;
 }) {
-  const label = "label" in resource ? resource.label === null ? "name too large to display" : resource.label || "empty note" : localResourceLabel(resource);
+  const label = "label" in resource ? (resource.label ?? "note") || "empty note" : localResourceLabel(resource);
   const check = useWorkCheck({...resource, label},today,history);
   if (check === null) return null;
   const checked = presentDone || check.checked;

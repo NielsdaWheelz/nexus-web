@@ -90,9 +90,10 @@ one local revision. large registers load visible rank ranges and resolve saved
 occurrences directly. unfinished tasks and today's unchecked habits share
 numeric capture order, with replica and ref ties. the pending view places
 retained editors and completion receipts at the matching gap in that order.
-large completed days keep seekable rows inside the journal. the habit register carries the
-ordered ref, its label and whether repetition is active. its visible rows
-separately read positive checks for the selected year.
+large completed days keep seekable rows inside the journal. register items
+carry bounded labels. a mounted row reads an elided label on demand, using
+already-open writing when available. the habit register carries whether
+repetition is active. its visible rows read positive checks for the selected year.
 the journal agenda ends with `add a task`, which opens its capture form in
 place. a completion fills the sign immediately. after 600ms from the press,
 its receipt replaces the row. an active menu or an editor still in use keeps
