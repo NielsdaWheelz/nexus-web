@@ -105,7 +105,8 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
     setCompletions(previous => {
       let next: Map<string, Completion> | null = null;
       for (const [ref, completion] of previous) {
-        const ended = completion.phase === "restored" ? reached(revision, completion.undo)
+        const ended = completion.phase === "restored"
+          ? reached(revision, completion.undo) && (!listed.has(ref) || work.rows.has(ref))
           : completion.commit !== null && reached(revision, completion.commit) && (completion.phase === "expired" || listed.has(ref));
         if (ended) (next ??= new Map(previous)).delete(ref);
       }
@@ -275,7 +276,8 @@ function WorkRow({slot,resource:initial,retained,today,history,hold,completion,s
 }) {
   const read = useAuthoredQuery(retained ? {kind:"resource",ref:initial.ref} : null);
   const latest = read.data?.rows[0]?.resource;
-  const resource = useMemo(() => latest?.work ? {ref: latest.ref, label: localResourceLabel(latest), work: latest.work} : initial, [latest, initial]);
+  const projection = useMemo(() => latest?.work ? {ref: latest.ref, label: localResourceLabel(latest), work: latest.work} : null, [latest]);
+  const resource = projection ?? initial;
   const deleted = retained && read.data !== null && latest === undefined;
   const overlay = useContext(WorkOverlayContext);
   const opened = useWritingDocument(resource.ref);
