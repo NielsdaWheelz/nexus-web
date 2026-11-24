@@ -9,7 +9,7 @@ import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { FactRemovalsContext, useFactRemovals } from "@/lib/resourceGraph/useFactRemovals";
 import { queryConnections, resolveConnections } from "@/lib/resourceGraph/links";
 import { OpenOutlineScopes, ParentOutlineScope, remoteConnectionScope } from "@/lib/resourceGraph/openOutlineScopes";
-import { PaneRefreshAnchor } from "@/lib/workspace/paneReturnMemento";
+import { PaneRefreshAnchor, usePaneScrollMotion } from "@/lib/workspace/paneReturnMemento";
 import styles from "./ConnectionsSurface.module.css";
 
 export function useRemoteConnections(ownerRef: string, stale: string, enabled = true) {
@@ -38,20 +38,26 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
   const scope = `remote:${occurrencePrefix}`;
   const index = useVariableIndex({scope, ids, list: element, estimate: 80, pinned: pins, windowed: true});
   const current = useMemo(() => new Set(ids), [ids]);
-  const wanted = index.slots.filter(slot => current.has(slot.id)).slice(0, 100).map(slot => slot.id);
-  const key = JSON.stringify([ownerRef, wanted]);
-  const load = (signal: AbortSignal) => resolveConnections({...remoteConnectionScope(ownerRef), edge_ids: wanted}, signal);
-  const details = usePaneFreeServerValue({key: wanted.length ? key : null,
-    stale: list.status === "ready" ? String(list.generation) : "", load});
+  const motion = usePaneScrollMotion();
+  const admitted = useRef({ids: [] as string[], generation: ""});
+  // Seek with structural slots. Resolve new evidence only for the landed viewport.
+  const demand = motion === "still" ? {
+    ids: index.slots.filter(slot => current.has(slot.id)).slice(0, 100).map(slot => slot.id),
+    generation: list.status === "ready" ? String(list.generation) : "",
+  } : admitted.current;
+  useLayoutEffect(() => {admitted.current = demand;}, [demand]);
+  const key = JSON.stringify([ownerRef, demand.ids]);
+  const load = (signal: AbortSignal) => resolveConnections({...remoteConnectionScope(ownerRef), edge_ids: demand.ids}, signal);
+  const details = usePaneFreeServerValue({key: demand.ids.length ? key : null, stale: demand.generation, load});
   const items = useMemo(() => new Map(details.status === "ready" ? details.data.items.map(row => [row.edge_id, row]) : []), [details]);
   const refetched = useRef<string | null>(null);
   if (refetched.current !== null && refetched.current !== key) refetched.current = null;
   useLayoutEffect(() => {
-    if (details.status !== "ready" || !details.fresh || items.size === wanted.length || refetched.current === key) return;
+    if (motion !== "still" || details.status !== "ready" || !details.fresh || items.size === demand.ids.length || refetched.current === key) return;
     refetched.current = key;
     if (filtering) search?.retry(occurrencePrefix);
     else void list.refetch().catch(() => undefined);
-  }, [details, items.size, wanted.length, key, list, filtering, search, occurrencePrefix]);
+  }, [motion, details, items.size, demand.ids.length, key, list, filtering, search, occurrencePrefix]);
   return <FactRemovalsContext value={removals}><ParentOutlineScope value={occurrencePrefix}>
     {match?.kind === "failed" ? <Fact line={{fact: `couldn’t search links in ${label ?? "this item"}.`}}
       verbs={[{label: "retry", commandKey: "RetryOutlineLinks", run: () => search?.retry(occurrencePrefix)}]}/> : null}
@@ -66,7 +72,7 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
             if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setPinned(null);
           }}}>
           {index.slots.map(({id, rank, top, size}) => {
-            const connection = items.get(id);
+            const connection = current.has(id) ? items.get(id) : undefined;
             const style = {position: "absolute", insetInline: 0, top, blockSize: size, overflow: size === undefined ? undefined : "clip"} as const;
             return connection === undefined ? <li key={id} aria-hidden="true" role="presentation" style={style}/>
               : <ResourceOutlineRow key={id} item={connection.other} rowRef={index.measure}
