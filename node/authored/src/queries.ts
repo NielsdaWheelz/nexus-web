@@ -13,6 +13,8 @@ const WORK_CAPTURE_LAMPORT = "CAST(json_extract(state_json,'$.work.captured.lamp
 const WORK_CAPTURE_REPLICA = "json_extract(state_json,'$.work.captured.replica_id')";
 export const WORK_CAPTURE_ORDER = `${WORK_CAPTURE_LAMPORT},${WORK_CAPTURE_REPLICA},ref`;
 const WORK_LABEL_SQL = "trim(substr(COALESCE(body_text,'')||char(10),1,instr(COALESCE(body_text,'')||char(10),char(10))-1))";
+const workIndexItem = (work: string) => `'ref',ref,'label',CASE WHEN length(CAST(json_quote(label) AS BLOB))<=512 THEN label END,
+        'work',${work}`;
 export const WORK_REGISTER_MEMBERSHIP = `kind='note' AND visible=1 AND json_type(state_json,'$.work')='object'`;
 const WORK_KIND = "json_extract(state_json,'$.work.designation.value.kind')";
 const WORK_ENABLED = "json_extract(state_json,'$.work.designation.value.enabled')=1";
@@ -561,6 +563,18 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
         }
       }
     }
+    case "work_row": {
+      if (query.local_date !== null) validateLocalDate(query.local_date);
+      return {sql: `WITH detail AS (
+        SELECT ref,${WORK_LABEL_SQL} AS label,
+          json_set(json_extract(projection_json,'$.work'),'$.habit_dates',json(
+            CASE WHEN json_extract(state_json,'$.work.habit_checks.'||?2||'.value')=1
+              THEN json_array(?2) ELSE '[]' END)) AS work
+        FROM resources WHERE ref=?1 AND kind='note' AND visible=1)
+        SELECT json_object('kind','row','item',
+          json((SELECT json_object(${workIndexItem("json(work)")}) FROM detail WHERE work IS NOT NULL))) AS register`,
+        params: [query.ref,query.local_date]};
+    }
     case "work_pending":
     case "work_completed": {
       validateLocalDate(query.local_date);
@@ -578,8 +592,7 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       // Visit the slice first. A reordered join scans bodies to find their keys.
       const detail = `detail AS (SELECT slice.*,${WORK_LABEL_SQL} AS label,json_extract(projection_json,'$.work') AS work
         FROM slice CROSS JOIN resources ON resources.ref=slice.ref)`;
-      const item = `'ref',ref,'label',CASE WHEN length(CAST(json_quote(label) AS BLOB))<=512 THEN label END,
-        'work',json_set(work,'$.habit_dates',json('[]'))`;
+      const item = workIndexItem("json_set(work,'$.habit_dates',json('[]'))");
       switch (query.at.kind) {
         case "describe":
           return {sql: `WITH ${eligible},extent AS (SELECT (SELECT count(*) ${tasks})+(SELECT count(*) ${habits}) AS total),

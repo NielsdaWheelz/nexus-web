@@ -74,6 +74,7 @@ export default defineConfig({
           work_pending: [...workSamples({kind:"work_pending", local_date:workDate}),
             {kind: "work_pending", local_date: workDate, at: {kind: "place", rows: []}, expected_revision: "0"}],
           work_completed: workSamples({kind:"work_completed", local_date:workDate}),
+          work_row: [{kind: "work_row", ref: "", local_date: workDate}],
           habits: [
             {kind: "habits", at: {kind: "describe"}, expected_revision: null},
             {kind: "habits", at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},

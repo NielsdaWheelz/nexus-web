@@ -7,7 +7,10 @@ import {useAuthoredQuery} from "@/lib/notes/hooks";
 import {useRankedAuthoredWindow} from "@/lib/notes/rankedAuthoredWindow";
 import {usePaneScrollMotion} from "@/lib/workspace/paneReturnMemento";
 
-const select = (result: QueryResult) => result.work_index?.kind === "placements" ? null : result.work_index;
+const select = (result: QueryResult) => {
+  const work = result.work_index;
+  return work?.kind === "placements" || work?.kind === "row" ? null : work;
+};
 type Placement = Extract<WorkRegisterResult, {kind: "placements"}>["items"][number];
 
 export function useWorkRegister(kind: WorkRegisterSource["kind"], date: string | null) {

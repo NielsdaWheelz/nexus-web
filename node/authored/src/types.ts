@@ -126,7 +126,8 @@ export type WorkRegisterRequest = (WorkRegisterSource & RankedIndexRequest) | {
   at: {kind: "place"; rows: {ref: ResourceRef; captured: Stamp}[]};
 };
 export type WorkRegisterResult = RankedIndexResult<WorkIndexItem, {groups: number[]}> |
-  {kind: "placements"; items: {ref: ResourceRef; rank: number; present: boolean}[]};
+  {kind: "placements"; items: {ref: ResourceRef; rank: number; present: boolean}[]} |
+  {kind: "row"; item: WorkIndexItem | null};
 export interface OutlineIndexItem { link_id: string; other_ref: ResourceRef; matched: boolean }
 export type OutlineFilterResult = {kind: "changed"} | {kind: "range"; total: number; start: number; items: OutlineIndexItem[]};
 export type OutlineFilterRequest = {kind: "outline_filter"; parent_ref: ResourceRef; text: string; start: number; limit: number; expected_revision: Counter | null};
@@ -138,6 +139,7 @@ export type AuthoredQuery =
   | OutlineFilterRequest
   | DailyIndexRequest
   | WorkRegisterRequest
+  | {kind: "work_row"; ref: ResourceRef; local_date: LocalDate | null}
   | HabitIndexRequest
   | {kind: "habit_days"; ref: ResourceRef; year: number}
   | {kind: "latest_habit_date"}

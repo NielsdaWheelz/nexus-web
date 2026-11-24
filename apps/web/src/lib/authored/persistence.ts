@@ -111,7 +111,7 @@ export class Persistence {
     return this.states(selection);
   }
   async query(query: AuthoredQuery): Promise<QueryResult> {
-    if ("expected_revision" in query || query.kind === "register_label" || query.kind === "habit_days" || query.kind === "latest_habit_date") {
+    if ("expected_revision" in query || query.kind === "work_row" || query.kind === "register_label" || query.kind === "habit_days" || query.kind === "latest_habit_date") {
       const revision = (await this.replica()).store_revision;
       const result: QueryResult = {store_revision: revision, rows: [], children: [], next_cursor: null, previous_cursor: null,
         binding_id: null, canonical_source_ref: null, positions: [], scope_available: true, outline_windows: null,
@@ -132,7 +132,7 @@ export class Persistence {
         result.register_label = record ? {label: typeof record.label === "string" ? record.label : null, oversized: Number(record.oversized) === 1} : null;
       } else if (query.kind === "page_register" || query.kind === "habits" || query.kind === "mentions" || query.kind === "daily_index") {
         result[query.kind] = JSON.parse(String(record!.register));
-      } else if (query.kind === "work_pending" || query.kind === "work_completed") {
+      } else if (query.kind === "work_pending" || query.kind === "work_completed" || query.kind === "work_row") {
         result.work_index = JSON.parse(String(record!.register));
       } else {
         const total = Number(record!.total), start = query.start;

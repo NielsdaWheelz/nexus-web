@@ -24,7 +24,6 @@ import { LocalCommitError, type LocalCommit } from "@/lib/notes/runtime";
 import type { OutlineHistory } from "@/lib/notes/structure";
 import { WorkOverlayContext, tryWorkCommand } from "@/lib/notes/work";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
-import { localResourceLabel } from "@/lib/resources/localResource";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import * as Icon from "@/lib/ui/icons";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
@@ -274,11 +273,12 @@ function WorkRow({slot,resource:initial,retained,today,history,hold,completion,s
   /** Where focus goes when the focused control leaves with the row: its own receipt's undo, in place, else the next sign. */
   recover():HTMLElement|null;
 }) {
-  const read = useAuthoredQuery(retained ? {kind:"resource",ref:initial.ref} : null);
-  const latest = read.data?.rows[0]?.resource;
-  const projection = useMemo(() => latest?.work ? {ref: latest.ref, label: localResourceLabel(latest), work: latest.work} : null, [latest]);
-  const resource = projection ?? initial;
-  const deleted = retained && read.data !== null && latest === undefined;
+  const read = useAuthoredQuery(retained ? {kind:"work_row",ref:initial.ref,local_date:today} : null);
+  const proof = read.data?.work_index;
+  if (read.data !== null && proof?.kind !== "row") throw new Error("retained work read is missing its row");
+  const latest = proof?.kind === "row" ? proof.item : undefined;
+  const resource = latest ?? initial;
+  const deleted = latest === null;
   const overlay = useContext(WorkOverlayContext);
   const opened = useWritingDocument(resource.ref);
   const document = opened.document;
