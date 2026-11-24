@@ -115,10 +115,11 @@ function surviving(row: HeldRow, before: readonly string[], byId: ReadonlyMap<st
   return null;
 }
 
-export function useMeasuredIndexWindow({ scopeKey, ids, headIds, geometry, listRef, scrollport }: {
+export function useMeasuredIndexWindow({ scopeKey, ids, headIds, hold, geometry, listRef, scrollport }: {
   readonly scopeKey: string;
   readonly ids: readonly string[];
   readonly headIds: readonly string[];
+  readonly hold: boolean;
   readonly geometry: IndexGeometry | null;
   readonly listRef: RefObject<HTMLUListElement | null>;
   readonly scrollport: () => HTMLElement | null;
@@ -264,11 +265,12 @@ export function useMeasuredIndexWindow({ scopeKey, ids, headIds, geometry, listR
     work.current = (measuredHeight, measureHeads = false) => {
       const current = committed.current;
       if (!enabled || current?.list !== list || list === null || port === null || sample.current === null) return;
-      const rowHeight = measuredHeight ?? current.view?.height ?? sample.current.getBoundingClientRect().height;
+      const rowHeight = hold && current.view !== null ? current.view.height :
+        measuredHeight ?? current.view?.height ?? sample.current.getBoundingClientRect().height;
       if (rowHeight <= 0 || port.clientHeight === 0) return;
       const previousHeads = current.view?.headHeights ?? null;
       let measured = previousHeads ?? new Map<string, number>();
-      if (measureHeads || measured.size !== headIds.length || headIds.some(id => !measured.has(id))) {
+      if ((!hold && measureHeads) || measured.size !== headIds.length || headIds.some(id => !measured.has(id))) {
         const next = new Map(headSamples.current.map(element => [element.dataset.indexHeadSample!, element.getBoundingClientRect().height]));
         if (next.size !== headIds.length || headIds.some(id => !next.has(id))) return;
         if (previousHeads === null || next.size !== previousHeads.size || [...next].some(([id, size]) => previousHeads.get(id) !== size)) {

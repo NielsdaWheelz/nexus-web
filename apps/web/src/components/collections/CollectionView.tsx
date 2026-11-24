@@ -6,14 +6,16 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 import PaneSurface from "@/components/ui/PaneSurface";
 import ResourceList, { ResourceListHead } from "@/components/ui/ResourceList";
 import SortableList from "@/components/sortable/SortableList";
 import { Ruling } from "@/components/feedback/Ruling";
+import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import type { CollectionRowView, OrderPresentation } from "@/lib/collections/types";
-import { PaneRefreshAnchor, usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
+import { PaneRefreshAnchor, usePaneReturnDescendantReady, usePaneScrollMotion } from "@/lib/workspace/paneReturnMemento";
 import CollectionRow from "./CollectionRow";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { focusableElements } from "@/lib/ui/overlay";
@@ -40,7 +42,7 @@ export interface CollectionViewRowRenderProps {
  */
 export default function CollectionView({
   returnScope,
-  rows,
+  rows: incoming,
   status,
   ariaLabel,
   toolbar,
@@ -94,27 +96,70 @@ export default function CollectionView({
     portal: HTMLElement | null;
     departing: boolean;
   } | null>(null);
-  const orderedIds = useMemo(() => rows.map(row => row.id), [rows]);
-  const heads = useMemo(() => {
+  const account = useOptionalAuthenticatedAccount()?.accountId ?? null;
+  const scopeKey = JSON.stringify([account, returnScope, anchorKey ?? null, layout]);
+  const motion = usePaneScrollMotion();
+  const liveHeads = useMemo(() => {
     const result = new Map<string, ReactNode>();
-    if (headBefore !== undefined) for (const row of rows) {
+    if (headBefore !== undefined) for (const row of incoming) {
       const head = headBefore(row);
       if (head != null) result.set(row.id, head);
     }
     return result;
-  }, [rows, headBefore]);
-  const headIds = useMemo(() => [...heads.keys()], [heads]);
-  const headSamples = useMemo(() => [...heads].map(([id, head]) =>
-    <ResourceListHead key={id} sampleFor={id}>{head}</ResourceListHead>), [heads]);
-  const scopeKey = `${returnScope}:${anchorKey ?? ""}`;
+  }, [incoming, headBefore]);
+  const presentation = useMemo(() => ({ scopeKey, rows: incoming, heads: liveHeads }), [scopeKey, incoming, liveHeads]);
+  const committed = useRef(presentation);
+  const previous = committed.current;
+  const holding = motion !== "still" && previous.scopeKey === scopeKey && previous.rows.length > 0 && order === undefined && layout === "Rows";
+  const [sizes, setSizes] = useState<{ scopeKey: string; heights: ReadonlyMap<string, number> } | null>(null);
+  const heldSizes = holding && sizes?.scopeKey === scopeKey ? sizes.heights : null;
+  const append = useMemo(() => heldSizes !== null && motion === "travel" && incoming.length > previous.rows.length &&
+    previous.heads.size === liveHeads.size && [...previous.heads.keys()].every(id => liveHeads.has(id)) &&
+    previous.rows.every((row, index) => row.id === incoming[index].id),
+    [heldSizes, motion, incoming, previous, liveHeads]);
+  const shown = holding && !append ? previous : presentation;
+  // The first hold commit keeps its existing contents until the layout effect records
+  // their sizes. That effect installs reserved slots before the browser paints.
+  const currentRows = holding && heldSizes === null ? previous.rows : incoming;
+  const currentHeads = holding && heldSizes === null ? previous.heads : liveHeads;
+  const shownStatus = holding ? "ready" : status;
+  const rows = shown.rows;
+  const currentById = useMemo(() => new Map(currentRows.map(row => [row.id, row])), [currentRows]);
+  const orderedIds = useMemo(() => rows.map(row => row.id), [rows]);
+  const headIds = useMemo(() => [...shown.heads.keys()], [shown.heads]);
+  const headSamples = useMemo(() => [...shown.heads].map(([id, head]) =>
+    <ResourceListHead key={id} sampleFor={id}>{head}</ResourceListHead>), [shown.heads]);
   const scrollport = useCallback(() => listRef.current?.closest<HTMLElement>('[data-pane-content][data-body-mode="standard"]') ?? null, []);
-  const window = useMeasuredIndexWindow({ scopeKey, ids: orderedIds, headIds, geometry: status === "ready" ? geometry : null, listRef, scrollport });
+  const window = useMeasuredIndexWindow({ scopeKey, ids: orderedIds, headIds, hold: holding,
+    geometry: shownStatus === "ready" ? geometry : null, listRef, scrollport });
   const { rowElement, pin } = window;
   usePaneCollectionGeometry({ scope: returnScope, window });
   const windowed = window.plan.kind !== "Intrinsic";
-  const ready = status !== "loading" && window.plan.kind !== "Measure";
+  const ready = shownStatus !== "loading" && window.plan.kind !== "Measure";
   const committedIds = useRef(orderedIds);
-  useLayoutEffect(() => { committedIds.current = orderedIds; });
+  useLayoutEffect(() => {
+    committed.current = shown;
+    committedIds.current = orderedIds;
+    const list = listRef.current;
+    if (!holding || list === null) {
+      if (sizes !== null) setSizes(null);
+      return;
+    }
+    const measured = new Map(heldSizes);
+    if (heldSizes === null) for (const element of list.querySelectorAll<HTMLElement>(":scope > [data-index-head-sample]")) {
+      measured.set(`head:${element.dataset.indexHeadSample}`, element.getBoundingClientRect().height);
+    }
+    const rowHeight = window.plan.kind === "Ready" ? window.plan.height : null;
+    for (const element of list.querySelectorAll<HTMLElement>(":scope > [data-collection-row-id], :scope > [data-index-head-before]")) {
+      const head = element.dataset.indexHeadBefore;
+      const id = head === undefined ? element.dataset.collectionRowId! : `head:${head}`;
+      const uniform = head === undefined ? rowHeight : null;
+      const height = uniform ?? measured.get(id) ?? element.getBoundingClientRect().height;
+      if (uniform === null) measured.set(id, height);
+      element.style.setProperty("--index-held-size", `${height}px`);
+    }
+    if (heldSizes === null || measured.size !== heldSizes.size) setSizes({ scopeKey, heights: measured });
+  });
   const pendingFocus = useRef<{ id: string; selector: string; fallback: HTMLElement | null; release: () => void } | null>(null);
   const fallbackTarget = useCallback(() => {
     const root = returnScopeRef.current;
@@ -199,9 +244,9 @@ export default function CollectionView({
   });
   const slots = window.plan.kind === "Measure" ? [{ id: window.plan.sampleId, index: 0, gapBeforePx: 0 }] : window.plan.slots;
   const body =
-    status === "loading" ? (
+    shownStatus === "loading" ? (
       <Ruling />
-    ) : status === "error" ? (
+    ) : shownStatus === "error" ? (
       error
     ) : rows.length === 0 ? (
       empty
@@ -224,23 +269,25 @@ export default function CollectionView({
         })}
       </ul>
     ) : (
-      <ResourceList ref={listRef} ariaLabel={ariaLabel} busy={collectionBusy || !ready} windowed={windowed} measuring={window.plan.kind === "Measure"}>
+      <ResourceList ref={listRef} ariaLabel={ariaLabel} busy={collectionBusy || !ready} windowed={windowed}
+        measuring={window.plan.kind === "Measure"} held={heldSizes !== null}>
         {windowed ? headSamples : null}
         {slots.map(slot => {
-          const row = rows[slot.index];
-          const head = heads.get(slot.id);
-          return row ? <Fragment key={row.id}>
+          const row = currentById.get(slot.id);
+          return <Fragment key={slot.id}>
             {slot.gapBeforePx > 0 ? <li role="presentation" aria-hidden="true" style={{ height: slot.gapBeforePx, flexShrink: 0 }} /> : null}
-            {head != null ? <ResourceListHead>{head}</ResourceListHead> : null}
-            {renderCollectionRow(row, undefined, slot.index)}
-          </Fragment> : null;
+            {shown.heads.has(slot.id) ? <ResourceListHead before={slot.id}>{currentHeads.get(slot.id)}</ResourceListHead> : null}
+            {row !== undefined ? renderCollectionRow(row, undefined, slot.index) :
+              <li role="presentation" aria-hidden="true" data-collection-row-id={slot.id}
+                style={{ blockSize: heldSizes?.get(slot.id) ?? (window.plan.kind === "Ready" ? window.plan.height : undefined), flexShrink: 0 }} />}
+          </Fragment>;
         })}
         {window.plan.kind === "Ready" && window.plan.tailGapPx > 0 ? <li role="presentation" aria-hidden="true" style={{ height: window.plan.tailGapPx, flexShrink: 0 }} /> : null}
       </ResourceList>
     );
 
   return (
-    <PaneRefreshAnchor identity={`${returnScope}:${anchorKey ?? ""}`} value={rows} ready={status === "ready"}>
+    <PaneRefreshAnchor identity={`${returnScope}:${anchorKey ?? ""}`} value={shown} ready={shownStatus === "ready"}>
     <div
       ref={returnScopeRef}
       data-pane-return-scope={returnScope}

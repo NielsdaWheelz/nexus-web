@@ -31,3 +31,11 @@
   visibility: hidden;
   pointer-events: none;
 }
+
+.list[data-index-held] > :is([data-collection-row-id], [data-index-head-before]) {
+  block-size: var(--index-held-size);
+  min-block-size: var(--index-held-size);
+  max-block-size: var(--index-held-size);
+  overflow: clip;
+  flex-shrink: 0;
+}
