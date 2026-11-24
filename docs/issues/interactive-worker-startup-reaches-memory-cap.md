@@ -111,8 +111,15 @@ the 544 mib candidate covers the 416.9 mib observed peak, a provisional 80 mib
 platform/workload allowance and 32 mib operating reserve, rounded up to
 32 mib. the allowance uses an unpaired 65 mib native anonymous-charge
 difference between hosts as a sizing input. the reserve covers the 28.3 mib
-cross-epoch native peak difference and 12.8 mib warm carbon range. installed confirmation
-requires seven dedicated-account sends on one fresh epoch, worker peak at
-most 512 mib, 64 mib database and 128 mib host reserve, and zero new
-ooms, kills or restarts. reserve another 128 mib if the connector is absent.
-keep the incident open if the installed cause remains unexplained.
+cross-epoch native peak difference and 12.8 mib warm carbon range.
+
+at 09:40–09:42 utc, installed `ad3288b03` completed all seven dedicated-account
+sends in one worker epoch. its peak was 375,664,640 bytes, leaving 194,760,704
+bytes of the 544 mib cap against the frozen 32 mib reserve. the restarted
+database retained at least 2,065,575,936 bytes of reserve. the lowest sampled
+host availability was 4,578,185,216 bytes. the connector ran during the sends.
+swap, oom events, kills and worker restarts stayed at zero. all seven used 25,522
+assembled input bytes and the incident's tool plan with capture off.
+
+the original generation's assembled size, provider delivery and allocation
+site remain unknown. closure requires evidence that explains that kill.

@@ -7,13 +7,14 @@ native sol, metered sol, fable and astra completed. sol and fable each used
 one web read and a second provider turn. the ordinary carbon send coincided
 with the [interactive worker kill](interactive-worker-startup-reaches-memory-cap.md).
 
-qualify carbon/medium, neon/high and hydrogen/xhigh on one warmed, measured
-installed worker epoch. use the dedicated account with synthetic history,
-capture off and `ChatReadAdditiveWrite`. hydrogen must complete one real note
-read and cite its independently known value. retain the incident issue until
-its cause is explained or repaired.
+on the installed `ad3288b03` capacity release, the four warm-ups and all three
+gemini checks completed in one worker epoch. carbon/medium and neon/high each
+returned the requested literal in one provider turn without tools.
+hydrogen/xhigh read the synced note once, cited it and returned its independent
+value in two provider turns. each send used the dedicated account, capture off,
+`ChatReadAdditiveWrite` and 25,522 assembled input bytes.
 
-the dedicated account must also cross a genuine installed catalog cut with
+the dedicated account must cross a genuine installed catalog cut with
 a remembered tuple that the cut removes. verify explicit reselection, preserved
 history and recall revision in the installed browser. exact-image disposable
 rehearsal establishes functional retirement separately. native android recall
