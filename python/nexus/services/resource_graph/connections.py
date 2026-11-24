@@ -252,7 +252,9 @@ def resolve_connections(
                 if edge.origin in ("discovery", "assistant")
                 else None,
                 other=other,
-                rationale=edge.snapshot.get("rationale") if edge.snapshot is not None else None,
+                rationale=CitationSnapshot.model_validate(edge.snapshot).rationale
+                if edge.origin in ("discovery", "assistant") and edge.snapshot is not None
+                else None,
             )
             for (edge, _, _), other in zip(rows, others, strict=True)
         ]
