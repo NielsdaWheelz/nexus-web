@@ -68,7 +68,7 @@ export function useReferenceInput(
   const search = useLinkTargets(
     state?.raw ?? "",
     sourceRef,
-    state !== null,
+    state !== null && state.row_id === row_id,
     pickerOpen,
     sourceRef,
   );

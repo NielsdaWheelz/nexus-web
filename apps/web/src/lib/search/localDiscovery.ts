@@ -9,7 +9,7 @@ type SearchQuery = Extract<AuthoredQuery, { kind: "search" }>;
 /** A demand resumes its exact local cursor. Admission criteria belong to the consumer. */
 export function useLocalDiscovery(query: SearchQuery | null, active: boolean, useful: (row: QueryResult["rows"][number]) => boolean) {
   const prefix = useAuthoredContinuation(query);
-  const key = JSON.stringify(query);
+  const key = JSON.stringify([query, prefix.data?.store_revision ?? null]);
   const latest = useRef({ active, prefix, useful });
   useLayoutEffect(() => { latest.current = { active, prefix, useful }; }, [active, prefix, useful]);
   const [pausedKey, setPausedKey] = useState<string | null>(null);
@@ -19,12 +19,12 @@ export function useLocalDiscovery(query: SearchQuery | null, active: boolean, us
     const hide = () => { if (document.visibilityState === "hidden") retire(); };
     document.addEventListener("visibilitychange", hide);
     return () => { document.removeEventListener("visibilitychange", hide); retire(); };
-  }, [key, active, prefix.more, prefix.data?.store_revision]);
+  }, [key, active, prefix.more]);
 
   const run = (retry: boolean) => {
     const current = latest.current;
     const initial = current.prefix.data;
-    if (!current.active || document.visibilityState === "hidden" || initial === null || initial.next_cursor === null || attempt.current?.running) return;
+    if (!current.active || document.visibilityState === "hidden" || current.prefix.pending || initial === null || initial.next_cursor === null || attempt.current?.running) return;
     const demand = retry ? attempt.current : { controller: new AbortController(), remaining: 3, running: false };
     if (demand === null) return;
     attempt.current = demand;

@@ -452,10 +452,14 @@ function useList<T, M>(
   }, []);
 
   useEffect(() => {
-    const update = () => setVisible(isVisible());
+    const update = () => {
+      const visible = isVisible();
+      if (discovery && !visible) { flight.current?.abort(); demand.current = null; }
+      setVisible(visible);
+    };
     document.addEventListener("visibilitychange", update);
     return () => document.removeEventListener("visibilitychange", update);
-  }, []);
+  }, [discovery]);
 
   const ofKey = shown !== null && shown.key === key ? shown : null;
   const display = input.retainPreviousKey ? shown : ofKey;

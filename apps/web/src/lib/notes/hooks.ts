@@ -105,37 +105,84 @@ export function useAuthoredContinuation(query: CursorQuery | null) {
   useEffect(() => {
     if (query === null) return;
     const first = {...query, cursor: null};
-    let live = true, generation = 0;
+    let live = true, generation = 0, replaying = false;
     let data: QueryResult | null = null, revision: bigint | null = null;
     let active: Promise<QueryResult | null> | null = null, failedCursor = false;
-    const spent = new Set<string>();
+    let spent = new Set<string>();
     const publish = (pending: boolean, error: unknown | null = null) => {
       if (live) setState({key, data, error, pending});
     };
-    const receive = (next: QueryResult) => {
+    function receive(next: QueryResult) {
       const incoming = BigInt(next.store_revision);
       if (!live || revision !== null && incoming < revision) return;
       // A repeat notification from the same snapshot cannot truncate an accepted suffix.
-      if (data?.store_revision === next.store_revision && data.scope_available === next.scope_available) return;
-      generation++;
+      if (data?.store_revision === next.store_revision && data.scope_available === next.scope_available) {
+        if (replaying) { replaying = false; publish(false); }
+        return;
+      }
+      const ticket = ++generation;
       revision = incoming;
-      spent.clear();
       active = null;
       failedCursor = false;
-      data = next.scope_available ? next : {...next, rows: [], next_cursor: null};
-      publish(false);
-    };
-    const refresh = () => {
-      const ticket = generation;
+      const pages = spent.size + 1;
+      const commit = (value: QueryResult, cursors: Set<string>) => {
+        data = value.scope_available ? value : {...value, rows: [], next_cursor: null};
+        spent = value.scope_available ? cursors : new Set();
+        replaying = false;
+        publish(false);
+      };
+      if (!next.scope_available || pages === 1 || next.next_cursor === null) {
+        commit(next, new Set());
+        return;
+      }
+      replaying = true;
+      publish(true);
+      void (async () => {
+        const cursors = new Set<string>();
+        const rows = [...next.rows];
+        let cursor = next.next_cursor;
+        while (cursor !== null && cursors.size + 1 < pages) {
+          cursors.add(cursor);
+          next = await store.query({...first, cursor});
+          if (!live || generation !== ticket) return;
+          const version = BigInt(next.store_revision);
+          if (!next.scope_available && version >= incoming) {
+            revision = version;
+            commit(next, new Set());
+            return;
+          }
+          if (version !== incoming) {
+            if (version > incoming) revision = version;
+            refresh();
+            return;
+          }
+          cursor = next.next_cursor;
+          if (cursor !== null && cursors.has(cursor))
+            throw new AuthoredContinuationCursorError("Local search returned a previous cursor");
+          rows.push(...next.rows);
+        }
+        commit({...next, rows}, cursors);
+      })().catch(error => {
+        if (!live || generation !== ticket) return;
+        replaying = false;
+        publish(false, error);
+      });
+    }
+    function refresh() {
+      const ticket = ++generation;
+      replaying = true;
+      active = null;
       publish(true);
       void store.query(first).then(next => {
+        if (live && generation === ticket) receive(next);
+      }, error => {
         if (!live || generation !== ticket) return;
-        if (data?.store_revision === next.store_revision && data.scope_available === next.scope_available) publish(false);
-        else receive(next);
-      }, error => { if (live && generation === ticket) publish(false, error); });
-    };
+        replaying = false;
+        publish(false, error);
+      });
+    }
     function more(signal?: AbortSignal): Promise<QueryResult | null> {
-      if (!live || signal?.aborted || data === null || data.next_cursor === null) return Promise.resolve(null);
+      if (!live || replaying || signal?.aborted || data === null || data.next_cursor === null) return Promise.resolve(null);
       if (active !== null) return active;
       const base = data, cursor = data.next_cursor, ticket = generation;
       failedCursor = false;
@@ -143,17 +190,19 @@ export function useAuthoredContinuation(query: CursorQuery | null) {
       const read = store.query({...first, cursor}).then(next => {
         if (!live || generation !== ticket) return null;
         if (signal?.aborted) { publish(false); return null; }
+        if (!next.scope_available) { receive(next); return data; }
         if (next.store_revision !== base.store_revision) {
           if (BigInt(next.store_revision) > BigInt(base.store_revision)) {
-            revision = BigInt(next.store_revision); data = null; generation++; active = null; refresh();
+            revision = BigInt(next.store_revision);
+            refresh();
           } else publish(false);
           return null;
         }
-        if (next.scope_available && next.next_cursor !== null && (next.next_cursor === cursor || spent.has(next.next_cursor))) {
+        if (next.next_cursor !== null && (next.next_cursor === cursor || spent.has(next.next_cursor))) {
           failedCursor = true; publish(false, new AuthoredContinuationCursorError("Local search returned a previous cursor")); return null;
         }
         spent.add(cursor);
-        data = next.scope_available ? {...next, rows: [...base.rows, ...next.rows]} : {...next, rows: [], next_cursor: null};
+        data = {...next, rows: [...base.rows, ...next.rows]};
         publish(false);
         return data;
       }, error => {
@@ -167,7 +216,7 @@ export function useAuthoredContinuation(query: CursorQuery | null) {
     publish(true);
     const unsubscribe = store.subscribe(first, receive, error => {
       if (!live) return;
-      generation++; active = null; failedCursor = false; publish(false, error);
+      generation++; active = null; replaying = false; failedCursor = false; publish(false, error);
     });
     return () => { live = false; owner.current = null; unsubscribe(); };
     // The complete serialized query plus account is its subscription identity.
