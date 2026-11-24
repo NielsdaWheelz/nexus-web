@@ -5,6 +5,15 @@ one account-scoped authored graph. the same local query and commit owners serve
 writing online and offline. source downloads, chat, imports and account operations
 retain their separate owners.
 
+## page register
+
+large notes registers keep an identity-only order in the account's open
+sqlite connection before presenting a sparse description. a reachable visit
+retains its captured order. if the saved row disappears, back resolves the
+next surviving captured row, then the preceding one, against the current
+description. current membership authorizes the returned identity. visit and
+document retirement release their observations.
+
 ## journal
 
 `/daily` resolves the account's current civil date; `/daily/:date` opens the
