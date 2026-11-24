@@ -1624,7 +1624,20 @@ export class OutlineController {
     if (!dest || !src) {this.refuse("the outline changed; join again"); return;}
     const lease = this.lease();
     void this.pending.join(destination.row_id, source.row_id, this.capture(), {destination: dest, source: src},
-      () => this.sameOccurrence(destination) && this.sameOccurrence(source) && !this.hasChildren(this.rows.get(source.row_id)!),
+      revision => {
+        if (!this.sameOccurrence(destination) || !this.sameOccurrence(source) || this.hasChildren(this.rows.get(source.row_id)!)) return false;
+        const pressed = this.rows.get(row_id)!, neighbour = direction === "backward" ? this.previousVisible(pressed) : this.peer(pressed);
+        if (!neighbour || !("row_id" in neighbour) || neighbour.row_id !== peer.row_id) return false;
+        // A newer store can have inserted a sibling before its window has painted.
+        // The preceding visible row can be in a different disclosed branch.
+        const branches = new Set([source.parent_id!, destination.parent_id!]);
+        if (direction === "backward") {
+          for (const id of [source.parent_id, destination.parent_id]) for (let parent = id; parent !== null; parent = this.parent(parent))
+            if (this.requests.has(parent)) branches.add(parent);
+          if (this.rows.get(destination.row_id)?.open) branches.add(destination.row_id);
+        }
+        return [...branches].every(id => this.windows.get(id)?.data.store_revision === revision);
+      },
       reason => {if (this.active) this.refuse(reason);}).then(selection => {
       if (this.active && selection) {this.changed("semantic"); void this.focus(destination.row_id, selection, lease);}
     }).catch(error => {if (this.active) {this.error = error; this.notify();}});
@@ -2511,18 +2524,21 @@ export class OutlineController {
     const above = [parent_ref];
     for (let row = this.rows.get(at.parent_id!); row?.parent_id; row = this.rows.get(row.parent_id)) above.push(row.parent_ref);
     if (roots.some(ref => above.includes(ref))) {this.refuse(rangeReasonMessage("invalid_parent")); return;}
-    const store = await this.runtime.store, unique = [...new Set(roots)];
-    const bindings = await Promise.all(unique.map(ref => {const [a, b] = [parent_ref, ref].sort(); return store.query({kind: "binding", key: {kind: "link", endpoint_a: a!, endpoint_b: b!}});}));
-    const known = bindings.flatMap(binding => binding.binding_id === null ? [] : [binding.binding_id]);
-    const here = new Set(known.length ? (await store.readStates({refs: [], link_ids: known, anchor_ids: [], source_refs: []})).links
-      .filter(link => isVisible(link.add_vv, link.remove_vv)).map(link => link.link_id) : []);
-    const fresh = unique.filter((_, index) => bindings[index]!.binding_id === null || !here.has(bindings[index]!.binding_id!));
-    if (!this.active) return;
-    if (!this.sameOccurrence(at)) {this.refuse("the outline changed; paste again"); return;}
-    const skipped = roots.length - fresh.length;
-    if (!fresh.length) {this.refuse(skipped === 1 ? "already here" : `all ${skipped} already here`); return;}
-    const first = block ? {after: at.ref, before: null} : {after: null, before: at.seed ? null : at.ref}, rows = fresh.map(() => crypto.randomUUID());
-    const admitted = await this.history.createMany({births: fresh.map((ref, index) => index ? {ref, parent: parent_ref, after: index - 1, before: null} : {ref, parent: parent_ref, ...first}),
+    const unique = [...new Set(roots)], first = block ? {after: at.ref, before: null} : {after: null, before: at.seed ? null : at.ref};
+    let fresh: string[] = [], rows: string[] = [], skipped = 0;
+    const admitted = await this.history.createMany({births: async store => {
+      const bindings = await Promise.all(unique.map(ref => {const [a, b] = [parent_ref, ref].sort(); return store.query({kind: "binding", key: {kind: "link", endpoint_a: a!, endpoint_b: b!}});}));
+      const known = bindings.flatMap(binding => binding.binding_id === null ? [] : [binding.binding_id]);
+      const here = new Set(known.length ? (await store.readStates({refs: [], link_ids: known, anchor_ids: [], source_refs: []})).links
+        .filter(link => isVisible(link.add_vv, link.remove_vv)).map(link => link.link_id) : []);
+      if (!this.active) return [];
+      if (!this.sameOccurrence(at)) {this.refuse("the outline changed; paste again"); return [];}
+      fresh = unique.filter((_, index) => bindings[index]!.binding_id === null || !here.has(bindings[index]!.binding_id!));
+      skipped = roots.length - fresh.length;
+      if (!fresh.length) {this.refuse(skipped === 1 ? "already here" : `all ${skipped} already here`); return [];}
+      rows = fresh.map(() => crypto.randomUUID());
+      return fresh.map((ref, index) => index ? {ref, parent: parent_ref, after: index - 1, before: null} : {ref, parent: parent_ref, ...first});
+    },
       current: () => this.sameOccurrence(at), refused: reason => this.refuse(reason),
       parents: [this.writing(parent_ref)], change: {before, after: () => before, placements_after: (_documents, links) => fresh.map((ref, index) => ({row_id: rows[index]!, ref, link: links[index]!,
         placement: {row_id: rows[index]!, ref, parent_id: at.parent_id!, parent_ref, after_id: index ? rows[index - 1]! : block ? at.row_id : null, before_id: !index && !block && !at.seed ? at.row_id : null}}))}}, credit);

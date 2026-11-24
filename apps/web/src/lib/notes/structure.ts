@@ -9,9 +9,9 @@ import {canonicalSerialization} from "@nexus/authored/canonical";
 import {createNoteIntent, foldPageCredit, prepareChange, type Intent} from "@nexus/authored/commands";
 import {linkId} from "@nexus/authored/identity";
 import {advanceCoverage, isVisible, mergeChanges, mergeVector} from "@nexus/authored/merge";
-import {CommandTooLargeError, WorkConversionError, WorkJoinError, WorkUnavailableError, MAX_COMMAND_BYTES, MAX_PAGE_WORK_AT_MS, type Corpus, type LinkState, type MergeResult, type OutlineChildrenOccurrence, type PageCredit, type Vector} from "@nexus/authored/types";
+import {CommandTooLargeError, WorkConversionError, WorkJoinError, WorkUnavailableError, MAX_COMMAND_BYTES, MAX_PAGE_WORK_AT_MS, type AuthoredStore, type Corpus, type LinkState, type MergeResult, type OutlineChildrenOccurrence, type PageCredit, type Vector} from "@nexus/authored/types";
 import {preparePositions, prepareLink, prepareTarget} from "@/lib/resourceGraph/links";
-import {lowerGraph, LocalCommitError, PageWritingOrigin, type GraphIntent, type LocalCommit, type LocalGraphCommit, type WritingDocument, type WritingRuntime} from "./runtime";
+import {lowerGraph, LocalCommitError, PageWritingOrigin, transactionUpdate, type GraphIntent, type LocalCommit, type LocalGraphCommit, type WritingDocument, type WritingRuntime} from "./runtime";
 import type {DisplayedSplit, FocusSelection, NoteEdit} from "./editorTypes";
 import type {InputBookmark, Placement, RangePlan, RangeReason, RangeSnapshot} from "./outlineSelection";
 import {OutlineHistoryAllowance} from "./outlineHistoryAllowance";
@@ -32,12 +32,12 @@ function reversibleStep(replica_id: string, credit: PageCredit) {
 function reversibleBody(document: WritingDocument, state: string, origin: symbol, write: (clone: Y.Doc) => void): Intent[][] {
   const clone = hydrateNote(state); clone.clientID = document.doc.clientID;
   const manager = new Y.UndoManager([clone.getXmlFragment("body"), bodyInline(clone)], {trackedOrigins: new Set([origin]), captureTimeout: 0});
-  let changed = false;
-  clone.on("update", () => {changed = true;});
+  const updates: Uint8Array[] = [];
+  clone.on("update", (update: Uint8Array) => updates.push(update));
   try {
     return [() => write(clone), () => manager.undo(), () => manager.redo()].map(mutate => {
-      const vector = Y.encodeStateVector(clone); changed = false; mutate();
-      return changed ? [{kind: "edit_body", ref: document.ref, body_update: encodeBytes(Y.encodeStateAsUpdate(clone, vector))}] : [];
+      updates.length = 0; mutate();
+      return updates.length ? [{kind: "edit_body", ref: document.ref, body_update: transactionUpdate(updates)}] : [];
     });
   } finally {manager.clear(); manager.destroy(); clone.destroy();}
 }
@@ -191,6 +191,22 @@ export class OutlineHistory {
       apply: () => {throw new Error("outline command has not finished admission");}, cleanup: () => {}};
     this.past.push(group);
     return group;
+  }
+  /** Keep the gesture's chronological place while its read runs. Only the redo
+   * branch present at the gesture can be retired by its eventual admission. */
+  private reserveChecked(change: OutlineChange) {
+    this.boundary();
+    const future = this.future.filter(group => !group.released);
+    for (const prior of future) prior.suspended++;
+    const group = this.reserve(change, true), eligible = this.groups();
+    group.suspended++;
+    let pending = true;
+    return {group, eligible, finish: (accepted: boolean) => {
+      if (!pending) return;
+      pending = false; group.suspended--;
+      for (const prior of future) {prior.suspended--; if (accepted) this.release(prior);}
+      if (!accepted) this.release(group);
+    }};
   }
   private hold(group: Group, documents: readonly (WritingDocument | null)[]): void {
     for (const document of documents) if (document && !group.documents.includes(document)) {
@@ -581,7 +597,7 @@ export class OutlineHistory {
    * per endpoint, one add_link each; `fill` writes an empty note's first line in the
    * same command. The inverse unlinks each link this command added, puts a revived
    * link back where it stood, and deletes each newborn as a single birth's does. */
-  async createMany(args: {births: readonly Birth[]; parents: readonly (WritingDocument | null)[]; fill?: {document: WritingDocument; body: NoteBody}; change: OutlineBirthsChange;
+  async createMany(args: {births: readonly Birth[] | ((store: AuthoredStore) => Promise<readonly Extract<Birth, {ref: string}>[]>); parents: readonly (WritingDocument | null)[]; fill?: {document: WritingDocument; body: NoteBody}; change: OutlineBirthsChange;
     current(): boolean; refused(reason: string): void}, credit = this.origin.credit()): Promise<AdmittedNotes | null> {
     const origin = Symbol("outline paste"), fill = args.fill;
     const parents = [...new Set([...args.parents, fill?.document ?? null].filter((doc): doc is WritingDocument => doc !== null))];
@@ -596,22 +612,26 @@ export class OutlineHistory {
     // The clipboard, identities and gesture time are fixed before any store read.
     // Every initializer's ASCII bytes must fit even before graph and marker costs.
     let initializerBytes = 0;
-    for (const birth of args.births) if ("body" in birth) {
+    for (const birth of typeof args.births === "function" ? [] : args.births) if ("body" in birth) {
       const initializer = createNoteIntent(`note_block:${crypto.randomUUID()}`, birth.body);
       initializerBytes += initializer.body_update.length;
       if (initializerBytes > MAX_COMMAND_BYTES) return refuse(capacity);
       initializers.push(initializer);
     }
+    const reservation = this.reserveChecked({before: args.change.before, after: null, placements_before: args.change.placements_before});
+    const {group, eligible} = reservation;
     return this.runtime.admitCheckedWriting(credit, async (store, admit) => {
       if (this.closed) return null;
       if (!args.current()) return refuse("the outline changed; paste again");
       const replica = await store.readReplica();
+      const births = typeof args.births === "function" ? await args.births(store) : args.births;
+      if (!births.length && !fill) return null;
       let born = 0;
-      const refs = args.births.map(birth => "body" in birth ? initializers[born++]!.ref : birth.ref);
+      const refs = births.map(birth => "body" in birth ? initializers[born++]!.ref : birth.ref);
       const named = (anchor: string | number) => typeof anchor === "number" ? refs[anchor]! : anchor;
       const insertions = new Map<string, {link_id: string; after: string | null; before: string | null}[]>();
       const links: {link_id: string; endpoint_a: string; endpoint_b: string}[] = [];
-      for (const [index, birth] of args.births.entries()) {
+      for (const [index, birth] of births.entries()) {
         const ref = refs[index]!, parent_ref = named(birth.parent), id = await this.identity(parent_ref, ref);
         const anchor = async (value: string | number | null) => value === null ? null : this.identity(parent_ref, named(value));
         for (const [endpoint, insertion] of [[parent_ref, {link_id: id, after: await anchor(birth.after), before: await anchor(birth.before)}], [ref, {link_id: id, after: null, before: null}]] as const)
@@ -631,13 +651,13 @@ export class OutlineHistory {
         link_ids: [...new Set(graph.flatMap(intent => "link_id" in intent ? [intent.link_id] : []))], anchor_ids: [], source_refs: []};
       const snapshot = await store.readSnapshot(selection);
       if (this.closed) return null;
-      if (!args.current() || replica.store_revision !== snapshot.replica.store_revision || canonicalSerialization(preludes) !== canonicalSerialization(parents.flatMap(doc => doc.prelude)) ||
+      if (group.released || !args.current() || replica.store_revision !== snapshot.replica.store_revision || canonicalSerialization(preludes) !== canonicalSerialization(parents.flatMap(doc => doc.prelude)) ||
         (fill && encodeBytes(Y.encodeStateAsUpdate(fill.document.doc)) !== fillState))
         return refuse("the outline changed; paste again");
       const pasted = new Set(ids);
       const prior = new Map(snapshot.states.links.filter(link => pasted.has(link.link_id)).map(link => [link.link_id, link]));
       if ([...prior.values()].some(link => isVisible(link.add_vv, link.remove_vv))) return refuse("the outline changed; paste again");
-      const inverseGraph = (redo: boolean, coverage: Coverage, written: ReadonlyMap<string, LinkState>, live: readonly LinkState[]) => args.births.flatMap((birth, index): GraphIntent[] => {
+      const inverseGraph = (redo: boolean, coverage: Coverage, written: ReadonlyMap<string, LinkState>, live: readonly LinkState[]) => births.flatMap((birth, index): GraphIntent[] => {
         const ref = refs[index]!, id = ids[index]!, observed = coverage.links.get(id);
         if (!observed) return [];
         const link: GraphIntent = redo ? {kind: "restore_link", link_id: id} : {kind: "unlink", link_id: id, observed_add: {...observed}};
@@ -658,13 +678,11 @@ export class OutlineHistory {
         const undo = step(undoSeq, [...text[1]!, ...inverseGraph(false, coverage, added, forward.states.links)], forward.states);
         step(redoSeq, [...text[2]!, ...inverseGraph(true, coverage, added, undo.states.links)], undo.states);
       } catch (error) {if (error instanceof CommandTooLargeError) return refuse(capacity); throw error;}
-      this.boundary();
-      const group = this.reserve({before: args.change.before, after: null, placements_before: args.change.placements_before});
       const manager = fill ? new Y.UndoManager(scope(fill.document), {trackedOrigins: new Set([origin]), captureTimeout: 0}) : null;
       group.cleanup = () => {manager?.clear(); manager?.destroy();};
       this.hold(group, parents);
       for (const id of ids) group.coverage.links.set(id, {});
-      const written = new Map<string, LinkState>(), eligible = this.groups();
+      const written = new Map<string, LinkState>();
       const admitted = admit({existing: this.participants(group.documents, origin), notes: initializers.map(initializer => ({initializer, origin})),
         mutate: () => {if (fill) applyFill(fill.document.doc);}, prepare: async () => graph}, {...snapshot, selection});
       const documents = admitted.created;
@@ -690,10 +708,11 @@ export class OutlineHistory {
       const relationships = ids.map(id => this.createdLink(committed, () => id));
       group.after = args.change.after(documents); group.placements_after = args.change.placements_after?.(documents, relationships) ?? [];
       group.added = group.placements_after;
+      reservation.finish(true);
       return {documents, result: admitted.result, committed, links: relationships};
-    });
+    }).finally(() => reservation.finish(false));
   }
-  join(args: {source: WritingDocument; destination: WritingDocument; displayed: {source: DisplayedWriting; destination: DisplayedWriting}; sourceOccurrence: OccurrenceBookmark; change: OutlineChange; current(): boolean; refused(reason: string): void}): Promise<AdmittedJoin | null> {
+  join(args: {source: WritingDocument; destination: WritingDocument; displayed: {source: DisplayedWriting; destination: DisplayedWriting}; sourceOccurrence: OccurrenceBookmark; change: OutlineChange; current(revision: string): boolean; refused(reason: string): void}): Promise<AdmittedJoin | null> {
     const {source: sourceDocument, destination: destinationDocument, change, sourceOccurrence} = args;
     const credit = this.origin.credit(), origin = Symbol("outline join");
     if (sourceDocument === destinationDocument) throw new Error("a note cannot be joined to itself");
@@ -716,6 +735,8 @@ export class OutlineHistory {
     const proof = Promise.all([args.displayed.source.observed, args.displayed.destination.observed,
       Promise.all([sourceOccurrence.link, ...(change.placements_before ?? []).map(row => row.link)])] as const);
     void proof.catch(() => {});
+    const reservation = this.reserveChecked({...change, after: change.after?.kind === "text" ? {...change.after, resolve: selection} : change.after});
+    const {group, eligible} = reservation;
     return this.runtime.admitCheckedWriting(credit, async (store, admit) => {
       const [observed_touch, , links] = await proof;
       const selected = {refs: [...new Set([sourceDocument.ref, destinationDocument.ref, ...(credit ? [credit.ref] : [])])],
@@ -723,7 +744,7 @@ export class OutlineHistory {
       const snapshot = await store.readSnapshot(selected);
       if (this.closed) return null;
       const refuse = (reason: string): null => {args.refused(reason); return null;};
-      if (!args.current() || [sourceDocument.ref, destinationDocument.ref].some(ref => {
+      if (group.released || !args.current(snapshot.replica.store_revision) || [sourceDocument.ref, destinationDocument.ref].some(ref => {
         const row = snapshot.states.resources.find(resource => resource.ref === ref);
         return !row || !isVisible(row.touch_vv, row.delete_vv);
       }) || selected.link_ids.some(id => !snapshot.states.links.some(link => link.link_id === id && isVisible(link.add_vv, link.remove_vv)))) return refuse("the outline changed; join again");
@@ -739,8 +760,6 @@ export class OutlineHistory {
         if (error instanceof WorkJoinError) return refuse("this note has work records. remove its outline link instead.");
         throw error;
       }
-      this.boundary();
-      const group = this.reserve({...change, after: change.after?.kind === "text" ? {...change.after, resolve: selection} : change.after});
       group.removed = [sourceOccurrence];
       const manager = new Y.UndoManager(scope(destinationDocument), {trackedOrigins: new Set([origin]), captureTimeout: 0});
       group.cleanup = () => {manager.clear(); manager.destroy();}; this.hold(group, [sourceDocument, destinationDocument]);
@@ -758,7 +777,7 @@ export class OutlineHistory {
         this.release(group);
         return committed;
       });
-      const eligible = this.groups(), owner = this.focus, mayFocus = owner?.lease() ?? (() => false), basis = Y.encodeStateVector(destinationDocument.doc);
+      const owner = this.focus, mayFocus = owner?.lease() ?? (() => false), basis = Y.encodeStateVector(destinationDocument.doc);
       group.suspended++; group.coverage.resources.set(sourceDocument.ref, observed_touch);
       const admitted = admit({existing: this.participants(group.documents, origin), notes: [],
         mutate: () => {Y.applyUpdate(destinationDocument.doc, update, origin);}, prepare: async () => [remove]}, {...snapshot, selection: selected});
@@ -775,8 +794,9 @@ export class OutlineHistory {
       };
       const result = recover(admitted.result, basis, owner, mayFocus);
       const committed = this.track(group, result, eligible, () => {group.suspended--;});
+      reservation.finish(true);
       return {result, committed, selection};
-    });
+    }).finally(() => reservation.finish(false));
   }
   range(args: {
     plan: RangePlan; documents: readonly WritingDocument[]; snapshot: RangeSnapshot; metadata(): unknown; canRetain(): boolean;

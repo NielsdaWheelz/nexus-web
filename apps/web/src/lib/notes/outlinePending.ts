@@ -303,11 +303,11 @@ export class OutlinePendingInput {
     this.watch([original.row_id, replacement.row_id], admission, new Map([[replacement.row_id, link]]));
   }
   async join(destination: string, source: string, before: InputBookmark, displayed: {source: DisplayedWriting; destination: DisplayedWriting},
-    current: () => boolean, refused: (reason: string) => void): Promise<((document: WritingDocument) => FocusSelection) | null> {
+    current: (revision: string) => boolean, refused: (reason: string) => void): Promise<((document: WritingDocument) => FocusSelection) | null> {
     const owner = this.current(), to = this.row(destination), from = this.row(source);
     const a = to.ref ? owner.document(to.ref) : null, b = from.ref ? owner.document(from.ref) : null;
     if (!a || !b) throw new Error("join requires both displayed canonical fields");
-    const admitted = await owner.history.join({source: b, destination: a, displayed, current: () => this.owner === owner && current(), refused,
+    const admitted = await owner.history.join({source: b, destination: a, displayed, current: revision => this.owner === owner && current(revision), refused,
       sourceOccurrence: this.placementBookmark(from)!, change: {before, after: this.bookmark(to, "end"), placements_before: [this.placementBookmark(to)!], placements_after: [this.placementBookmark(to, false, source)!]}});
     if (!admitted) return null;
     this.freeze(this.fields.get(destination) ?? to, a);

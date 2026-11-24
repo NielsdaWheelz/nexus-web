@@ -6,4 +6,8 @@ see `InlineBinding.apply` and `handoff` in `apps/web/src/lib/notes/editorBinding
 
 reproduce on an ordinary block by making two large deletions inside one capture interval, each individually small on the wire, then undoing the group. also try a single input whose body delta fits without the page marker and exceeds the limit with it.
 
-close when the editor can budget or split an ordinary edit and its actual undo/redo group before changing durable-bound writing, including title, native composition and shared-document occurrences. show that the largest admitted group survives undo and redo, and refusal preserves text, selection, history and source sequence.
+ordinary return inside a descendant paragraph also publishes a split before measuring it. `OutlineController.keys` checks retained document count and bytes, then `OutlinePendingInput.split` binds the successor and moves focus immediately. `OutlineHistory.birth` only later resolves the predecessor’s pending move, the newborn’s actual parent and its insertion keys. the separate `splitCharge` check runs for annotation-child splits. calling it on the original placement would price the wrong graph when a move is pending.
+
+reproduce by building a paragraph with individually valid writes, then splitting off a suffix over 1.6 mib of ascii. its base64 initializer alone exceeds 2 mib. near the limit the marker can be decisive. also split while the predecessor’s move is pending and type immediately in the successor.
+
+close when the editor can budget or split an ordinary edit and its actual undo/redo group before changing durable-bound writing, including title, native composition and shared-document occurrences. for descendant splits, prove all three directions against the actual newborn and resolved placement and preserve the destination of subsequent input. show that the largest admitted group survives undo and redo, and refusal preserves text, selection, history and source sequence.

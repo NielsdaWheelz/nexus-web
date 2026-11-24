@@ -51,6 +51,10 @@ interface WritingMutation {
 }
 interface WritingAdmission {created: readonly WritingDocument[]; result: Promise<LocalCommit>}
 type CheckedBaseline = Awaited<ReturnType<AuthoredStore["readSnapshot"]>> & {selection: StateSelection};
+/** Only the transaction's own inserts and deletes belong to its command. */
+export function transactionUpdate(updates: Uint8Array[]): string {
+  return encodeBytes(updates.length === 1 ? updates[0]! : Y.mergeUpdates(updates));
+}
 interface CachedDocument extends WritingDocument { text_pending: Set<Promise<LocalCommit>>; read_attempt: number; read_subscription: number; pins: number; bytes: number; last_used: number; pending: number; prelude: readonly Intent[]; receive(resource: ResourceState): void; track(result: Promise<LocalCommit>, origin: unknown): void; unsubscribe: () => void }
 interface SaveState { saving: boolean; error: unknown | null; error_occurrence: object | null; error_refs: string[]; revision: number }
 interface FailedCommit {
@@ -99,7 +103,7 @@ export class WritingRuntime {
   private state: SaveState = { saving: false, error: null, error_occurrence: null, error_refs: [], revision: 0 };
   private pending = 0;
   private readonly pending_commands = new Map<Promise<LocalCommit | null>, FailedCommit | null>();
-  private capture_scope: { owner: FailedCommit; origins: Map<string, unknown>; mutated: Set<string>; offending: Map<string,{document:CachedDocument;updates:string[]}> } | null = null;
+  private capture_scope: { owner: FailedCommit; origins: Map<string, unknown>; updates: Map<string, Uint8Array[]>; offending: Map<string,{document:CachedDocument;updates:string[]}> } | null = null;
   constructor(private readonly accountId: string) {}
   snapshot = (): SaveState => this.state;
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
@@ -270,16 +274,6 @@ export class WritingRuntime {
       for (const note of initializers) note.doc.destroy();
       throw error;
     }
-    let vectors: Map<string,Uint8Array>;
-    try {
-      // A refused copy supplies its pre-copy basis so rollback includes those
-      // undurable ids, without resending the already durable document.
-      vectors = new Map(participants.map(({document,state_vector}) => [document.ref,state_vector ?? Y.encodeStateVector(document.doc)]));
-      for (const note of initializers) vectors.set(note.ref,Y.encodeStateVector(note.doc));
-    } catch (error) {
-      for (const note of initializers) note.doc.destroy();
-      throw error;
-    }
     const owner = reserve();
     owner.created_refs = initializers.map(note=>note.ref);
     const created: CachedDocument[] = [];
@@ -309,7 +303,7 @@ export class WritingRuntime {
     }
     if (owner.credit) refs.add(owner.credit.ref);
     owner.selection = selectStates({refs:[...refs,...created.map(document=>document.ref)]});
-    const scope = {owner,origins:new Map(participants.map(({document,origin})=>[document.ref,origin])),mutated:new Set<string>(),offending:new Map<string,{document:CachedDocument;updates:string[]}>()};
+    const scope = {owner,origins:new Map(participants.map(({document,origin})=>[document.ref,origin])),updates:new Map<string,Uint8Array[]>(),offending:new Map<string,{document:CachedDocument;updates:string[]}>()};
     this.capture_scope = scope;
     try {
       const returned: unknown = args.mutate(created);
@@ -317,12 +311,14 @@ export class WritingRuntime {
     }
     catch (error) { owner.faulted = true; owner.fault = error; }
     finally { this.capture_scope = null; }
-    for (const {document} of participants) if (scope.mutated.has(document.ref)) document.text_pending.add(owner.settled);
+    for (const {document} of participants) if (scope.updates.has(document.ref)) document.text_pending.add(owner.settled);
     for (const {document} of scope.offending.values()) document.text_pending.add(owner.settled);
     const edits: Intent[] = [];
     try {
-      for (const {document} of participants) if (scope.mutated.has(document.ref)) {
-        const update = encodeBytes(Y.encodeStateAsUpdate(document.doc,vectors.get(document.ref)));
+      for (const {document, state_vector} of participants) {
+        const updates = scope.updates.get(document.ref); if (!updates) continue;
+        // A refused join includes the undurable copy as well as its undo.
+        const update = state_vector ? encodeBytes(Y.encodeStateAsUpdate(document.doc, state_vector)) : transactionUpdate(updates);
         if (document.doc.share.has("body")) edits.push({kind:"edit_body",ref:document.ref,body_update:update});
         else edits.push({kind:"edit_title",ref:document.ref,title_update:update});
       }
@@ -625,7 +621,10 @@ export class WritingRuntime {
             void scope.owner.settled.then(release,release);
           }
           offending.updates.push(encodeBytes(update));
-        } else scope.mutated.add(ref);
+        } else {
+          const updates = scope.updates.get(ref);
+          if (updates) updates.push(update); else scope.updates.set(ref, [update]);
+        }
         if (error) throw error;
         return;
       }
