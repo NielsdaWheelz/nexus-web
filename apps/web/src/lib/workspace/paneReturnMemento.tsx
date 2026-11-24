@@ -31,10 +31,17 @@ export type AnchorPosition =
   | { readonly kind: "missing" }
   | { readonly kind: "failed" };
 
+export interface ReturnOrder {
+  readonly prefix: readonly string[];
+  retain(): () => void;
+  successor(id: string | null): Promise<string | null>;
+}
+
 /** A committed frame keeps the old eye line readable after its DOM has changed. */
 export interface AnchorGeometryFrame {
   readonly revision: number;
   readonly observation?: string;
+  readonly returnOrder?: ReturnOrder;
   readonly root: HTMLElement;
   readonly scrollport: HTMLElement;
   readonly origin: number;
@@ -56,7 +63,9 @@ interface Anchor {
   scope: string;
   id: string;
 }
+type RetainedOrder = { value: ReturnOrder; release(): void };
 interface Memento {
+  orders?: Map<string, RetainedOrder>;
   routeKey: string;
   scrollTop: number;
   eyeLine: (Anchor & { offset: number; parents: Anchor[] }) | null;
@@ -94,6 +103,7 @@ interface PendingRestore {
   frame: number | null;
   stop: () => void;
   readonly mounted: Map<string, () => void>;
+  readonly neighbors: Map<string, { id: string | null } | null>;
 }
 
 /** The store's half: remember a pane's visit before it leaves; forget dead visits. */
@@ -138,6 +148,7 @@ function findAnchor(content: HTMLElement, anchor: Anchor): HTMLElement | null {
 }
 
 interface CollectionGeometry {
+  releaseOrder?: () => void;
   readonly visitId: string;
   readonly routeKey: string;
   readonly scope: string;
@@ -160,6 +171,12 @@ export function createPaneReturnMemento(guard: WorkGuard) {
   const collections = new Map<string, Set<CollectionGeometry>>();
   const anchoring = new Map<HTMLElement, string>();
   const holds = new Map<string, { readonly element: HTMLElement; readonly top: number; scheduled: boolean }>();
+
+  function remember(visitId: string, value: Memento | null) {
+    for (const order of mementos.get(visitId)?.orders?.values() ?? []) order.release();
+    if (value === null) mementos.delete(visitId);
+    else mementos.set(visitId, value);
+  }
 
   function frames(port: Scrollport): CollectionGeometry[] {
     return [...(collections.get(port.visitId) ?? [])].filter(entry => entry.routeKey === port.routeKey &&
@@ -381,13 +398,36 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       }
       return "ready";
     };
+    const recover = (anchor: Anchor): Anchor | null | undefined => {
+      const order = memento.orders?.get(anchor.scope)?.value;
+      if (order === undefined) return survivingAnchor(port, anchor, memento.anchors);
+      const index = order.prefix.indexOf(anchor.id);
+      if (index >= 0) {
+        const frame = geometryFor(port, anchor)?.frame;
+        const next = order.prefix.slice(index + 1).find(id => frame?.position(id).kind === "ready");
+        if (next !== undefined) return {...anchor, id: next};
+      }
+      const key = anchorKey(anchor);
+      const result = restore.neighbors.get(key);
+      if (result === undefined) {
+        restore.neighbors.set(key, null);
+        void order.successor(index >= 0 ? null : anchor.id).then(id => {
+          if (pending.get(paneId) !== restore) return;
+          restore.neighbors.set(key, {id});
+          attempt(paneId);
+        }, () => {if (pending.get(paneId) === restore) finish(paneId, false);});
+      }
+      if (result == null) return undefined;
+      return result.id === null ? survivingAnchor(port, anchor, memento.anchors) : {...anchor, id: result.id};
+    };
     const eyeLine = memento.eyeLine;
     if (eyeLine !== null) {
       const state = admit(eyeLine, eyeLine.parents);
       if (state === "failed") return finish(paneId, false);
       if (state === "pending") return;
       if (state === "missing") {
-        const next = survivingAnchor(port, eyeLine, memento.anchors);
+        const next = recover(eyeLine);
+        if (next === undefined) return;
         memento.eyeLine = next === null ? null : {...next, offset: eyeLine.offset, parents: parentsFor(port, next)};
         return attempt(paneId);
       }
@@ -397,7 +437,8 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       const state = admit(focused.anchor, focused.parents);
       if (state === "failed") memento.focus = null;
       else if (state === "missing") {
-        const next = survivingAnchor(port, focused.anchor, memento.anchors);
+        const next = recover(focused.anchor);
+        if (next === undefined) return;
         memento.focus = {anchor: next, parents: next === null ? [] : parentsFor(port, next)};
         return attempt(paneId);
       } else if (state === "pending" || geometryFor(port, focused.anchor)?.geometry.element(focused.anchor.id) === null) return;
@@ -442,6 +483,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       routeKey: port.routeKey,
       frame: null,
       mounted: new Map(),
+      neighbors: new Map(),
       stop: () => {
         for (const type of intents) {
           port.element.removeEventListener(type, cancel, { capture: true });
@@ -534,16 +576,19 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         active.matches(":focus-visible") &&
         !isEditableTarget(active);
       const row = keyboard ? active.closest<HTMLElement>(ANCHORS) : null;
-      mementos.set(port.visitId, {
-        routeKey: port.routeKey,
-        scrollTop: element.scrollTop,
-        eyeLine, anchors: orderedAnchors(port),
-        focus: keyboard ? {anchor: row && anchorOf(row, content), parents: parentAnchors(port, row)} : null,
-      });
+      const focus = keyboard ? {anchor: row && anchorOf(row, content), parents: parentAnchors(port, row)} : null;
+      const orders = new Map<string, RetainedOrder>();
+      for (const anchor of [eyeLine, focus?.anchor]) {
+        if (!anchor || orders.has(anchor.scope)) continue;
+        const value = geometryFor(port, anchor)?.frame?.returnOrder;
+        if (value !== undefined) orders.set(anchor.scope, {value, release: value.retain()});
+      }
+      remember(port.visitId, {routeKey: port.routeKey, scrollTop: element.scrollTop,
+        eyeLine, anchors: orderedAnchors(port), focus, orders});
     },
     forget(reachable: ReadonlyMap<string, string>): void {
       for (const [visitId, value] of mementos) {
-        if (reachable.get(visitId) !== value.routeKey) mementos.delete(visitId);
+        if (reachable.get(visitId) !== value.routeKey) remember(visitId, null);
       }
       for (const [visitId, value] of visitData) {
         if (reachable.get(visitId) !== value.routeKey) visitData.delete(visitId);
@@ -640,7 +685,9 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     forkVisitPresentation(sourceVisitId: string, sourceRouteKey: string, visitId: string, routeKey: string): void {
       const shell = mementos.get(sourceVisitId);
       if (shell?.routeKey === sourceRouteKey) {
-        mementos.set(visitId, { ...structuredClone(shell), routeKey, focus: null });
+        const {orders, ...view} = shell;
+        remember(visitId, {...structuredClone(view), routeKey, focus: null,
+          orders: new Map([...orders ?? []].map(([scope, {value}]) => [scope, {value, release: value.retain()}]))});
       }
       const source = visitData.get(sourceVisitId);
       if (source?.routeKey !== sourceRouteKey) return;
@@ -648,7 +695,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       if (view) visitData.set(visitId, { routeKey, values: new Map([["Reader.InspectionView", structuredClone(view)]]) });
     },
     prepareSourceArrival(visitId: string): void {
-      mementos.delete(visitId);
+      remember(visitId, null);
       for (const [paneId, restore] of pending) {
         if (restore.visitId === visitId) finish(paneId, false);
       }
@@ -679,6 +726,11 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         before.observation !== next.observation || (next.observation === undefined && before.anchors !== next.anchors && (before.anchors.length !== next.anchors.length || before.anchors.some((id, index) => id !== next.anchors[index]))));
       // Geometry epochs use the same whole-pane snapshot as row publications.
       const captured = changed && port && !holds.has(paneId) ? captureRefresh(paneId) : null;
+      if (before?.returnOrder !== next?.returnOrder) {
+        const release = next?.returnOrder?.retain();
+        entry.releaseOrder?.();
+        entry.releaseOrder = release;
+      }
       entry.frame = next;
       updateAnchoring();
       if (captured !== null) restoreRefresh(captured);
@@ -691,6 +743,8 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       applyHold(paneId);
     },
     forgetCollection(entry: CollectionGeometry): void {
+      entry.releaseOrder?.();
+      entry.releaseOrder = undefined;
       const entries = collections.get(entry.visitId);
       entries?.delete(entry);
       if (entries?.size === 0) collections.delete(entry.visitId);
@@ -701,7 +755,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       const port = scrollports.get(paneId);
       if (!port) return;
       const parents = parentsFor(port, anchor);
-      mementos.set(port.visitId, {routeKey: port.routeKey, scrollTop: port.element.scrollTop, anchors: orderedAnchors(port),
+      remember(port.visitId, {routeKey: port.routeKey, scrollTop: port.element.scrollTop, anchors: orderedAnchors(port),
         eyeLine: {...anchor, offset: 0, parents}, focus: focus ? {anchor, parents} : null});
       requestRestore(paneId, port);
     },
@@ -918,7 +972,7 @@ export function usePaneCollectionGeometry({ scope, window }: {
     read() {
       const frame = readGeometry();
       if (frame === null) return null;
-      return { revision: frame.epoch, observation: frame.revision ?? undefined, root: frame.list, scrollport: frame.scrollport, origin: frame.listTop, anchors: frame.ids,
+      return { revision: frame.epoch, observation: frame.revision ?? undefined, returnOrder: frame.returnOrder, root: frame.list, scrollport: frame.scrollport, origin: frame.listTop, anchors: frame.ids,
         firstVisible(top, bottom) {
           if (bottom <= 0 || top >= frame.totalHeight) return null;
           for (let rank = frame.rankAt(top); rank < frame.count; rank++) {

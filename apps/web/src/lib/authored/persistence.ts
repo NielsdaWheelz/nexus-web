@@ -124,6 +124,10 @@ export class Persistence {
       }
       const rows = await this.db.all(plan.sql, plan.params);
       const [record] = rows;
+      if (query.kind === "page_register" && (query.at.kind === "retain" || query.at.kind === "release")) {
+        if (query.at.kind === "retain") result.page_register = {kind: "retained"};
+        return result;
+      }
       if (query.kind === "habit_days") {
         result.habit_days = rows.map(row => String(row.local_date));
       } else if (query.kind === "latest_habit_date") {

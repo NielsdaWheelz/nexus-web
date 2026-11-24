@@ -421,8 +421,10 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
   switch (query.kind) {
     case "page_register": {
       const needle = foldFilterText(query.text.trim());
-      const base = `FROM resources AS r INDEXED BY resources_register WHERE kind='page' AND visible=1 AND local_date IS NULL`;
-      const filtered = `${base}${needle ? " AND EXISTS(SELECT 1 FROM literal_fields f WHERE f.ref=r.ref AND instr(f.title,?1)>0)" : ""}`;
+      const visible = "r.kind='page' AND r.visible=1 AND r.local_date IS NULL";
+      const match = needle ? " AND EXISTS(SELECT 1 FROM literal_fields f WHERE f.ref=r.ref AND instr(f.title,?1)>0)" : "";
+      const base = `FROM resources AS r INDEXED BY resources_register WHERE ${visible}`;
+      const filtered = base + match;
       const params = needle ? [needle] : [];
       const first = params.length + 1;
       const order = "name COLLATE NOCASE,ref";
@@ -430,6 +432,22 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       const label = "CASE WHEN length(CAST(json_quote(name) AS BLOB))<=512 THEN name END";
       const item = `'ref',ref,'group',${group},'label',${label}`;
       switch (query.at.kind) {
+        case "retain":
+          return {sql: `INSERT INTO page_register_orders(token,rank,ref)
+            SELECT ?${first},row_number() OVER (ORDER BY ${PAGE_TITLE_SQL} COLLATE NOCASE,r.ref)-1,r.ref ${filtered}`,
+            params: [...params,query.at.token]};
+        case "successor": {
+          const token = `?${first}`, ref = `?${first + 1}`;
+          const live = `FROM page_register_orders o CROSS JOIN resources r ON r.ref=o.ref
+            WHERE o.token=${token} AND ${visible}${match}`;
+          return {sql: `WITH eye(rank) AS (SELECT CASE WHEN ${ref} IS NULL THEN -1
+              ELSE (SELECT rank FROM page_register_orders WHERE token=${token} AND ref=${ref}) END)
+            SELECT json_object('kind','successor','ref',coalesce(
+              (SELECT o.ref ${live} AND o.rank>(SELECT rank FROM eye) ORDER BY o.rank LIMIT 1),
+              (SELECT o.ref ${live} AND o.rank<(SELECT rank FROM eye) ORDER BY o.rank DESC LIMIT 1))) AS register`,
+            params: [...params,query.at.token,query.at.ref]};
+        }
+        case "release": return {sql: "DELETE FROM page_register_orders WHERE token=?", params: [query.at.token]};
         case "describe":
           return {sql: `WITH extent AS (SELECT (SELECT count(*) ${filtered}) AS total,(SELECT count(*) ${base}) AS source_total),
             slice AS (SELECT ref,${PAGE_TITLE_SQL} AS name ${filtered} ORDER BY ${order}

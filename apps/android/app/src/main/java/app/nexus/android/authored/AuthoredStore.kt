@@ -482,6 +482,12 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
                 if (rows(sql("literal_missing")).length() > 0) return JSONObject().put("literal_repair", true)
                 literalsComplete = true
             }
+            if (kind == "page_register") {
+                when (query.getJSONObject("at").getString("kind")) {
+                    "retain" -> { read(0); return result.put(field, JSONObject().put("kind", "retained")) }
+                    "release" -> { read(0); return result }
+                }
+            }
             val record = read(0).getJSONObject(0)
             if (kind in listOf("page_register", "habits", "work_pending", "work_completed", "work_row", "mentions", "daily_index")) return result.put(field, JSONObject(record.getString("register")))
             val raw = JSONArray(record.getString("items"))

@@ -106,9 +106,13 @@ export type RankedIndexResult<Row, Description extends object = object> =
   | ({kind: "description"; total: number; groups: number[]; items: Row[]} & Description)
   | {kind: "range"; start: number; items: Row[]}
   | {kind: "locations"; items: (Row & {rank: number})[]};
-export type PageRegisterRequest = {kind: "page_register"; text: string} & RankedIndexRequest;
+export type PageRegisterRequest = {kind: "page_register"; text: string} & (RankedIndexRequest |
+  {at: {kind: "retain"; token: string}; expected_revision: Counter} |
+  {at: {kind: "successor"; token: string; ref: ResourceRef | null}; expected_revision: null} |
+  {at: {kind: "release"; token: string}; expected_revision: null});
 /** Groups are consecutive run lengths in register order. Each slice owns its labels. */
-export type PageRegisterResult = RankedIndexResult<RegisterItem, {source_total: number}>;
+export type PageRegisterResult = RankedIndexResult<RegisterItem, {source_total: number}> |
+  {kind: "retained"} | {kind: "successor"; ref: ResourceRef | null};
 export type DailyIndexSource = {kind: "daily_index"; arrival: LocalDate; retained: LocalDate[]};
 export type DailyIndexRequest = DailyIndexSource & (
   | {at: {kind: "describe"}; expected_revision: null}

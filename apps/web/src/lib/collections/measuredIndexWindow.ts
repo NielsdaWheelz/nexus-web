@@ -7,6 +7,8 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject
 import { windowRange, windowRanks } from "./collectionWindow";
 import { scrollFrame } from "./scrollFrame";
 
+import type { ReturnOrder } from "@/lib/workspace/paneReturnMemento";
+
 export const INDEX_WINDOW_THRESHOLD = 200;
 export type IndexGeometry = "UniformIndex";
 /** A complete extent, with identities materialized only for the demanded ranks.
@@ -16,6 +18,7 @@ export interface RankedIndex {
   readonly revision: string;
   readonly failed: boolean;
   readonly heads: ReadonlyMap<number, string>;
+  readonly returnOrder?: ReturnOrder;
   idAt(rank: number): string | undefined;
   rankOf(id: string): number | null | undefined;
   request(ranks: readonly number[], ids: readonly string[]): void;
@@ -36,6 +39,7 @@ export interface IndexWindowFrame {
   readonly ids: readonly string[];
   readonly count: number;
   readonly revision: string | null;
+  readonly returnOrder?: ReturnOrder;
   readonly failed: boolean;
   idAt(rank: number): string | undefined;
   readonly epoch: number;
@@ -88,6 +92,7 @@ interface Committed {
   readonly rankOf: RankedIndex["rankOf"];
   readonly idAt: RankedIndex["idAt"];
   readonly revision: string | null;
+  readonly returnOrder?: ReturnOrder;
   readonly failed: boolean;
   readonly list: HTMLUListElement | null;
   readonly port: HTMLElement | null;
@@ -258,8 +263,8 @@ export function useMeasuredIndexWindow({ scopeKey, ids, headIds, ranked, hold, g
   const readGeometry = useCallback((): IndexWindowFrame | null => {
     const current = committed.current;
     if (current === null || current.view === null || current.extent === null || current.list === null || current.port === null) return null;
-    const { list, port, extent, view: measured, rankOf, idAt, count, revision, failed } = current;
-    return { ...extent, scopeKey: current.scopeKey, ids: current.ids, idAt, count, revision, failed, epoch: measured.epoch, height: measured.height, list,
+    const { list, port, extent, view: measured, rankOf, idAt, count, revision, returnOrder, failed } = current;
+    return { ...extent, scopeKey: current.scopeKey, ids: current.ids, idAt, count, revision, returnOrder, failed, epoch: measured.epoch, height: measured.height, list,
       position(id) {
         const index = rankOf(id);
         return index == null ? index : extent.rowTop(index);
@@ -290,7 +295,7 @@ export function useMeasuredIndexWindow({ scopeKey, ids, headIds, ranked, hold, g
       }
       return changed ? { scopeKey, sticky, pins } : before;
     });
-    committed.current = { geometry, scopeKey, ids, count, idAt, rankOf, revision: ranked?.revision ?? null, failed: ranked?.failed ?? false,
+    committed.current = { geometry, scopeKey, ids, count, idAt, rankOf, revision: ranked?.revision ?? null, returnOrder: ranked?.returnOrder, failed: ranked?.failed ?? false,
       list, port, view: activeView, headIds, extent };
     ranked?.request(wantedRanks, [...wantedIds]);
     if (previous?.list !== list) {
