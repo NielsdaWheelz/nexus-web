@@ -15,6 +15,8 @@ import { openAuthoredStore } from "@/lib/authored/client";
 export interface WritingSnapshot { body_state: string; observed_touch: Vector }
 export interface WritingDocument {
   ref: string; doc: Y.Doc; retain(): () => void; capture(): Promise<WritingSnapshot>;
+  /** Wait for currently pending edits without freezing a causal snapshot. */
+  editsSettled(): Promise<void>;
   onCommitted(listener: (receipt: LocalCommit, origin: unknown) => void): () => void;
   hasPendingEdits(): boolean;
   subscribePendingEdits(listener: () => void): () => void;
@@ -75,6 +77,8 @@ export class WritingRuntime {
   private readonly documents = new Map<string, {promise:Promise<CachedDocument>;value:CachedDocument|null}>();
   private readonly listeners = new Set<() => void>();
   private tail: Promise<unknown> = Promise.resolve();
+  // The tail's last title owner can collect edits until its preparation starts.
+  private queuedTitle: { owner: FailedCommit; origin: unknown } | null = null;
   private failed: FailedCommit | null = null;
   private retrying: Promise<void> | null = null;
   private retired = false;
@@ -90,6 +94,7 @@ export class WritingRuntime {
     for (const listener of this.listeners) listener();
   }
   async committedPrefix(): Promise<string> {
+    this.queuedTitle = null;
     const admitted = this.tail;
     const required = [...this.pending_commands.keys()];
     await Promise.all(required);
@@ -99,6 +104,9 @@ export class WritingRuntime {
   }
   whenUploaded(commandSeq: string, signal: AbortSignal): Promise<void> { return this.store.then(store => store.whenUploaded(commandSeq, signal)); }
   run(intent: Intent, selection: Partial<StateSelection> = {}): Promise<LocalCommit> {
+    return this.enqueue(intent, selection, null);
+  }
+  private enqueue(intent: Intent, selection: Partial<StateSelection>, origin: unknown): Promise<LocalCommit> {
     if (this.retired) return Promise.reject(new Error("Writing account is closed"));
     if (this.capture_scope) {
       const error = new Error("A compound mutation cannot submit another command");
@@ -110,11 +118,13 @@ export class WritingRuntime {
     const inferred = intentSelection(frozen);
     const selected = selectStates(selection);
     for (const key of ["refs", "link_ids", "anchor_ids", "source_refs"] as const) inferred[key] = [...new Set([...inferred[key], ...selected[key]])];
+    const waiting = this.pending > 0;
     const owner = this.reserve();
     const capturesExcerpt = (command: Intent): boolean => command.kind === "batch" ? command.intents.some(capturesExcerpt) : command.kind === "create_highlight" || command.kind === "update_highlight" && command.selection !== null || command.kind === "capture_passage";
     owner.reject_oversize = capturesExcerpt(frozen);
     owner.intent = frozen;
     owner.selection = inferred;
+    if (waiting && origin !== null && origin !== undefined && frozen.kind === "edit_title") this.queuedTitle = {owner, origin};
     owner.release();
     this.publish({ saving: true });
     return owner.result;
@@ -126,6 +136,7 @@ export class WritingRuntime {
     active(): boolean; retired: R; changed: R; capacity: R | null;
   }): {result: Promise<{kind: "committed"; receipt: LocalGraphCommit} | {kind: "refusal"; reason: R}>; committed: Promise<LocalGraphCommit | null>} {
     if (this.capture_scope) throw new Error("A compound mutation cannot submit another command");
+    this.queuedTitle = null;
     let accept: (value: {kind: "committed"; receipt: LocalGraphCommit} | {kind: "refusal"; reason: R}) => void = () => {};
     let reject: (error: unknown) => void = () => {};
     const result = new Promise<{kind: "committed"; receipt: LocalGraphCommit} | {kind: "refusal"; reason: R}>((resolve, refuse) => {accept = resolve; reject = refuse;});
@@ -309,11 +320,13 @@ export class WritingRuntime {
     return owner;
   }
   private reserve(): FailedCommit {
+    this.queuedTitle = null;
     this.pending++;
     this.state = { ...this.state, saving: true };
     const owner = this.commandOwner(), {result, settled} = owner;
     this.pending_commands.set(result, owner);
     const operation = this.tail.then(async () => {
+      if (this.queuedTitle?.owner === owner) this.queuedTitle = null;
       if (this.retired) throw new Error("Writing account is closed");
       this.failed = owner;
       let receipt: LocalCommit;
@@ -524,6 +537,7 @@ export class WritingRuntime {
       },
       onCommitted: listener => { committed.add(listener); return () => committed.delete(listener); },
       hasPendingEdits: () => pending_edits.size > 0,
+      editsSettled: async () => { await Promise.all(pending_edits); },
       subscribePendingEdits: listener => {pendingListeners.add(listener); return () => pendingListeners.delete(listener);},
       track: (result, origin) => {
         pending_edits.add(result); cached.pending++;
@@ -532,6 +546,7 @@ export class WritingRuntime {
         void result.then(receipt => { try { for (const listener of committed) listener(receipt, origin); } finally { settled(); } },settled);
       },
       capture: () => {
+        this.queuedTitle = null;
         const body_state = encodeBytes(Y.encodeStateAsUpdate(doc));
         let observed: Vector = { ...observed_touch };
         const pending = [...pending_edits];
@@ -572,7 +587,15 @@ export class WritingRuntime {
       const intent: Intent = kind !== "page" ? { kind: "edit_body", ref, body_update: encodeBytes(update) } : { kind: "edit_title", ref, title_update: encodeBytes(update) };
       const prepared: Intent = cached.prelude.length ? {kind:"batch",intents:[...cached.prelude,intent]} : intent;
       cached.prelude = [];
-      const pending = this.run(prepared, { refs: [ref] }).catch(error => {
+      const queued = this.queuedTitle;
+      const previous = queued?.owner.intent;
+      // Keep generous room for the authored envelope before folding updates.
+      if (prepared.kind === "edit_title" && queued?.origin === origin && previous?.kind === "edit_title" && previous.ref === ref &&
+          previous.title_update.length + prepared.title_update.length <= MAX_COMMAND_BYTES / 2) {
+        const combined = encodeBytes(Y.mergeUpdates([decodeBytes(previous.title_update), update]));
+        if (combined.length <= MAX_COMMAND_BYTES / 2) { previous.title_update = combined; return; }
+      }
+      const pending = this.enqueue(prepared, { refs: [ref] }, origin).catch(error => {
         if (error instanceof LocalCommitError && this.failed) return this.failed.settled;
         throw error;
       });

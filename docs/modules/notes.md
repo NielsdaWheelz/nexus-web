@@ -79,6 +79,11 @@ revision and retries when another commit advances that revision first. an open
 writing document installs its exact local receipt and reads causal state on a
 change from outside its own writer.
 
+the first title edit submits immediately. edits from the same occurrence can
+join the last queued title command while it waits for its turn. preparation,
+an intervening command, and causal capture seal those bytes. after preparation,
+retries use the same source sequence and payload. undo retains its own groups.
+
 ## work
 
 a task or daily habit is the same note with optional structured work metadata.

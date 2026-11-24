@@ -101,7 +101,7 @@ interface Group {
 }
 interface TextHistory {
   document: WritingDocument; manager: Y.UndoManager; origin: symbol;
-  latest: object | null; latestGroup: Group | null; active: number; groups: number; captureBytes: number; unsubscribe(): void;
+  latest: object | null; latestGroup: Group | null; active: number; groups: number; unsubscribe(): void;
 }
 interface FocusOwner {
   capture(): InputBookmark;
@@ -130,18 +130,18 @@ export class OutlineHistory {
     });
   }
   trackOccurrences(read: () => {documents: readonly WritingDocument[]; bytes: number}): void {this.occurrenceRetention = read;}
-  hasRetained(): boolean {return this.groups().length > 0 || [...this.texts.values()].some(history => history.captureBytes > 0);}
+  hasRetained(): boolean {return this.groups().length > 0;}
   typingOrigin(): unknown {return new this.TypingOrigin();}
   boundary(): void {for (const history of this.texts.values()) history.manager.stopCapturing();}
-  retainedHistoryDocuments(): readonly WritingDocument[] {return [...new Set([...this.groups().flatMap(group => group.documents), ...[...this.texts.values()].filter(history => history.captureBytes).map(history => history.document)])];}
-  retainedDocuments(): readonly WritingDocument[] {return [...new Set([...this.groups().flatMap(group => group.documents), ...[...this.texts.values()].filter(history => history.active || history.captureBytes).map(history => history.document)])];}
+  retainedHistoryDocuments(): readonly WritingDocument[] {return [...new Set(this.groups().flatMap(group => group.documents))];}
+  retainedDocuments(): readonly WritingDocument[] {return [...new Set([...this.retainedHistoryDocuments(), ...[...this.texts.values()].filter(history => history.active).map(history => history.document)])];}
   retainedOccurrences(): ReadonlySet<string> {return new Set(this.groups().flatMap(group => [...inputRows(group.before), ...inputRows(group.after), ...group.added.map(row => row.row_id), ...group.removed.map(row => row.row_id)]));}
   retainedRows(): ReadonlySet<string> {return new Set(this.groups().flatMap(group => [...inputRows(group.before), ...inputRows(group.after), ...[...group.placements_before, ...group.placements_after, ...group.added, ...group.removed]
     .flatMap(row => [row.row_id, row.placement?.parent_id, row.placement?.after_id, row.placement?.before_id]).filter((key): key is string => typeof key === "string")]));}
   private retainedBytes(): number {return this.groups().reduce((bytes, group) => bytes + new TextEncoder().encode(JSON.stringify({
     refs: group.refs, before: group.before, after: group.after, placements_before: group.placements_before, placements_after: group.placements_after, added: group.added, removed: group.removed, receipt: group.receipt,
     resources: [...group.coverage.resources], links: [...group.coverage.links], metadata: group.metadata(),
-  })).byteLength, [...this.texts.values()].reduce((bytes, history) => bytes + history.captureBytes, 0));}
+  })).byteLength, 0);}
   private releaseOldest(): void {
     if (this.groups().some(group => group.released)) return;
     const oldest = this.groups().reduce<Group | null>((oldest, group) => oldest === null || group.stamp < oldest.stamp ? group : oldest, null);
@@ -361,7 +361,7 @@ export class OutlineHistory {
         lastOrigin = source;
       };
       document.doc.on("beforeTransaction", separate);
-      entry = {document, origin, manager, latest: null, latestGroup: null, active: 0, groups: 0, captureBytes: 0, unsubscribe: () => {document.doc.off("beforeTransaction", separate);}};
+      entry = {document, origin, manager, latest: null, latestGroup: null, active: 0, groups: 0, unsubscribe: () => {document.doc.off("beforeTransaction", separate);}};
       this.texts.set(document.ref, entry);
     }
     if (entry.document !== document) throw new Error("outline history needs its retained canonical document");
@@ -413,11 +413,9 @@ export class OutlineHistory {
         } else group.after = after;
         const eligible = this.groups();
         const stop = document.onCommitted((receipt, source) => {if (source === origin) this.cover(receipt, eligible);});
-        // Capture now, before any later undo reserves a slot. Its frontier is not
-        // ownership: only the receipts observed above may extend group coverage.
-        const bytes = Y.encodeStateAsUpdate(document.doc).byteLength;
-        history.captureBytes += bytes;
-        const barrier = document.capture().then(() => undefined).finally(() => {history.captureBytes -= bytes; this.pruneText(history); this.trim();});
+        // The group pins its document through settlement. Only receipts
+        // with eligible recipients extend its causal coverage.
+        const barrier = document.editsSettled();
         const previous = group.settled;
         group.settled = Promise.all([previous, barrier]).then(([receipt]) => receipt);
         void barrier.then(stop, stop); void group.settled.catch(this.failure);
@@ -425,7 +423,7 @@ export class OutlineHistory {
       }};
   }
   private pruneText(history: TextHistory): void {
-    if (history.active || history.groups || history.captureBytes || this.texts.get(history.document.ref) !== history) return;
+    if (history.active || history.groups || this.texts.get(history.document.ref) !== history) return;
     history.unsubscribe(); history.manager.clear(); history.manager.destroy(); this.texts.delete(history.document.ref);
   }
 
