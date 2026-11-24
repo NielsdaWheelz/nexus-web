@@ -14,7 +14,7 @@ import Button from "@/components/ui/Button";
 import HabitYear, { HabitYearLegend } from "@/components/work/HabitYear";
 import { habitDateLabel } from "@/lib/localDate";
 import { useAccountToday } from "@/lib/notes/accountDay";
-import { useAuthoredQuery } from "@/lib/notes/hooks";
+import { useAuthoredQuery, useWorkLabel } from "@/lib/notes/hooks";
 import { useRankedAuthoredWindow } from "@/lib/notes/rankedAuthoredWindow";
 import { useWorkHistory, useOpenHabitHistory, WorkHistoryContext } from "@/lib/notes/work";
 import { usePaneChrome, usePaneTitleYield } from "@/lib/panes/paneChrome";
@@ -138,11 +138,12 @@ function HabitRow({item, today, year, history}: {
   const currentYear = today === null ? null : Number(today.slice(0, 4));
   const start = today === null ? dates.at(-1) ?? null :
     year === null || year === currentYear ? today : currentYear !== null && year < currentYear ? `${String(year).padStart(4, "0")}-01-01` : dates[0] ?? today;
-  const title = item.label === null ? "name too large to display" : item.label || "empty note";
+  const {label: title, read: name} = useWorkLabel(item);
   return <ResourceRow as="div" primary={{kind: "link", href: `/notes/${item.ref.slice(11)}`}} title={title}
     content={{kind: "Details", body: <>
       <span ref={marker} hidden/>
       {!item.enabled ? <p className={styles.muted}>daily repetition is off</p> : null}
+      <AuthoredReadFailure {...name} noun="this habit name"/>
       <AuthoredReadFailure {...read} noun="this habit’s dates"/>
       {today !== null && year !== null ? <div className={styles.calendar} aria-busy={read.pending}>
         {resolved ? <HabitYear year={year} today={today} dates={dates} onOpen={date => {if (history) open(item.ref, date, history);}}/> : null}
