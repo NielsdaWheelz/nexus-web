@@ -27,7 +27,7 @@ export function useTranscriptWindow(
   target: string | null,
   pins: readonly string[],
 ) {
-  const [motion, setMotion] = useState<ScrollMotion>("still");
+  const [motion, commitMotion] = useState<ScrollMotion>("still");
   const [shown, setShown] = useState(order);
   const append = motion === "travel" && order.length > shown.length && shown.every((key, rank) => key.run_id === order[rank].run_id);
   if (shown !== order && (motion === "still" || append)) setShown(order);
@@ -93,15 +93,18 @@ export function useTranscriptWindow(
     });
   }, []);
   useLayoutEffect(() => {
-    const scroll = port.current;
-    if (!scroll) return;
-    const size = new ResizeObserver(() => { record(); readViewport(); });
+    const size = new ResizeObserver(record);
     observer.current = size;
-    size.observe(scroll);
     for (const node of items.current.values()) size.observe(node);
     return () => { observer.current = null; size.disconnect(); };
-  }, [port, readViewport, record]);
+  }, [record]);
   useLayoutEffect(record, [record, motion]);
+  const setMotion = useCallback((next: ScrollMotion) => {
+    // A press may arrive before an observed size has reached React. Reserve the
+    // current painted slots in the same commit that freezes their geometry.
+    if (next !== "still") record();
+    commitMotion(next);
+  }, [record]);
 
   const readPins = useCallback(() => {
     const transcript = root.current;

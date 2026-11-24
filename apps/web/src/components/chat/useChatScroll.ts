@@ -18,7 +18,6 @@ import { flushSync } from "react-dom";
 import { observeScrollMotion, writeScrollPosition, type ScrollMotion } from "@/lib/collections/scrollMotion";
 import type { TurnKey } from "@/lib/chat/wire";
 import styles from "./messageInspection.module.css";
-import { preferredScrollBehavior } from "@/lib/preferredScrollBehavior";
 
 // The one transcript scroll owner. A new question pins to the top inset
 // ("top") until its answer overflows the fold, then follows the newest text
@@ -109,6 +108,7 @@ function createScrollOwner(
       .find(row => row.getBoundingClientRect().bottom > eye);
     readingPoint = slot ? { runId: slot.dataset.chatRun!, slotOffsetPx: slot.getBoundingClientRect().top - top, line: null } : null;
     if (!readingPoint) return;
+    const bottom = Math.min(slot?.getBoundingClientRect().bottom ?? eye, port.getBoundingClientRect().bottom);
     for (const root of slot?.querySelectorAll<HTMLElement>("[data-message-id]") ?? []) {
       const body = root.querySelector<HTMLElement>("[data-message-content]");
       if (!body || body.getBoundingClientRect().bottom <= eye) continue;
@@ -121,7 +121,7 @@ function createScrollOwner(
       for (const candidate of cursor.nodes) {
         probe.selectNodeContents(candidate.node);
         for (const box of probe.getClientRects()) {
-          if (box.bottom <= eye || box.right <= port.getBoundingClientRect().left || box.left >= port.getBoundingClientRect().right) continue;
+          if (box.bottom <= eye || box.top >= bottom || box.right <= port.getBoundingClientRect().left || box.left >= port.getBoundingClientRect().right) continue;
           const next = Math.max(0, box.top - eye);
           if (next < distance) { run = candidate; distance = next; }
         }
@@ -167,12 +167,12 @@ function createScrollOwner(
         ? rectAt(cursor, point.line.offset) : null;
       const drift = (rect ? rect.top - point.line.offsetPx : root.getBoundingClientRect().top - point.line.messageOffsetPx)
         - port.getBoundingClientRect().top;
-      if (Math.abs(drift) > .5) jump(port.scrollTop + drift, false);
+      if (Math.abs(drift) > .5) jump(port.scrollTop + drift);
       return;
     }
     const slot = transcript.current?.querySelector<HTMLElement>(`[data-chat-run="${CSS.escape(runId)}"]`);
-    if (slot) jump(port.scrollTop + slot.getBoundingClientRect().top - port.getBoundingClientRect().top - point.slotOffsetPx, false);
-    else if (offset !== null) jump(offset - point.slotOffsetPx, false);
+    if (slot) jump(port.scrollTop + slot.getBoundingClientRect().top - port.getBoundingClientRect().top - point.slotOffsetPx);
+    else if (offset !== null) jump(offset - point.slotOffsetPx);
   };
 
   const message = (id: string | null) =>
@@ -200,12 +200,12 @@ function createScrollOwner(
       content.scrollHeight - spacer > top + port.clientHeight + 1
     );
   };
-  const jump = (top: number, smooth: boolean) => {
+  const jump = (top: number) => {
     const port = scrollport.current;
-    if (!port) return;
+    if (!port || motion !== "still") return;
     const target = clamp(port, top);
     if (Math.abs(port.scrollTop - target) < 0.5) return;
-    writeScrollPosition(port, target, smooth ? preferredScrollBehavior() : "auto");
+    writeScrollPosition(port, target);
     lastStillTop = port.scrollTop;
     geometry().readViewport();
   };
@@ -232,7 +232,7 @@ function createScrollOwner(
     if (mode === "top" && anchor) {
       const top = clamp(port, anchor.offsetTop - inset());
       if (!overflows(top)) {
-        if (Math.abs(port.scrollTop - top) > 1) jump(top, false);
+        if (Math.abs(port.scrollTop - top) > 1) jump(top);
         return;
       }
       mode = "bottom";
@@ -241,7 +241,7 @@ function createScrollOwner(
       mode === "bottom" &&
       Math.abs(port.scrollTop - clamp(port, port.scrollHeight)) > 1
     )
-      jump(port.scrollHeight, false);
+      jump(port.scrollHeight);
   };
   const holdInspection = () => {
     const port = scrollport.current;
@@ -254,7 +254,7 @@ function createScrollOwner(
       return false;
     }
     const drift = trigger.getBoundingClientRect().top - port.getBoundingClientRect().top - offset;
-    if (Math.abs(drift) > 1) jump(port.scrollTop + drift, false);
+    if (Math.abs(drift) > 1) jump(port.scrollTop + drift);
     inspection.top = port.scrollTop;
     return true;
   };
@@ -288,10 +288,10 @@ function createScrollOwner(
     if (bounds.top >= box.top && bounds.bottom <= box.bottom)
       inspection.focus = null;
   };
-  const pinTop = (id: string, smooth: boolean) => {
+  const pinTop = (id: string) => {
     mode = "top";
     const anchor = message(id);
-    if (anchor) jump(anchor.offsetTop - inset(), smooth);
+    if (anchor) jump(anchor.offsetTop - inset());
   };
 
   const handle: ChatScrollHandle = {
@@ -302,7 +302,7 @@ function createScrollOwner(
       if (passage && !(Number(target.dataset.messageSourceStart) <= passage.start && Number(target.dataset.messageSourceEnd) >= passage.end)) return null;
       releaseInspection();
       const port = scrollport.current;
-      if (move && port) jump(port.scrollTop + target.getBoundingClientRect().top - port.getBoundingClientRect().top - inset(), false);
+      if (move && port) jump(port.scrollTop + target.getBoundingClientRect().top - port.getBoundingClientRect().top - inset());
       capturePoint(); notifyGeometry();
       return target;
     },
@@ -320,7 +320,7 @@ function createScrollOwner(
       releaseInspection();
       mode = position.pinMode;
       readingPoint = position.point;
-      jump(position.scrollTop, false);
+      jump(position.scrollTop);
       if (mode === "released" && readingPoint) holdReadingPoint(); else hold();
       capturePoint(); notifyGeometry();
     },
@@ -333,7 +333,7 @@ function createScrollOwner(
       releaseInspection();
       const bounds = target.getBoundingClientRect(), viewport = port.getBoundingClientRect();
       if (bounds.top < viewport.top || bounds.bottom > viewport.bottom)
-        jump(port.scrollTop + bounds.top - viewport.top - inset(), false);
+        jump(port.scrollTop + bounds.top - viewport.top - inset());
       capturePoint(); report(); notifyGeometry();
     },
     inspectReference(id, citationId) {
@@ -343,7 +343,7 @@ function createScrollOwner(
       const port = scrollport.current;
       if (!target || !port) return null;
       onAttention(); releaseInspection();
-      jump(port.scrollTop + target.getBoundingClientRect().top - port.getBoundingClientRect().top - inset(), false);
+      jump(port.scrollTop + target.getBoundingClientRect().top - port.getBoundingClientRect().top - inset());
       capturePoint(); notifyGeometry();
       return target;
     },
@@ -364,11 +364,11 @@ function createScrollOwner(
         return;
       }
       measure();
-      if (explicitSend && userId !== null) { laidOut = true; pinTop(userId, false); }
+      if (explicitSend && userId !== null) { laidOut = true; pinTop(userId); }
       else if (!laidOut && geometry().shown.length > 0) {
         laidOut = true;
-        if (latest) { mode = "bottom"; jump(port.scrollHeight, false); }
-        else if (initialId !== null) jump(geometry().offset(initialId) ?? 0, false);
+        if (latest) { mode = "bottom"; jump(port.scrollHeight); }
+        else if (initialId !== null) jump(geometry().offset(initialId) ?? 0);
       } else hold();
       previousOrder = geometry().shown;
       capturePoint(); report(); notifyGeometry();
@@ -382,12 +382,17 @@ function createScrollOwner(
       const port = scrollport.current;
       const observer = new ResizeObserver(() => {
         if (motion === "still") { measure(); hold(); capturePoint(); }
+        geometry().readViewport();
         report(); notifyGeometry();
       });
       if (port) observer.observe(port);
       if (transcript.current) observer.observe(transcript.current);
       const unobserve = port && observeScrollMotion(port, next => {
-        if (motion === "still") { nativeStart = lastStillTop; moved = false; }
+        if (motion === "still") {
+          nativeStart = lastStillTop;
+          moved = false;
+          if (next === "seek") onAttention();
+        }
         if (next === "still") {
           noteMovement(port);
           capturePoint();
@@ -398,7 +403,7 @@ function createScrollOwner(
         if (next !== "still") noteMovement(port);
         flushSync(() => geometry().setMotion(next));
         if (next === "still" && deferredSend !== null) {
-          pinTop(deferredSend, false);
+          pinTop(deferredSend);
           deferredSend = null;
         }
       });
@@ -409,8 +414,8 @@ function createScrollOwner(
       const port = scrollport.current;
       const anchor = message(anchorId);
       if (!port) return;
-      if (anchor && !overflows(anchor.offsetTop - inset())) pinTop(anchorId ?? "", false);
-      else { mode = "bottom"; jump(port.scrollHeight, false); }
+      if (anchor && !overflows(anchor.offsetTop - inset())) pinTop(anchorId ?? "");
+      else { mode = "bottom"; jump(port.scrollHeight); }
       capturePoint(); report(); notifyGeometry();
     },
     onScroll() {
@@ -457,7 +462,7 @@ function createScrollOwner(
           : port.scrollTop + port.clientHeight >= port.scrollHeight;
       if (atEdge) return;
       releaseInspection();
-      jump(port.scrollTop + event.deltaY, false);
+      jump(port.scrollTop + event.deltaY);
       event.preventDefault();
     },
   };
