@@ -40,13 +40,8 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
   const rankOf = ranked?.rankOf ?? ((id: string) => byId.get(id) ?? null);
   const idAt = ranked?.idAt ?? ((rank: number) => ids[rank]);
   const pins = [...pinned, ...demands.values()];
-  const getPort = useCallback(() => {
-    for (let node = list.current?.parentElement; node; node = node.parentElement) {
-      if (node.matches("[data-pane-content], [data-companion-scrollport]") ||
-        node.scrollHeight > node.clientHeight && /^(auto|scroll)$/u.test(getComputedStyle(node).overflowY)) return node;
-    }
-    return null;
-  }, [list]);
+  const getPort = useCallback(() =>
+    list.current?.closest<HTMLElement>("[data-pane-content], [data-companion-scrollport]") ?? null, [list]);
   useLayoutEffect(() => {
     if (!windowed) return;
     const root = list.current, port = getPort();
