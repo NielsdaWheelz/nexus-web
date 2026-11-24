@@ -21,6 +21,9 @@ import {
 } from "react";
 import type { WritingDocument } from "@/lib/notes/runtime";
 import { InlineBinding, type EditorBinding } from "@/lib/notes/editorBinding";
+import { CommandTooLargeError } from "@nexus/authored/types";
+import type { EditorHistory } from "@/lib/notes/structure";
+import { TEXT_LIMIT } from "@/lib/notes/textAdmission";
 import * as Y from "yjs";
 import { bodyInline } from "@nexus/authored/documents";
 import type { TextEditBase } from "@/lib/notes/editorTypes";
@@ -191,8 +194,7 @@ export interface NoteEditorProps {
   projection?: NoteEditorProjection;
   embedding?: {row_id: string; context: ReturnType<NoteEditorProjection["context"]>};
   reference?: ReferenceInputHost | null;
-  writingDocument?: WritingDocument;
-  writingOrigin?: unknown;
+  writing?: {document: WritingDocument; admitText: EditorHistory["admitText"]};
   editorKey: string;
   occurrenceKey?: string;
   /** A failed commit holds this editor's words: its caret turns `--danger`, never the sole signal. */
@@ -272,6 +274,7 @@ export const noteEditorAttachmentOwnerId = (visitId: string, editorKey: string) 
   resourceDraftOwnerId(visitId, `Notes.Attachment:${editorKey}`);
 
 const NOT_INSERTED: Line = { fact: "couldn’t insert this.", reason: "your writing is kept." };
+const WRITING_LIMIT: Line = {fact: TEXT_LIMIT, reason: "your writing is kept."};
 const LINK_OPEN: Line = { fact: "couldn’t do that while a link is open.", reason: "your writing is kept." };
 const NOT_ATTACHED = "couldn’t attach this file.";
 const NOT_ADDED = "couldn’t add this attachment.";
@@ -545,7 +548,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       else latest.current.onEdit(edit);
       queueMicrotask(() => bindingRef.current?.refresh());
       return true;
-    } catch { warn(NOT_INSERTED); return false; }
+    } catch (error) { warn(error instanceof CommandTooLargeError ? WRITING_LIMIT : NOT_INSERTED); return false; }
   }, [warn]);
   const presentBody = (view: EditorView, field: EditingField, value: "prose" | "code") => {
     latest.current.history?.boundary();
@@ -832,7 +835,8 @@ function NoteEditorContent(props: NoteEditorProps) {
     };
     const undoCommand: Command = (_state, _dispatch, current) => current ? historyInput(current, false) : false;
     const redoCommand: Command = (_state, _dispatch, current) => current ? historyInput(current, true) : false;
-    const binding = latest.current.projection?.binding ?? (latest.current.writingDocument ? new InlineBinding(latest.current.writingDocument, latest.current.writingOrigin) : null);
+    const writing = latest.current.writing;
+    const binding = latest.current.projection?.binding ?? (writing ? new InlineBinding(writing.document, writing.admitText) : null);
     bindingRef.current = binding;
     const taskPrefix = (current: EditorView, before: NoteBody, row_id: string | null) => {
       const prior = canonicalSchema.nodeFromJSON(before.body_pm_json);
@@ -1514,7 +1518,11 @@ function NoteEditorContent(props: NoteEditorProps) {
         }
         if (binding && tr.docChanged && !external && !referenceField && !editingQuery && !(composingField && (composition.reference || composition.returning !== null))) {
           try { binding.apply(tr); }
-          catch { warn({ fact: "couldn’t apply that edit.", reason: "your writing is kept." }); return; }
+          catch (error) {
+            view.updateState(view.state);
+            warn(error instanceof CommandTooLargeError ? WRITING_LIMIT : {fact: "couldn’t apply that edit.", reason: "your writing is kept."});
+            return;
+          }
         }
         if(binding && !editingQuery)tr.setMeta("addToHistory",false);
         const before = view.state;
@@ -1611,7 +1619,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       focus(selection, preventScroll = false) {
         if (!view.editable || view.composing) return;
         if (typeof selection === "function") {
-          const document = binding?.document() ?? latest.current.writingDocument;
+          const document = binding?.document() ?? latest.current.writing?.document;
           if (!document) return;
           selection = selection(document);
         }
@@ -1682,10 +1690,10 @@ function NoteEditorContent(props: NoteEditorProps) {
 
   useLayoutEffect(() => {
     const view = viewRef.current;
-    if (props.projection || props.writingDocument || !view || view.composing || compositionBase.current !== null || referenceRef.current.getState() !== null)
+    if (props.projection || props.writing?.document || !view || view.composing || compositionBase.current !== null || referenceRef.current.getState() !== null)
       return;
     replaceDoc(view, docFromBody(props.body));
-  }, [props.body, props.revision, props.writingDocument, props.projection]);
+  }, [props.body, props.revision, props.writing?.document, props.projection]);
 
   useLayoutEffect(() => {
     const raw = reference.state?.raw;

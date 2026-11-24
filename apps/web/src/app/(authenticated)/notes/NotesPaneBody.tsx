@@ -12,7 +12,7 @@ import ButtonLink from "@/components/ui/ButtonLink";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { presentNote } from "@/lib/collections/presenters/note";
-import { formatDay, formatLocalDateInTimeZone, isLocalDate } from "@/lib/localDate";
+import { calendarDateAtUtcNoon, formatDay, formatLocalDateInTimeZone } from "@/lib/localDate";
 import { useAccountToday } from "@/lib/notes/accountDay";
 import { useNotesRegister } from "@/lib/notes/hooks";
 import { truncatePaneSearchQuery, usePaneChrome } from "@/lib/panes/paneChrome";
@@ -48,14 +48,13 @@ export default function NotesPaneBody() {
   const rows = useMemo(() => {
     let previousDay: string | null = null;
     return (read.data?.rows ?? []).map(page => {
-      const localDay = today !== null && page.last_work_at_ms !== null
+      const day = today !== null && page.last_work_at_ms !== null
         ? formatLocalDateInTimeZone(new Date(page.last_work_at_ms), calendarTimeZone) : null;
-      const day = localDay !== null && isLocalDate(localDay) ? localDay : null;
       let mark: string | null = null;
       if (visit.order === "worked" && day !== null && day !== previousDay && today !== null) {
-        const month = shortMonth.format(new Date(`${day}T12:00:00Z`)).toLowerCase();
-        const year = day.slice(0, 4);
-        mark = day === today ? "today" : `${Number(day.slice(8))} ${month}${year === today.slice(0, 4) ? "" : ` ${year}`}`;
+        const month = shortMonth.format(calendarDateAtUtcNoon(day)).toLowerCase();
+        const year = day.slice(0, -6);
+        mark = day === today ? "today" : `${Number(day.slice(-2))} ${month}${year === today.slice(0, -6) ? "" : ` ${year}`}`;
       }
       previousDay = day;
       return presentNote({ id: page.ref.slice("page:".length), title: pageTitle(page.title ?? "", null) }, day, mark);

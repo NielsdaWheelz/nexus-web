@@ -22,7 +22,6 @@ export interface PendingOutlineField {
   receiptOwner?: object; revision?: number;
 }
 interface RangeState {placement: Placement | null; link: LinkState | null}
-interface BirthLocation {placement: Omit<Placement, "row_id" | "ref">; source: RangeState}
 interface BoundField {
   document: WritingDocument | null; link: LinkState | Promise<LinkState> | null;
   release(): void; settled: boolean; captureBytes: number; reservations?: number; next?: {state: Promise<RangeState>; link: Promise<LinkState>};
@@ -187,37 +186,33 @@ export class OutlinePendingInput {
     owner.notify(); this.resume();
   }
   /** Pin the neighbour's preceding gesture now, never a later command on that occurrence. */
-  private birthLocation(row: PendingOutlineField, beside?: string): Promise<BirthLocation> | null {
+  private birthLocation(row: PendingOutlineField, beside?: string): Promise<Omit<Placement, "row_id" | "ref">> | null {
     const predecessor = beside ? this.bound.get(beside)?.next?.state : null;
     if (!predecessor) return null;
     return predecessor.then(source => {
       if (!source.placement) throw new Error("the new item's neighbour was removed");
-      return {source, placement: {parent_id: source.placement.parent_id, parent_ref: source.placement.parent_ref,
-        after_id: row.after_id, before_id: row.before_id ?? null}};
+      return {parent_id: source.placement.parent_id, parent_ref: source.placement.parent_ref, after_id: row.after_id, before_id: row.before_id ?? null};
     });
   }
-  private resolveBirth(row: PendingOutlineField, beside: PendingOutlineField, location: Promise<BirthLocation>, split: boolean): NonNullable<OutlineBirthChange["resolvePlacement"]> {
+  private resolveBirth(row: PendingOutlineField, beside: PendingOutlineField, location: Promise<Omit<Placement, "row_id" | "ref">>): NonNullable<OutlineBirthChange["resolvePlacement"]> {
     return async document => {
-      const {placement, source} = await location;
+      const placement = await location;
       const after: OccurrenceBookmark = {row_id: row.row_id, ref: document.ref, placement: {...placement, row_id: row.row_id, ref: document.ref}, link: null};
-      const before: OccurrenceBookmark = {row_id: beside.row_id, ref: beside.ref!, placement: source.placement, link: source.link};
-      // Early undo may already have hidden the newborn or restored source text. Only its location follows the preceding gesture.
-      for (const target of split ? [before, after] : [after]) {
-        const current = this.fields.get(target.row_id), at = target.placement;
-        if (current && at) this.fields.set(target.row_id, {...current, parent_id: at.parent_id, parent_ref: at.parent_ref,
-          after_id: at.after_id, before_id: at.before_id ?? undefined});
-      }
+      // Early undo may already have hidden the newborn. Only the location follows the preceding gesture.
+      const current = this.fields.get(after.row_id);
+      if (current) this.fields.set(after.row_id, {...current, parent_id: placement.parent_id, parent_ref: placement.parent_ref,
+        after_id: placement.after_id, before_id: placement.before_id ?? undefined});
       this.owner?.notify();
       return {placement: {parent_ref: placement.parent_ref, parent: null,
         after_ref: row.after_id === beside.row_id ? beside.ref : null,
         before_ref: row.before_id === beside.row_id ? beside.ref : null},
-        placements_before: split ? [before] : [], placements_after: [after]};
+        placements_after: [after]};
     };
   }
-  private followBirth(row: PendingOutlineField, admitted: AdmittedLink, location: Promise<BirthLocation> | null): void {
+  private followBirth(row: PendingOutlineField, admitted: AdmittedLink, location: Promise<Omit<Placement, "row_id" | "ref">> | null): void {
     if (!location) return;
     const bound = this.bound.get(row.row_id)!;
-    const state = Promise.all([location, admitted.link]).then(([settled, link]) => ({placement: {...settled.placement, row_id: row.row_id, ref: row.ref!}, link}));
+    const state = Promise.all([location, admitted.link]).then(([settled, link]) => ({placement: {...settled, row_id: row.row_id, ref: row.ref!}, link}));
     const next = {state, link: admitted.link}; bound.next = next;
     void state.then(() => {
       if (bound.next === next) bound.next = undefined;
@@ -225,13 +220,13 @@ export class OutlinePendingInput {
     }).catch(error => this.fail(error));
   }
   /** A birth binds its canonical document immediately; only the graph placement may await a preceding arrangement. */
-  create(row: PendingOutlineField, options: {before?: InputBookmark; stays?: boolean; beside?: string} = {}, credit?: PageCredit): void {
+  create(row: PendingOutlineField, options: {before?: InputBookmark; stays?: boolean; beside?: string; first?: true} = {}, credit?: PageCredit): void {
     const owner = this.current();
     const before = options.before ?? null, location = this.birthLocation(row, options.beside);
     const placement = this.placement(row.parent_id, row.parent_ref, row.after_id, row.before_id);
-    const admitted = owner.history.create({placement, body: row.body, change: {before, after: document => options.stays ? before : this.bookmark({...row, ref: document.ref}, "end"),
+    const admitted = owner.history.create({placement, body: row.body, first: options.first, change: {before, after: document => options.stays ? before : this.bookmark({...row, ref: document.ref}, "end"),
       placements_after: document => [this.placementBookmark({...row, ref: document.ref})!],
-      resolvePlacement: location ? this.resolveBirth(row, {...this.row(options.beside!)}, location, false) : undefined}}, credit);
+      resolvePlacement: location ? this.resolveBirth(row, {...this.row(options.beside!)}, location) : undefined}}, credit);
     const field = {...row, ref: admitted.document.ref, pending: true};
     this.fields.set(row.row_id, field);
     this.place(row.row_id, row.after_id, row.before_id ?? null);
@@ -240,25 +235,35 @@ export class OutlinePendingInput {
     owner.prepared(field, admitted.document); owner.publish([], admitted.committed);
     this.watch([row.row_id], admitted, new Map([[row.row_id, admitted.link]]));
   }
-  split(row_id: string, left: NoteBody, right: NoteBody, from: number, to: number, displayed: DisplayedWriting): string {
-    const owner = this.current(), row = this.row(row_id), bound = this.bound.get(row_id);
-    if (!bound?.document) throw new Error("split requires its displayed canonical identities");
-    const successor = crypto.randomUUID();
-    const target: PendingOutlineField = {...row, row_id: successor, after_id: row_id, before_id: undefined,
-      ref: null, link: null, resource: null, kind: "body", body: right, hidden: false, pending: true, origin: owner.history.typingOrigin(),
+  async split(row_id: string, source: WritingDocument, displayed: DisplayedSplit, current: () => boolean, refused: (reason: string) => void,
+    credit: PageCredit): Promise<string | null> {
+    const owner = this.current(), row = this.row(row_id), successor = crypto.randomUUID();
+    let target: PendingOutlineField = {...row, row_id: successor, after_id: row_id, before_id: undefined,
+      ref: null, link: null, resource: null, kind: "body", body: emptyBody(), hidden: false, pending: true, origin: owner.history.typingOrigin(),
       relocating: undefined, previousParent: undefined, previousParentRef: undefined, settledRevision: undefined, receiptOwner: undefined};
-    const location = this.birthLocation(target, row_id);
-    const admitted = owner.history.split({source: bound.document, displayed: {body_state: displayed.body_state, from, to},
-      placement: this.placement(target.parent_id, target.parent_ref, target.after_id),
-      change: {before: this.bookmark(row, {anchor: from + 1, head: to + 1}), placements_before: [this.placementBookmark(row)!], after: document => this.bookmark({...target, ref: document.ref}, {anchor: 1, head: 1}),
-        placements_after: document => [this.placementBookmark({...target, ref: document.ref}, true)!], resolvePlacement: location ? this.resolveBirth(target, {...row}, location, true) : undefined}});
-    this.fields.set(row_id, {...row, body: left});
-    const field = {...target, ref: admitted.document.ref}; this.fields.set(successor, field);
-    this.bindBirth(successor, admitted);
-    this.followBirth(field, admitted, location);
-    const at = this.order.indexOf(row_id); this.order = [...this.order.slice(0, at + 1), successor, ...this.order.slice(at + 1)];
-    owner.prepared(field, admitted.document); owner.publish([bound.document], admitted.committed);
-    this.watch([row_id, successor], admitted, new Map([[successor, admitted.link]])); return successor;
+    const predecessor = this.bound.get(row_id)?.next?.state;
+    const placements = [this.placementBookmark(row)!];
+    const bookmark = (ref: string): OccurrenceBookmark => ({row_id: successor, ref, link: null,
+      placement: {row_id: successor, ref, parent_id: target.parent_id!, parent_ref: target.parent_ref, after_id: row_id, before_id: null}});
+    const admitted = await owner.history.splitOccurrence({source, displayed,
+      placement: async () => {
+        // The preceding arrangement may put the same occurrence under a new parent.
+        if (predecessor) {
+          const moved = await predecessor;
+          if (!moved.placement) {refused("the outline changed; split again"); return null;}
+          placements[0] = {...placements[0]!, ...moved};
+          target = {...target, parent_id: moved.placement.parent_id, parent_ref: moved.placement.parent_ref};
+        }
+        return {parent_ref: target.parent_ref, parent: null, after_ref: row.ref, before_ref: null};
+      },
+      change: {before: this.bookmark(row, {anchor: displayed.from + 1, head: displayed.to + 1}), placements_before: placements,
+        after: documents => this.bookmark({...target, ref: documents[0]!.ref}, {anchor: 1, head: 1}),
+        placements_after: (documents, links) => [{...bookmark(documents[0]!.ref), link: links[0]!}]},
+      current, refused}, credit);
+    if (!admitted || this.owner !== owner) return null;
+    this.installNewborn({row: target, admitted: {document: admitted.documents[0]!, link: admitted.links[0]!, result: admitted.result, committed: admitted.committed},
+      sources: [source], retired: []});
+    return successor;
   }
   splitChild(args: {source: WritingDocument; displayed: DisplayedSplit; row: PendingOutlineField; placement: OutlinePlacement; before: InputBookmark}, credit: PageCredit): {row_id: string; committed: Promise<LocalCommit>} {
     const owner = this.current(), row = args.row;

@@ -16,6 +16,7 @@ import type {DisplayedSplit, FocusSelection, NoteEdit} from "./editorTypes";
 import type {InputBookmark, Placement, RangePlan, RangeReason, RangeSnapshot} from "./outlineSelection";
 import {OutlineHistoryAllowance} from "./outlineHistoryAllowance";
 import type {WorkIntent} from "./work";
+import {admitDisplayedText, checkTextReplay, TEXT_LIMIT} from "./textAdmission";
 
 // Successive maximal-width dots make each reversible gesture take effect in the witness.
 const forwardSeq = "9223372036854775805", undoSeq = "9223372036854775806", redoSeq = "9223372036854775807";
@@ -37,7 +38,7 @@ function reversibleBody(document: WritingDocument, state: string, origin: symbol
   try {
     return [() => write(clone), () => manager.undo(), () => manager.redo()].map(mutate => {
       updates.length = 0; mutate(); measure?.(clone);
-      return updates.length ? [{kind: "edit_body", ref: document.ref, body_update: transactionUpdate(updates)}] : [];
+      return updates.length ? [{kind: "edit_body", ref: document.ref, body_update: encodeBytes(transactionUpdate(updates))}] : [];
     });
   } finally {manager.clear(); manager.destroy(); clone.destroy();}
 }
@@ -72,6 +73,7 @@ function inverseWork(receipt: LocalCommit): Intent[] {
 
 export interface EditorHistory {
   origin: unknown;
+  admitText(baseline: Y.Doc, write: (doc: Y.Doc) => void): void;
   retain(): () => void;
   undo(): void;
   redo(): void;
@@ -91,7 +93,7 @@ export interface OutlineVisibility {show: readonly OccurrenceBookmark[]; hide: r
 export interface OutlineBirthChange {
   before: InputBookmark; after(document: WritingDocument): InputBookmark;
   placements_before?: readonly OccurrenceBookmark[]; placements_after?(document: WritingDocument): readonly OccurrenceBookmark[];
-  resolvePlacement?(document: WritingDocument): Promise<{placement: OutlinePlacement; placements_before: readonly OccurrenceBookmark[]; placements_after: readonly OccurrenceBookmark[]}>;
+  resolvePlacement?(document: WritingDocument): Promise<{placement: OutlinePlacement; placements_after: readonly OccurrenceBookmark[]}>;
 }
 export interface OutlineBirthsChange {before: InputBookmark; after(documents: readonly WritingDocument[]): InputBookmark; placements_before?: readonly OccurrenceBookmark[]; placements_after?(documents: readonly WritingDocument[], links: readonly Promise<LinkState>[]): readonly OccurrenceBookmark[]}
 /** A birth is a newborn note (`body`) or an existing resource linked again (`ref`); it names its parent
@@ -138,10 +140,11 @@ interface Group {
 }
 interface TextHistory {
   document: WritingDocument; manager: Y.UndoManager; origin: PageWritingOrigin;
-  latest: object | null; latestGroup: Group | null; active: number; groups: number; captureBytes: number; unsubscribe(): void;
+  lastOrigin: unknown; latest: object | null; latestGroup: Group | null; active: number; groups: number; captureBytes: number; unsubscribe(): void;
 }
 interface FocusOwner {
   capture(): InputBookmark;
+  refused(message: string): void;
   lease(): () => boolean;
   prepare?(target: readonly OccurrenceBookmark[], mayFocus: () => boolean, visibility: OutlineVisibility): (committed: Promise<LocalCommit>) => void;
   publish(documents: readonly WritingDocument[], target: InputBookmark, source: InputBookmark, mayFocus: () => boolean, committed: Promise<LocalCommit>, action: "undo" | "redo"): void;
@@ -301,7 +304,9 @@ export class OutlineHistory {
       from.splice(from.indexOf(group), 1); to.push(group);
       return;
     }
-    const acknowledge = owner?.prepare?.(redo ? group.placements_after : group.placements_before, mayFocus, {show: redo ? group.added : group.removed, hide: redo ? group.removed : group.added});
+    const placements = redo ? group.placements_after : group.placements_before;
+    const visibility = {show: redo ? group.added : group.removed, hide: redo ? group.removed : group.added};
+    const acknowledge = placements.length || visibility.show.length || visibility.hide.length ? owner?.prepare?.(placements, mayFocus, visibility) : undefined;
     const lower = group.settled;
     try {
       const admission = group.apply(redo, lower);
@@ -309,7 +314,10 @@ export class OutlineHistory {
       acknowledge?.(admission.committed);
       owner?.publish(group.documents, target, source, mayFocus, admission.committed, redo ? "redo" : "undo");
       void admission.result.catch(() => {});
-    } catch (error) {this.failure(error);}
+    } catch (error) {
+      if (error instanceof CommandTooLargeError && owner) owner.refused(TEXT_LIMIT);
+      else this.failure(error);
+    }
   }
   private participants(documents: readonly (WritingDocument | null)[], origin: unknown): {document: WritingDocument; origin: unknown}[] {
     return [...new Set(documents.filter((document): document is WritingDocument => document !== null))].map(document => ({document, origin}));
@@ -406,25 +414,27 @@ export class OutlineHistory {
   }
 
   editor(document: WritingDocument, suppliedOrigin?: unknown): EditorHistory {
-    if (this.closed) return {origin: suppliedOrigin ?? Symbol("closed outline typing"), retain: () => () => {}, undo: () => {}, redo: () => {}, boundary: () => {}, record: () => {}, taskPrefix: () => {}};
+    if (this.closed) return {origin: suppliedOrigin ?? Symbol("closed outline typing"), admitText: () => {throw new Error("outline history is closed");}, retain: () => () => {}, undo: () => {}, redo: () => {}, boundary: () => {}, record: () => {}, taskPrefix: () => {}};
     let entry = this.texts.get(document.ref);
     if (!entry) {
       const origin = this.typingOrigin();
       const manager = new Y.UndoManager(scope(document), {trackedOrigins: new Set<unknown>([this.TypingOrigin]), captureTimeout: 500});
-      let lastOrigin: unknown = null;
+      const history: TextHistory = {document, origin, manager, lastOrigin: null, latest: null, latestGroup: null, active: 0, groups: 0, captureBytes: 0,
+        unsubscribe: () => {document.doc.off("beforeTransaction", separate);}};
       const separate = (transaction: Y.Transaction) => {
         const source = transaction.origin;
         if (!(source instanceof this.TypingOrigin) && source !== manager) return;
-        if (lastOrigin !== source) manager.stopCapturing();
-        lastOrigin = source;
+        if (history.lastOrigin !== source) manager.stopCapturing();
+        history.lastOrigin = source;
       };
       document.doc.on("beforeTransaction", separate);
-      entry = {document, origin, manager, latest: null, latestGroup: null, active: 0, groups: 0, captureBytes: 0, unsubscribe: () => {document.doc.off("beforeTransaction", separate);}};
+      entry = history;
       this.texts.set(document.ref, entry);
     }
     if (entry.document !== document) throw new Error("outline history needs its retained canonical document");
     const history = entry, origin = suppliedOrigin ?? history.origin;
-    return {origin, retain: () => {history.active++; return () => {history.active--; this.pruneText(history);};},
+    return {origin, admitText: (baseline, write) => admitDisplayedText(document, baseline, origin, write, history.lastOrigin === origin ? history.manager : null),
+      retain: () => {history.active++; return () => {history.active--; this.pruneText(history);};},
       undo: this.undo, redo: this.redo, boundary: () => history.manager.stopCapturing(),
       taskPrefix: body_state => {void this.work({kind:"set_work_designation", ref:document.ref, designation:{kind:"task",enabled:true}}, {document,body_state}).result.catch(() => {});},
       record: (edit, _admission, bookmark) => {
@@ -452,7 +462,9 @@ export class OutlineHistory {
           };
           group.apply = (redo, lower) => {
             const eligible = this.groups(), target = group!;
-            const admitted = this.runtime.admitWriting({credit: this.origin.credit(), existing: [{document, origin: history.manager}], notes: [],
+            const credit = this.origin.credit();
+            checkTextReplay(document, credit, redo ? [] : [owned], redo ? [owned] : [], redo);
+            const admitted = this.runtime.admitWriting({credit, existing: [{document, origin: history.manager}], notes: [],
               mutate: () => {
                 // Yjs skips exhausted items. Isolate this exact group's item so
                 // remote deletion cannot make undo consume an older command.
@@ -487,7 +499,7 @@ export class OutlineHistory {
     history.unsubscribe(); history.manager.clear(); history.manager.destroy(); this.texts.delete(history.document.ref);
   }
 
-  create(args: {placement: OutlinePlacement; body: NoteBody; change: OutlineBirthChange}, credit = this.origin.credit()): AdmittedNote {
+  create(args: {placement: OutlinePlacement; body: NoteBody; change: OutlineBirthChange; first?: true}, credit = this.origin.credit()): AdmittedNote {
     return this.birth({...args, source: null, retiring: null}, credit);
   }
   split(args: {source: WritingDocument; displayed: DisplayedSplit; placement: OutlinePlacement; change: OutlineBirthChange}, credit = this.origin.credit()): AdmittedNote {
@@ -532,7 +544,7 @@ export class OutlineHistory {
   replaceWithNote(args: {placement: OutlinePlacement; retiring: OccurrenceBookmark & {link: LinkState}; change: OutlineBirthChange}, credit: PageCredit): AdmittedNote {
     return this.birth({...args, body: emptyBody(), source: null}, credit);
   }
-  private birth(args: {placement: OutlinePlacement; body: NoteBody; change: OutlineBirthChange; source: {document: WritingDocument; update: Uint8Array | null} | null; retiring: (OccurrenceBookmark & {link: LinkState}) | null}, credit: PageCredit): AdmittedNote {
+  private birth(args: {placement: OutlinePlacement; body: NoteBody; change: OutlineBirthChange; first?: true; source: {document: WritingDocument; update: Uint8Array | null} | null; retiring: (OccurrenceBookmark & {link: LinkState}) | null}, credit: PageCredit): AdmittedNote {
     const {placement, body, change, source, retiring} = args;
     this.boundary();
     const group = this.reserve({before: change.before, after: null, placements_before: change.placements_before}), origin = Symbol("outline birth");
@@ -550,12 +562,12 @@ export class OutlineHistory {
         if (settled) {
           this.hold(group, [at.parent]);
           if (!group.refs.includes(at.parent_ref)) group.refs.push(at.parent_ref);
-          group.placements_before = settled.placements_before;
           group.placements_after = this.relationship(settled.placements_after, link);
           group.added = group.placements_after;
         }
-        const position = await this.placement(at);
-        const prepared = await prepareLink(this.runtime, {source_ref: at.parent_ref, target_ref: refs[0]!, source_label: null, target_label: null, ...position});
+        const first = args.first ? this.runtime.firstNoteLink(at.parent_ref, refs[0]!) : null;
+        const prepared = first ? {link_id: first.link_id, intents: [first]} : await prepareLink(this.runtime,
+          {source_ref: at.parent_ref, target_ref: refs[0]!, source_label: null, target_label: null, ...await this.placement(at)});
         relationship = prepared.link_id; group.coverage.links.set(relationship, {});
         return [...prepared.intents, ...(retiring ? [{kind: "unlink" as const, link_id: retiring.link.link_id, observed_add: {...retiring.link.add_vv}}] : [])];
       }});
@@ -583,41 +595,53 @@ export class OutlineHistory {
     void resolved?.catch(() => {});
     return {document, result: admitted.result, committed: completion, link};
   }
+  /** A descendant split uses the same exact birth and inverse admission as a paste. */
+  splitOccurrence(args: {source: WritingDocument; displayed: DisplayedSplit; placement(): Promise<OutlinePlacement | null>;
+    change: OutlineBirthsChange; current(): boolean; refused(reason: string): void}, credit: PageCredit): Promise<AdmittedNotes | null> {
+    const {suffix, update} = splitDisplayed(args.displayed);
+    return this.createMany({births: async () => {
+      const placement = await args.placement();
+      return placement ? [{body: suffix, parent: placement.parent_ref, after: placement.after_ref, before: placement.before_ref}] : [];
+    }, parents: [], edit: {document: args.source, kind: "split", update}, change: args.change,
+      current: args.current, refused: args.refused}, credit);
+  }
   /** Several births in one command, for paste: one admission, one batch of positions
    * per endpoint, one add_link each; `fill` writes an empty note's first line in the
    * same command. The inverse unlinks each link this command added, puts a revived
    * link back where it stood, and deletes each newborn as a single birth's does. */
-  async createMany(args: {births: readonly Birth[] | ((store: AuthoredStore) => Promise<readonly Extract<Birth, {ref: string}>[]>); parents: readonly (WritingDocument | null)[]; fill?: {document: WritingDocument; body: NoteBody}; change: OutlineBirthsChange;
+  async createMany(args: {births: readonly Birth[] | ((store: AuthoredStore) => Promise<readonly Birth[]>); parents: readonly (WritingDocument | null)[];
+    edit?: {document: WritingDocument} & ({kind: "fill"; body: NoteBody} | {kind: "split"; update: Uint8Array | null}); change: OutlineBirthsChange;
     current(): boolean; refused(reason: string): void}, credit = this.origin.credit()): Promise<AdmittedNotes | null> {
-    const origin = Symbol("outline paste"), fill = args.fill;
-    const parents = [...new Set([...args.parents, fill?.document ?? null].filter((doc): doc is WritingDocument => doc !== null))];
+    const edit = args.edit, action = edit?.kind === "split" ? "split" : "paste", origin = Symbol(action);
+    const parents = [...new Set([...args.parents, edit?.document ?? null].filter((doc): doc is WritingDocument => doc !== null))];
     const preludes = parents.flatMap(doc => doc.prelude);
-    const fillState = fill ? encodeBytes(Y.encodeStateAsUpdate(fill.document.doc)) : null;
-    const initializers: Extract<Intent, {kind: "create_note"}>[] = [];
-    const applyFill = (doc: Y.Doc) => {
-      if (fill) applyBodyEdits(doc, [{kind: "replace", from: 0, to: 0, content: fill.body.body_pm_json.content ?? []}], origin);
+    const captured = edit ? encodeBytes(Y.encodeStateAsUpdate(edit.document.doc)) : null;
+    const applyEdit = (doc: Y.Doc) => {
+      if (edit?.kind === "fill") applyBodyEdits(doc, [{kind: "replace", from: 0, to: 0, content: edit.body.body_pm_json.content ?? []}], origin);
+      else if (edit?.update) Y.applyUpdate(doc, edit.update, origin);
     };
     const refuse = (reason: string): null => {if (!this.closed) args.refused(reason); return null;};
-    const capacity = "this paste exceeds the local writing limit";
-    // The clipboard, identities and gesture time are fixed before any store read.
-    // Every initializer's ASCII bytes must fit even before graph and marker costs.
-    let initializerBytes = 0;
-    for (const birth of typeof args.births === "function" ? [] : args.births) if ("body" in birth) {
-      const initializer = createNoteIntent(`note_block:${crypto.randomUUID()}`, birth.body);
-      initializerBytes += initializer.body_update.length;
-      if (initializerBytes > MAX_COMMAND_BYTES) return refuse(capacity);
-      initializers.push(initializer);
-    }
+    const capacity = `this ${action} exceeds the local writing limit`;
+    const changed = `the outline changed; ${action} again`;
     const reservation = this.reserveChecked({before: args.change.before, after: null, placements_before: args.change.placements_before});
     const {group, eligible} = reservation;
     return this.runtime.admitCheckedWriting(credit, async (store, admit) => {
       if (this.closed) return null;
-      if (!args.current()) return refuse("the outline changed; paste again");
+      if (!args.current()) return refuse(changed);
       const replica = await store.readReplica();
       const births = typeof args.births === "function" ? await args.births(store) : args.births;
-      if (!births.length && !fill) return null;
-      let born = 0;
-      const refs = births.map(birth => "body" in birth ? initializers[born++]!.ref : birth.ref);
+      if (!births.length) return null;
+      // An initializer alone may exceed the budget, before link and credit costs.
+      const initializers: Extract<Intent, {kind: "create_note"}>[] = [];
+      let initializerBytes = 0;
+      const refs: string[] = [];
+      for (const birth of births) {
+        if (!("body" in birth)) {refs.push(birth.ref); continue;}
+        const initializer = createNoteIntent(`note_block:${crypto.randomUUID()}`, birth.body);
+        initializerBytes += initializer.body_update.length;
+        if (initializerBytes > MAX_COMMAND_BYTES) return refuse(capacity);
+        initializers.push(initializer); refs.push(initializer.ref);
+      }
       const named = (anchor: string | number) => typeof anchor === "number" ? refs[anchor]! : anchor;
       const insertions = new Map<string, {link_id: string; after: string | null; before: string | null}[]>();
       const links: {link_id: string; endpoint_a: string; endpoint_b: string}[] = [];
@@ -642,11 +666,11 @@ export class OutlineHistory {
       const snapshot = await store.readSnapshot(selection);
       if (this.closed) return null;
       if (group.released || !args.current() || replica.store_revision !== snapshot.replica.store_revision || canonicalSerialization(preludes) !== canonicalSerialization(parents.flatMap(doc => doc.prelude)) ||
-        (fill && encodeBytes(Y.encodeStateAsUpdate(fill.document.doc)) !== fillState))
-        return refuse("the outline changed; paste again");
+        (edit && encodeBytes(Y.encodeStateAsUpdate(edit.document.doc)) !== captured))
+        return refuse(changed);
       const pasted = new Set(ids);
       const prior = new Map(snapshot.states.links.filter(link => pasted.has(link.link_id)).map(link => [link.link_id, link]));
-      if ([...prior.values()].some(link => isVisible(link.add_vv, link.remove_vv))) return refuse("the outline changed; paste again");
+      if ([...prior.values()].some(link => isVisible(link.add_vv, link.remove_vv))) return refuse(changed);
       const inverseGraph = (redo: boolean, coverage: Coverage, written: ReadonlyMap<string, LinkState>, live: readonly LinkState[]) => births.flatMap((birth, index): GraphIntent[] => {
         const ref = refs[index]!, id = ids[index]!, observed = coverage.links.get(id);
         if (!observed) return [];
@@ -658,7 +682,7 @@ export class OutlineHistory {
           return from && to && stamped && stamped.value === from.value ? [{kind: "restore_position", link_id: id, endpoint_ref: endpoint, expected: stamped.stamp, position: to.value}] : [];
         }) : []];
       });
-      const text = fill && fillState !== null ? reversibleBody(fill.document, fillState, origin, applyFill) : [[], [], []];
+      const text = edit && captured !== null ? reversibleBody(edit.document, captured, origin, applyEdit) : [[], [], []];
       const step = reversibleStep(replica.replica_id, credit);
       try {
         const forward = step(forwardSeq, [...preludes, ...initializers, ...text[0]!, ...graph], snapshot.states);
@@ -668,13 +692,13 @@ export class OutlineHistory {
         const undo = step(undoSeq, [...text[1]!, ...inverseGraph(false, coverage, added, forward.states.links)], forward.states);
         step(redoSeq, [...text[2]!, ...inverseGraph(true, coverage, added, undo.states.links)], undo.states);
       } catch (error) {if (error instanceof CommandTooLargeError) return refuse(capacity); throw error;}
-      const manager = fill ? new Y.UndoManager(scope(fill.document), {trackedOrigins: new Set([origin]), captureTimeout: 0}) : null;
+      const manager = edit ? new Y.UndoManager(scope(edit.document), {trackedOrigins: new Set([origin]), captureTimeout: 0}) : null;
       group.cleanup = () => {manager?.clear(); manager?.destroy();};
       this.hold(group, parents);
       for (const id of ids) group.coverage.links.set(id, {});
       const written = new Map<string, LinkState>();
       const admitted = admit({existing: this.participants(group.documents, origin), notes: initializers.map(initializer => ({initializer, origin})),
-        mutate: () => {if (fill) applyFill(fill.document.doc);}, prepare: async () => graph}, {...snapshot, selection});
+        mutate: () => {if (edit) applyEdit(edit.document.doc);}, prepare: async () => graph}, {...snapshot, selection});
       const documents = admitted.created;
       this.hold(group, documents);
       for (const document of documents) group.coverage.resources.set(document.ref, {});

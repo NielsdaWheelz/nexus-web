@@ -147,7 +147,7 @@ export function prepareChange(context:CommandContext,intent:Intent,states:Corpus
   add(intent);return change;
 }
 
-export function isPageWorkMarker(patch: ResourcePatch): boolean {
+function isPageWorkMarker(patch: ResourcePatch): boolean {
   return patch.kind === "page" && patch.last_work_at_ms !== null && patch.local_date === null &&
     patch.title_update === null && Object.keys(patch.touch_vv).length === 0 && Object.keys(patch.delete_vv).length === 0;
 }

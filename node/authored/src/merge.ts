@@ -7,7 +7,7 @@ import { validateChange, validatePageWorkTime } from "./validate.ts";
 import { MAX_COMMAND_BYTES, CommandTooLargeError } from "./types.ts";
 import { bodyHasContent } from "./body.ts";
 import { mergeNote, mergeTitle } from "./documents.ts";
-import { isResourceRef, sortedEndpoints } from "./identity.ts";
+import { isResourceRef, sortedEndpoints, validateLocalDate } from "./identity.ts";
 import { mergeWork, projectWork } from "./work.ts";
 import { pageTitle, paneFilterText } from "./paneFilterText.ts";
 export function counter(value:string):bigint {
@@ -59,6 +59,7 @@ export function projectResource(state:ResourceState):ResourceProjection {
       return {...bodyProjection,source_ref:state.source_ref,source_publication:state.selection.value.publication,selection,color:state.color.value,excerpt:excerptView(excerpt,"compact",{kind:"capture"}),capture_revision:captureRevision(state.source_ref,{kind:"selection",value:state.selection.value})};
     }
     case "page": {
+      if (state.local_date !== null) validateLocalDate(state.local_date);
       validatePageWorkTime(state.last_work_at_ms, state.local_date);
       const title = mergeTitle(state.title_state, null).title;
       const listed = common.visible && state.local_date === null;

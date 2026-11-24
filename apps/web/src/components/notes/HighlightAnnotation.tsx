@@ -6,6 +6,7 @@ import {useCallback, useEffect, useLayoutEffect, useRef, useState} from "react";
 import * as Y from "yjs";
 import {bodyHasContent, emptyBody, noteBodySchema, rawBodyText, type NoteBody} from "@nexus/authored/body";
 import type {EditorHistory} from "@/lib/notes/structure";
+import {admitDisplayedText, replayLocalText, TEXT_LIMIT} from "@/lib/notes/textAdmission";
 import type {WritingDocument} from "@/lib/notes/runtime";
 import type {OutlineAnnotationCapability} from "@/lib/notes/outlineController";
 import type {FocusSelection} from "@/lib/notes/editorTypes";
@@ -62,20 +63,22 @@ function AnnotationComposer({highlightRef, resource, rest = true, occurrenceKey,
   const opening = useRef(false); opening.current ||= wanted;
   const opened = useWritingDocument(editable && owned.current === highlightRef && opening.current ? highlightRef : null);
   const guard = useWorkGuard();
+  const {say} = useOutcome();
   const [history, setHistory] = useState<{document: WritingDocument; value: EditorHistory} | null>(null);
   useEffect(() => {
     const document = opened.document;
     if (!document) return;
     const origin = Symbol("highlight annotation occurrence");
     const manager = new Y.UndoManager([document.doc.getXmlFragment("body"), bodyInline(document.doc)], {trackedOrigins: new Set([origin]), captureTimeout: 500});
-    setHistory({document, value: {origin, retain: document.retain, undo: () => manager.undo(), redo: () => manager.redo(), boundary: () => manager.stopCapturing(), record: () => {}}});
+    const step = (redo: boolean) => replayLocalText(document, manager, redo, () => say({fact: TEXT_LIMIT}));
+    setHistory({document, value: {origin, admitText: (baseline, write) => admitDisplayedText(document, baseline, origin, write, manager),
+      retain: document.retain, undo: () => step(false), redo: () => step(true), boundary: () => manager.stopCapturing(), record: () => {}}});
     return () => {manager.clear(); manager.destroy();};
-  }, [opened.document]);
+  }, [opened.document, say]);
   const ownHistory = history?.document === opened.document ? history.value : null;
   const input = useEditorDraft(`Highlight.Input:${occurrenceKey}`, () => ({reference: false, hyperlink: false, attachment: false}), value => ({changed: value.reference || value.hyperlink, unconfirmed: false, stopsBrowserWork: value.attachment}));
   useEffect(() => {onWorkOwners?.([draft.owner, input.owner]);}, [onWorkOwners, draft.owner, input.owner]);
   const [busy, setBusy] = useState(false);
-  const {say} = useOutcome();
   const [defect, setDefect] = useState<{error: unknown} | null>(null);
   const [manualCopy, setManualCopy] = useState<string | null>(null);
   const copied = useCopyFeedback(occurrenceKey);

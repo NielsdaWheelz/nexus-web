@@ -4,6 +4,7 @@
 import type { LocalDate, NoteWork, Register, Stamp, WorkDesignation, WorkView } from "./types.ts";
 import { WorkConversionError } from "./types.ts";
 import { counter, mergeRegister } from "./merge.ts";
+import { validateLocalDate } from "./identity.ts";
 
 export type WorkIntent =
   | { kind: "set_work_designation"; ref: string; designation: WorkDesignation }
@@ -13,12 +14,6 @@ export type WorkIntent =
   | { kind: "restore_work_designation"; ref: string; expected: Stamp; designation: WorkDesignation }
   | { kind: "restore_task_completion"; ref: string; expected: Stamp; local_date: LocalDate | null }
   | { kind: "restore_habit_completion"; ref: string; expected: Stamp; local_date: LocalDate; completed: boolean };
-
-export function validateLocalDate(value: LocalDate): void {
-  if (typeof value !== "string" || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/u.test(value) || value.startsWith("0000-")) throw new TypeError("Expected a YYYY-MM-DD civil date");
-  const date = new Date(`${value}T00:00:00Z`);
-  if (!Number.isFinite(date.valueOf()) || date.toISOString().slice(0, 10) !== value) throw new TypeError("Invalid civil date");
-}
 
 export function mergeWork(old: NoteWork | null, patch: NoteWork | null): NoteWork | null {
   if (patch === null) return old;

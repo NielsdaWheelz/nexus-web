@@ -1279,8 +1279,10 @@ refresh and measurement-change scroll writes; the row window owns measurement
 and mounted demand only. restoration waits for affected descendants to finish
 measurement, including sibling lists sharing this scrollport. logical ranks
 locate unmounted anchors and choose the next full-order survivor after removal;
-bounded row demand mounts a needed target before focus recovery. a connected
-unrelated focus destination wins over a pending return.
+intrinsic flat lists keep the closest surviving row in their old order, with
+the following row winning a tie. bounded row demand mounts a needed target
+before focus recovery. a connected unrelated focus destination wins over a
+pending return.
 
 `AnchorGeometry` is the common committed-frame contract for uniform collections
 and variable journal days/rows: ordered identities, visible anchor, position

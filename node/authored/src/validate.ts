@@ -1,12 +1,11 @@
 /** Runtime validation at the shared semantic boundary. Host schemas close the
  * transport; these checks own identity agreement and content invariants. */
 import { validateExcerpt } from "./excerpt.ts";
-import { isResourceRef, normalizeQuote } from "./identity.ts";
+import { isResourceRef, normalizeQuote, validateLocalDate } from "./identity.ts";
 import { canonicalQuads } from "./geometry.ts";
 import { counter } from "./merge.ts";
 import type { Change, Locator, NoteWork, Publication, Register, SelectionCapture, Stamp, Vector } from "./types.ts";
 import { MAX_PAGE_WORK_AT_MS } from "./types.ts";
-import { validateLocalDate } from "./work.ts";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 export function uuid(value: string): void {
   if (typeof value !== "string" || !UUID.test(value)) throw new TypeError("Expected canonical UUID");
@@ -156,7 +155,7 @@ export function validateChange(change: Change): void {
       selection(resource.selection.value, resource.source_ref);
       if (!["yellow", "green", "blue", "pink", "purple"].includes(resource.color.value)) throw new TypeError("Unknown highlight color");
     } else if (resource.kind === "page") {
-      if (resource.local_date !== null && (!/^\d{4}-\d{2}-\d{2}$/u.test(resource.local_date) || new Date(`${resource.local_date}T00:00:00Z`).toISOString().slice(0, 10) !== resource.local_date)) throw new TypeError("Invalid daily date");
+      if (resource.local_date !== null) validateLocalDate(resource.local_date);
       validatePageWorkTime(resource.last_work_at_ms, resource.local_date);
     } else if (resource.kind === "note") work(resource.work);
     else throw new TypeError("Unknown resource kind");

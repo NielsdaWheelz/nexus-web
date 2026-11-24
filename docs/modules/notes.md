@@ -756,20 +756,24 @@ to satisfy a heap target. a single rich body is not virtualized. pressure is
 shared across journal dates. after pressure, that visit keeps reduced
 prefetch to avoid alternating eviction and reload; the next visit starts afresh.
 viewport leases cannot make structural commands fail merely because of scrolling. visual anchor
-ids and measurements retain no writing. the seed reserves no document; first
-content uses ordinary newborn admission. a failed command admission explains its
-actual limit at the requested action. absolute-tail append resolves the current tail at
-command preparation, rather than retaining a relationship that an earlier
-accepted unlink may remove. explicit insert-after retains its chosen anchor.
-if history retirement needs settlement, a new gesture requests insertion after
-it finishes; a delayed split is not replayed.
+ids and measurements retain no writing. first text in a seed prices its
+initializer, page prelude and link at the empty-outline position before
+publication. independent first writes may share that position. absolute-tail
+append resolves the current tail during preparation; explicit insert-after
+retains its chosen anchor.
+
+bound text prices forward, undo and redo against the observed Yjs state before
+publication. an edit starts a new typing group if its previous group cannot
+absorb it within the command limit. split and outline paste price the actual
+placement while holding the command lease. a later input or selection can
+invalidate a waiting split, keeping that input at its existing occurrence.
 no account-wide status or recovery inventory is
 introduced. the runtime's unpinned document cache remains a separate owner.
 
 ## device ownership
 
 firefox ports share the stable `/_nexus/authored/worker.js` worker named
-`nexus-authored-<account>-format-5`. `IDBBatchAtomicVFS` uses strict indexeddb commit
+`nexus-authored-<account>-format-<revision>`. `IDBBatchAtomicVFS` uses strict indexeddb commit
 and sqlite synchronous full. a browser web lock spans command preparation through
 uncertain commit settlement; an ephemeral port lease fences a late message from a
 retired or crashed owner. compatible shells reuse one account/format owner.
@@ -814,9 +818,9 @@ producers and fences old feed bytes at the locked head. see the
 ## replication
 
 `POST /authored/replicas` provisions a fresh account replica. immutable contiguous
-changes upload through `POST /authored/changes`. feed reads and writes require the current authored
-format. accepted prefixes are recognized
-and compared before new commands merge. the account head lock commits canonical
+changes upload through `POST /authored/changes`. feed reads and writes require
+the current authored format. accepted prefixes are compared before new commands
+merge. the account head lock commits canonical
 states, projections, consecutive feed sequences and source acceptance together.
 server tools use that same owner within their existing fenced transaction.
 
@@ -828,7 +832,7 @@ rewrite committed bytes to fit. migration preflight reports existing oversize
 content. local queries return bounded rows; native transfer retains 24 kib raw
 chunks within 64 kib frames. the whole streamed corpus snapshot has no 3 mib cap.
 
-`GET /authored/changes?after=…` returns a bounded ascending prefix through one
+`GET /authored/changes?after=…&format_revision=7` returns a bounded ascending prefix through one
 captured head. applying each command and advancing its cursor is one device
 transaction. sending and receiving proceed independently.
 
@@ -842,7 +846,7 @@ or passive stream exists. hide stops successors, never durable commits or an
 admitted acknowledgement; return and local commits wake the document scheduler.
 two visible documents may share one running unit without owning each other's lifetime.
 hello checks account, wire and format before storage, with an exact revision echo.
-wire admission and durable format admission remain separate. current authored format is 6.
+wire admission and durable format admission remain separate. current authored format is 7.
 
 `GET /authored/snapshot` streams a repeatable-read corpus with head and lamport in
 its header and completion footer, plus exact record counts. interrupted staging

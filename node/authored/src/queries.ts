@@ -6,9 +6,8 @@
 import { excerptTextParts, excerptView, scopeExcerpt, type ExcerptScope, type ExcerptNode } from "./excerpt.ts";
 import type { AuthoredQuery, Change, OutlineRange, PassageState, QueryResult, QueryRow, ResourceProjection, SelectionCapture, ResourceState, PassageCapture } from "./types.ts";
 import { PAGE_TITLE_MONTHS, pageTitle, paneFilterText } from "./paneFilterText.ts";
-import { normalizeQuote } from "./identity.ts";
+import { normalizeQuote, validateLocalDate } from "./identity.ts";
 import { counter } from "./merge.ts";
-import { validateLocalDate } from "./work.ts";
 import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, SEARCH_FAMILIES, type ScopeInterval, type ScopeReading } from "./scope.ts";
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
 const HIGHLIGHT_TEXT_FIELDS = ["prefix", "quote_exact", "suffix"] as const;
@@ -48,11 +47,15 @@ export function searchNameMatch(resource: ResourceProjection, text: string): "ex
   return !name || !query ? null : name === query ? "exact" : name.startsWith(query) ? "prefix" : name.includes(query) ? "substring" : null;
 }
 const DAILY_TITLE_SQL = `(CASE CAST(substr(local_date,6,2) AS INTEGER) ${PAGE_TITLE_MONTHS.map((month,index)=>`WHEN ${index+1} THEN '${month}'`).join(" ")} END || ' ' || CAST(CAST(substr(local_date,9,2) AS INTEGER) AS TEXT) || ', ' || substr(local_date,1,4))`;
+const SOURCE_PROJECTION_SQL = `json_object('ref',s.source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),
+  'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'title_key',NULL,
+  'local_date',NULL,'last_work_at_ms',NULL,'source_ref',s.source_ref,'source_publication',json_extract(s.state_json,'$.capture.value.publication'),
+  'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]'),'work',NULL)`;
 const READABLE = `WITH readable AS (
   SELECT ref,json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM resources WHERE visible=1
   UNION ALL
-  SELECT source_ref AS ref,json_object('ref',source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',source_ref,'source_publication',json_extract(state_json,'$.capture.value.publication'),'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]'),'work',NULL,'title_key',NULL,'last_work_at_ms',NULL) AS projection_json
-  FROM source_stubs WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.ref=source_stubs.source_ref) AND NOT EXISTS (SELECT 1 FROM passages p WHERE p.anchor_id=substr(source_stubs.source_ref,16) AND source_stubs.source_ref='passage_anchor:'||p.anchor_id)
+  SELECT s.source_ref AS ref,${SOURCE_PROJECTION_SQL} AS projection_json
+  FROM source_stubs s WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.ref=s.source_ref) AND NOT EXISTS (SELECT 1 FROM passages p WHERE p.anchor_id=substr(s.source_ref,16) AND s.source_ref='passage_anchor:'||p.anchor_id)
   UNION ALL
   SELECT 'passage_anchor:'||anchor_id AS ref,projection_json FROM passages
 )`;
@@ -81,7 +84,7 @@ const INCIDENT = `
 const BOUNDED_READABLE = `
   SELECT r.ref,json_set(r.projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM wanted w CROSS JOIN resources r ON r.ref=w.ref WHERE r.visible=1
   UNION ALL
-  SELECT s.source_ref AS ref,json_object('ref',s.source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',s.source_ref,'source_publication',json_extract(s.state_json,'$.capture.value.publication'),'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]'),'work',NULL,'title_key',NULL,'last_work_at_ms',NULL) AS projection_json
+  SELECT s.source_ref AS ref,${SOURCE_PROJECTION_SQL} AS projection_json
   FROM wanted w CROSS JOIN source_stubs s ON s.source_ref=w.ref WHERE NOT EXISTS(SELECT 1 FROM resources r WHERE r.ref=w.ref) AND NOT EXISTS(SELECT 1 FROM passages p WHERE p.anchor_id=substr(w.ref,16) AND w.ref='passage_anchor:'||p.anchor_id)
   UNION ALL
   SELECT 'passage_anchor:'||p.anchor_id AS ref,p.projection_json

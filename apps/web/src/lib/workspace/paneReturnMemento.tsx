@@ -229,14 +229,17 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     return result.sort((a, b) => a.top - b.top).map(item => item.anchor);
   }
 
-  /** Keep the next known occurrence in its branch, then its enclosing heading. */
+  /** Flat mounted lists keep their closest neighbour. Logical branches prefer their continuation. */
   function survivingAnchor(port: Scrollport, anchor: Anchor, parents: readonly Anchor[], remembered: readonly Anchor[]): Anchor | null {
     const current = orderedAnchors(port);
     const remaining = new Set(current.map(anchorKey));
     const at = remembered.findIndex(item => anchorKey(item) === anchorKey(anchor));
-    for (let index = at + 1; index < remembered.length; index += 1) {
-      const next = remembered[index];
-      if (next.scope === anchor.scope && remaining.has(anchorKey(next))) return next;
+    const intrinsic = parents.length === 0 && geometryFor(port, anchor) === undefined;
+    for (let distance = 1; distance <= remembered.length; distance += 1) {
+      const next = remembered[at + distance];
+      if (next?.scope === anchor.scope && remaining.has(anchorKey(next))) return next;
+      const previous = remembered[at - distance];
+      if (intrinsic && previous?.scope === anchor.scope && remaining.has(anchorKey(previous))) return previous;
     }
     for (let index = parents.length - 1; index >= 0; index -= 1) {
       if (remaining.has(anchorKey(parents[index]))) return parents[index];

@@ -7,11 +7,12 @@
  * work needs no loss warning. */
 import * as Y from "yjs";
 import { prepareChange, createNoteIntent, foldPageCredit, type Intent, type CommandContext } from "@nexus/authored/commands";
-import { decodeBytes, encodeBytes, hydrateNote, createTitle, readBody } from "@nexus/authored/documents";
-import { noteBodySchema, rawBodyText, type NoteBody } from "@nexus/authored/body";
+import { decodeBytes, encodeBytes, hydrateNote, createTitle, noteEncodingBound, readBody } from "@nexus/authored/documents";
+import { emptyBody, noteBodySchema, rawBodyText, type NoteBody } from "@nexus/authored/body";
 import { advanceCoverage, mergeChanges, mergeVector } from "@nexus/authored/merge";
-import { MAX_COMMAND_BYTES, CommandTooLargeError, WorkConversionError, WorkJoinError, WorkUnavailableError, type AuthoredStore, type Change, type CommitFrame, type Corpus, type PageCredit, type QueryResult, type MergeResult, type ResourceState, type StateSelection, type Vector, type NoteWork } from "@nexus/authored/types";
+import { MAX_COMMAND_BYTES, MAX_PAGE_WORK_AT_MS, CommandTooLargeError, WorkConversionError, WorkJoinError, WorkUnavailableError, type AuthoredStore, type Change, type CommitFrame, type Corpus, type HighlightPatch, type PageCredit, type PagePatch, type QueryResult, type MergeResult, type ResourceState, type StateSelection, type Vector, type NoteWork } from "@nexus/authored/types";
 import { openAuthoredStore } from "@/lib/authored/client";
+import { linkId, sortedEndpoints } from "@nexus/authored/identity";
 /** A shared document receives the originating occurrence on each local Yjs transaction. */
 export class PageWritingOrigin {
   constructor(readonly pageRef: string | null) {}
@@ -23,6 +24,8 @@ export interface WritingSnapshot { body_state: string; observed_touch: Vector }
 export interface WritingDocument {
   ref: string; doc: Y.Doc; retain(): () => void; capture(): Promise<WritingSnapshot>;
   readonly prelude: readonly Intent[];
+  checkTextSize(bytes: number, credit: PageCredit, creating: boolean): void;
+  checkFirstNoteSize(body: NoteBody, credit: PageCredit): void;
   onCommitted(listener: (receipt: LocalCommit, origin: unknown) => void): () => void;
   hasPendingEdits(): boolean;
   subscribePendingEdits(listener: () => void): () => void;
@@ -52,14 +55,16 @@ interface WritingMutation {
 interface WritingAdmission {created: readonly WritingDocument[]; result: Promise<LocalCommit>}
 type CheckedBaseline = Awaited<ReturnType<AuthoredStore["readSnapshot"]>> & {selection: StateSelection};
 /** Only the transaction's own inserts and deletes belong to its command. */
-export function transactionUpdate(updates: Uint8Array[]): string {
-  return encodeBytes(updates.length === 1 ? updates[0]! : Y.mergeUpdates(updates));
+export function transactionUpdate(updates: Uint8Array[]): Uint8Array {
+  return updates.length === 1 ? updates[0]! : Y.mergeUpdates(updates);
 }
-interface CachedDocument extends WritingDocument { text_pending: Set<Promise<LocalCommit>>; read_attempt: number; read_subscription: number; pins: number; bytes: number; last_used: number; pending: number; prelude: readonly Intent[]; receive(resource: ResourceState): void; track(result: Promise<LocalCommit>, origin: unknown): void; unsubscribe: () => void }
+type HighlightRegisters = Pick<HighlightPatch, "selection" | "color">;
+interface CachedDocument extends WritingDocument { highlightRegisters(): HighlightRegisters | null; text_pending: Set<Promise<LocalCommit>>; read_attempt: number; read_subscription: number; pins: number; bytes: number; last_used: number; pending: number; prelude: readonly Intent[]; receive(resource: ResourceState): void; track(result: Promise<LocalCommit>, origin: unknown): void; unsubscribe: () => void }
 interface SaveState { saving: boolean; error: unknown | null; error_occurrence: object | null; error_refs: string[]; revision: number }
 interface FailedCommit {
   occurrence: object;
   readonly credit: PageCredit;
+  highlight_registers: Map<string, HighlightRegisters>;
   reject_oversize: boolean;
   intent: Intent | null; selection: StateSelection; change: Change | null;
   baseline: CheckedBaseline | null;
@@ -120,7 +125,7 @@ export class WritingRuntime {
     return (await (await this.store).readReplica()).command_seq;
   }
   whenUploaded(commandSeq: string, signal: AbortSignal): Promise<void> { return this.store.then(store => store.whenUploaded(commandSeq, signal)); }
-  run(intent: Intent, selection: Partial<StateSelection> = {}, credit: PageCredit = null): Promise<LocalCommit> {
+  run(intent: Intent, selection: Partial<StateSelection> = {}, credit: PageCredit = null, highlight_registers: ReadonlyMap<string, HighlightRegisters> = new Map()): Promise<LocalCommit> {
     if (this.retired) return Promise.reject(new Error("Writing account is closed"));
     if (this.capture_scope) {
       const error = new Error("A compound mutation cannot submit another command");
@@ -133,6 +138,7 @@ export class WritingRuntime {
     const selected = selectStates(selection);
     for (const key of ["refs", "link_ids", "anchor_ids", "source_refs"] as const) inferred[key] = [...new Set([...inferred[key], ...selected[key]])];
     const owner = this.reserve(credit);
+    owner.highlight_registers = new Map(highlight_registers);
     const capturesExcerpt = (command: Intent): boolean => command.kind === "batch" ? command.intents.some(capturesExcerpt) : command.kind === "create_highlight" || command.kind === "update_highlight" && command.selection !== null || command.kind === "capture_passage";
     owner.reject_oversize = capturesExcerpt(frozen);
     owner.intent = frozen;
@@ -279,6 +285,8 @@ export class WritingRuntime {
     const created: CachedDocument[] = [];
     const preludes: Intent[] = [];
     for (const {document,origin} of participants) {
+      const registers = document.highlightRegisters();
+      if (registers) owner.highlight_registers.set(document.ref, registers);
       preludes.push(...document.prelude);
       document.prelude = [];
       const release = document.retain();
@@ -318,7 +326,7 @@ export class WritingRuntime {
       for (const {document, state_vector} of participants) {
         const updates = scope.updates.get(document.ref); if (!updates) continue;
         // A refused join includes the undurable copy as well as its undo.
-        const update = state_vector ? encodeBytes(Y.encodeStateAsUpdate(document.doc, state_vector)) : transactionUpdate(updates);
+        const update = state_vector ? encodeBytes(Y.encodeStateAsUpdate(document.doc, state_vector)) : encodeBytes(transactionUpdate(updates));
         if (document.doc.share.has("body")) edits.push({kind:"edit_body",ref:document.ref,body_update:update});
         else edits.push({kind:"edit_title",ref:document.ref,title_update:update});
       }
@@ -356,7 +364,7 @@ export class WritingRuntime {
     void settled.catch(() => {});
     let release: () => void = () => {};
     const ready = new Promise<void>(done => { release = done; });
-    const owner: FailedCommit = { occurrence: {}, credit, reject_oversize: false, intent: null, selection: selectStates({}), baseline: null, change: null, prepared: null, store: null, held: false, attempting: false, settled, resolve, reject, result, accept, refuse, retry_failure: null, ready, release, faulted: false, fault: null, created_refs: [], prepare_graph: null };
+    const owner: FailedCommit = { occurrence: {}, credit, highlight_registers: new Map(), reject_oversize: false, intent: null, selection: selectStates({}), baseline: null, change: null, prepared: null, store: null, held: false, attempting: false, settled, resolve, reject, result, accept, refuse, retry_failure: null, ready, release, faulted: false, fault: null, created_refs: [], prepare_graph: null };
     return owner;
   }
   private reserve(credit: PageCredit): FailedCommit {
@@ -431,7 +439,13 @@ export class WritingRuntime {
       if (this.retired) throw new Error("Writing account is closed");
       if (states.resources.some(resource=>owner.created_refs.includes(resource.ref))) throw new TypeError("New writing identity already exists");
       if (owner.change === null) {
-        const change = prepareChange({ replica_id: replica.replica_id, command_seq: (BigInt(replica.command_seq) + 1n).toString(), lamport: (BigInt(replica.lamport) + 1n).toString() }, owner.intent, states);
+        // A body edit carries the ancillary registers it observed at admission.
+        // Lower with those exact fields and merge against the current LWW state.
+        const observed = owner.highlight_registers.size ? {...states, resources: states.resources.map(resource => {
+          const registers = owner.highlight_registers.get(resource.ref);
+          return resource.kind === "highlight" && registers ? {...resource, ...registers} : resource;
+        })} : states;
+        const change = prepareChange({ replica_id: replica.replica_id, command_seq: (BigInt(replica.command_seq) + 1n).toString(), lamport: (BigInt(replica.lamport) + 1n).toString() }, owner.intent, observed);
         owner.change = foldPageCredit(change, states, owner.credit);
       }
       const before = commitBefore(owner.change, states, owner.selection);
@@ -561,8 +575,13 @@ export class WritingRuntime {
     if (resource.kind === "page") Y.applyUpdate(doc, decodeBytes(resource.title_state), REMOTE);
     return this.cacheDocument(resource.ref, resource, doc, prelude, store, loadedRevision);
   }
+  /** First input is an insertion from an observed empty occurrence. */
+  firstNoteLink(parent: string, note: string): Extract<Intent, {kind: "add_link"}> {
+    const [endpoint_a, endpoint_b] = sortedEndpoints(parent, note);
+    return {kind: "add_link", link_id: linkId(this.accountId, endpoint_a, endpoint_b), endpoint_a, endpoint_b, position_a: "a0", position_b: "a0"};
+  }
   private cacheDocument(ref: string, resource: ResourceState, doc: Y.Doc, prelude: readonly Intent[], store: AuthoredStore | null, loadedRevision: string | null): CachedDocument {
-    let observed_touch = resource.touch_vv;
+    let observed_touch = resource.touch_vv, current = resource;
     const pending_edits = new Set<Promise<LocalCommit>>();
     const committed = new Set<(receipt: LocalCommit, origin: unknown) => void>();
     const pendingListeners = new Set<() => void>();
@@ -572,11 +591,45 @@ export class WritingRuntime {
       receive: latest => {
         if (this.retired) return;
         if (Object.entries(latest.touch_vv).some(([replica,sequence])=>BigInt(sequence)>BigInt(latest.delete_vv[replica]??"0"))) cached.prelude=[];
-        observed_touch = mergeVector(observed_touch, latest.touch_vv);
+        observed_touch = mergeVector(observed_touch, latest.touch_vv); current = latest;
         Y.applyUpdate(doc, decodeBytes(latest.kind !== "page" ? latest.body_state : latest.title_state), REMOTE);
         cached.bytes = Y.encodeStateAsUpdate(doc).byteLength;
         cached.read_attempt++;
         void this.evict();
+      },
+      highlightRegisters: () => current.kind === "highlight" ? {selection: current.selection, color: current.color} : null,
+      checkTextSize: (bytes, credit, creating) => {
+        const counter = "9223372036854775807", replica_id = "ffffffff-ffff-4fff-bfff-ffffffffffff";
+        const causal = {ref, touch_vv: {[replica_id]: counter}, delete_vv: {}};
+        const patch = current.kind === "page" ? {...causal, kind: "page" as const, local_date: current.local_date, title_update: "", last_work_at_ms: null}
+          : current.kind === "note" ? {...causal, kind: "note" as const, body_update: "", work: null}
+          : {...causal, kind: "highlight" as const, source_ref: current.source_ref, selection: current.selection, color: current.color, body_update: ""};
+        const prelude = creating ? cached.prelude : [];
+        const frame = prepareChange({replica_id, command_seq: counter, lamport: counter}, {kind: "batch", intents: [...prelude]},
+          {resources: prelude.some(intent => intent.kind === "create_page") ? [] : [current], links: [], passages: [], source_stubs: []});
+        frame.resources.push(patch);
+        if (credit) {
+          const page = frame.resources.find((value): value is PagePatch => value.ref === credit.ref && value.kind === "page");
+          if (page && page.local_date === null) page.last_work_at_ms = MAX_PAGE_WORK_AT_MS;
+          else if (!page) frame.resources.push({kind:"page", ref: credit.ref, touch_vv:{}, delete_vv:{}, local_date:null, title_update:null, last_work_at_ms: MAX_PAGE_WORK_AT_MS});
+        }
+        if (new TextEncoder().encode(JSON.stringify(frame)).byteLength + Math.ceil(bytes * 4 / 3) > MAX_COMMAND_BYTES) throw new CommandTooLargeError();
+      },
+      checkFirstNoteSize: (body, credit) => {
+        const ref = `note_block:${crypto.randomUUID()}`;
+        const link = this.firstNoteLink(cached.ref, ref), context = {replica_id: "ffffffff-ffff-4fff-bfff-ffffffffffff", command_seq: "9223372036854775807", lamport: "9223372036854775807"};
+        const resources = cached.prelude.some(intent => intent.kind === "create_page") ? [] : [current];
+        const states = {resources, links: [], passages: [], source_stubs: []};
+        // Measure the frame with a valid tiny note. The real initializer's
+        // maximal client id contributes only ASCII base64url bytes.
+        const initializer = createNoteIntent(ref, emptyBody());
+        const change = prepareChange(context, {kind: "batch", intents: [...cached.prelude, initializer, link]}, states);
+        const budget = credit ? {...credit, at_ms: MAX_PAGE_WORK_AT_MS} : null;
+        const measured = foldPageCredit(change, states, budget);
+        if (new TextEncoder().encode(JSON.stringify(measured)).byteLength - initializer.body_update.length + Math.ceil(noteEncodingBound(body) * 4 / 3) > MAX_COMMAND_BYTES)
+          throw new CommandTooLargeError();
+        // Undo and redo carry only this note's and link's membership with fixed
+        // widths. Neither carries the initializer or a repositioning batch.
       },
       onCommitted: listener => { committed.add(listener); return () => committed.delete(listener); },
       hasPendingEdits: () => pending_edits.size > 0,
@@ -603,11 +656,22 @@ export class WritingRuntime {
       retain: () => { cached.pins++; return () => { cached.pins--; cached.last_used = Date.now(); void this.evict(); }; },
     };
     const kind = resource.kind;
-    doc.on("update", (update: Uint8Array, origin: unknown) => {
-      if (origin === REMOTE || this.retired) return;
+    let changes: Uint8Array[] = [], at_ms = 0;
+    doc.on("update", (update: Uint8Array) => {
+      if (!changes.length) at_ms = Date.now();
+      changes.push(update);
+    });
+    doc.on("afterAllTransactions", (_doc, transactions) => {
+      const raw = changes; changes = [];
+      const origin: unknown = transactions[0]!.origin;
+      if (!raw.length || origin === REMOTE || this.retired) return;
+      // A remote apply to live Yjs can produce a trailing null-origin
+      // formatting cleanup. It shares the initiating edit's command or receipt.
+      const update = transactionUpdate(raw);
       if (this.capture_scope) {
         const scope = this.capture_scope;
-        const invalid = !scope.origins.has(ref) || scope.origins.get(ref) !== origin;
+        const invalid = !scope.origins.has(ref) || scope.origins.get(ref) !== origin ||
+          transactions.some(transaction => transaction.origin !== origin && transaction.origin !== null);
         const error = invalid ? new Error("Compound mutation used an undeclared document or origin") : null;
         if (error) { scope.owner.faulted = true; scope.owner.fault = error; }
         if (!scope.origins.has(ref)) {
@@ -631,7 +695,9 @@ export class WritingRuntime {
       const intent: Intent = kind !== "page" ? { kind: "edit_body", ref, body_update: encodeBytes(update) } : { kind: "edit_title", ref, title_update: encodeBytes(update) };
       const prepared: Intent = cached.prelude.length ? {kind:"batch",intents:[...cached.prelude,intent]} : intent;
       cached.prelude = [];
-      const pending = this.run(prepared, { refs: [ref] }, origin instanceof PageWritingOrigin ? origin.credit() : null).catch(error => {
+      const registers = cached.highlightRegisters();
+      const pending = this.run(prepared, { refs: [ref] }, origin instanceof PageWritingOrigin ? origin.credit(at_ms) : null,
+        registers ? new Map([[ref, registers]]) : undefined).catch(error => {
         if (error instanceof LocalCommitError && this.failed) return this.failed.settled;
         throw error;
       });

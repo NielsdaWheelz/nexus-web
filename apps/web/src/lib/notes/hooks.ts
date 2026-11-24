@@ -81,8 +81,13 @@ export function useAuthoredPrefix(
   const [state, setState] = useState<{ key: string; data: QueryResult | null; error: unknown | null; occurrence: object | null; pending: boolean }>({ key, data: null, error: null, occurrence: null, pending: query !== null });
   const [attempt, retry] = useState(0);
   useEffect(() => {
-    setState(old => query !== null && old.key === key ? {...old, pending: true} : {key, data: null, error: null, occurrence: null, pending: query !== null});
-    if (query === null) return;
+    if (query === null) {
+      setState({ key, data: null, error: null, occurrence: null, pending: false });
+      return;
+    }
+    const begin = () => setState(old => old.key === key ? { ...old, pending: true }
+      : { key, data: null, error: null, occurrence: null, pending: true });
+    begin();
     let generation = 0;
     let active = true;
     let latestRevision:bigint|null=null;
@@ -92,6 +97,7 @@ export function useAuthoredPrefix(
       if(!active || latestRevision!==null && revision<latestRevision)return;
       latestRevision=revision;
       const current = ++generation;
+      begin();
       void (async () => {
         const rows = first.scope_available === false ? [] : [...first.rows];
         let cursor = first.scope_available === false ? null : first.next_cursor;
