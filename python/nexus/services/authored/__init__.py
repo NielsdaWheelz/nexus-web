@@ -20,12 +20,14 @@ from sqlalchemy.orm import Session
 from nexus.db.session import transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.authored import (
+    AUTHORED_FORMAT_REVISION,
     AcceptedChanges,
     Change,
     Corpus,
     DownloadChanges,
     FeedChange,
     MergeResult,
+    PageCredit,
     ProvisionReplica,
     SelectionCapture,
     UploadChanges,
@@ -80,7 +82,7 @@ def lock_account(db: Session, account_id: UUID) -> int:
 
 
 def provision(db: Session, account_id: UUID, request: ProvisionReplica) -> AcceptedChanges:
-    if request.format_revision != 6:
+    if request.format_revision != AUTHORED_FORMAT_REVISION:
         raise ApiError(ApiErrorCode.E_WIRE_MISMATCH, "Update nexus to sync")
     if request.replica_id in {
         uuid5(account_id, "authored:server"),
@@ -94,9 +96,9 @@ def provision(db: Session, account_id: UUID, request: ProvisionReplica) -> Accep
         db.execute(
             text(
                 "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) "
-                "VALUES (:a,:r,0,6) ON CONFLICT DO NOTHING"
+                "VALUES (:a,:r,0,:format) ON CONFLICT DO NOTHING"
             ),
-            {"a": account_id, "r": request.replica_id},
+            {"a": account_id, "r": request.replica_id, "format": AUTHORED_FORMAT_REVISION},
         )
         accepted = _accepted(db, account_id, request.replica_id)
         require_current_replica(db, account_id, request.replica_id)
@@ -250,7 +252,7 @@ def upload(db: Session, account_id: UUID, request: UploadChanges) -> AcceptedCha
             result = _touched(
                 helper.merge(account_id, _states(db, account_id, remaining), remaining), remaining
             )
-            _persist(db, account_id, result)
+            _persist(db, account_id, result, remaining)
             for change in remaining:
                 cursor += 1
                 db.execute(
@@ -289,7 +291,7 @@ def require_current_replica(db: Session, account_id: UUID, replica_id: UUID) -> 
         text("SELECT format_revision FROM authored_replicas WHERE account_id=:a AND replica_id=:r"),
         {"a": account_id, "r": replica_id},
     )
-    if revision != 6:
+    if revision != AUTHORED_FORMAT_REVISION:
         raise ApiError(ApiErrorCode.E_WIRE_MISMATCH, "Update nexus to sync")
 
 
@@ -437,16 +439,24 @@ def _touched(merged: MergeResult, changes: list[Change]) -> MergeResult:
     )
 
 
-def _persist(db: Session, account_id: UUID, result: MergeResult) -> None:
+def _persist(db: Session, account_id: UUID, result: MergeResult, changes: list[Change]) -> None:
+    markers: set[str] = set()
+    substantive_pages: set[str] = set()
+    for change in changes:
+        for patch in change.resources:
+            if patch.kind == "page":
+                (markers if patch.is_work_marker() else substantive_pages).add(patch.ref)
     try:
-        _persist_unchecked(db, account_id, result)
+        _persist_unchecked(db, account_id, result, markers - substantive_pages)
     except IntegrityError as exc:
         raise ConflictError(
             ApiErrorCode.E_RESOURCE_CONFLICT, "Conflicting authored identity binding"
         ) from exc
 
 
-def _persist_unchecked(db: Session, account_id: UUID, result: MergeResult) -> None:
+def _persist_unchecked(
+    db: Session, account_id: UUID, result: MergeResult, marker_only_pages: set[str]
+) -> None:
     for table, identities in (
         (
             "note_blocks",
@@ -558,6 +568,14 @@ def _persist_unchecked(db: Session, account_id: UUID, result: MergeResult) -> No
         )
     from nexus.services.authored.projections import project
 
+    if marker_only_pages:
+        result = result.model_copy(
+            update={
+                "projections": [
+                    item for item in result.projections if item.ref not in marker_only_pages
+                ]
+            }
+        )
     project(db, account_id, result, public_highlight_changes=public_highlight_changes)
 
 
@@ -637,6 +655,7 @@ def server_command(
     command: dict[str, Any],
     resource_refs: list[str],
     link_ids: list[str],
+    page_credit: PageCredit | None = None,
 ) -> MergeResult:
     """Flush one server intent into the caller's transaction; never commits.
 
@@ -647,10 +666,10 @@ def server_command(
     replica = uuid5(account_id, "authored:server:4")
     db.execute(
         text(
-            "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) VALUES (:a,:r,0,6) "
+            "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) VALUES (:a,:r,0,:format) "
             "ON CONFLICT DO NOTHING"
         ),
-        {"a": account_id, "r": replica},
+        {"a": account_id, "r": replica, "format": AUTHORED_FORMAT_REVISION},
     )
     sequence = _accepted(db, account_id, replica) + 1
     lamport = db.execute(
@@ -677,6 +696,8 @@ def server_command(
     # pair and bounded incident tails; endpoint existence/liveness is the caller's
     # metadata gate under this account head, never a reason to load resource bodies.
     resources = set(resource_refs) | {intent["ref"] for intent in intents if "ref" in intent}
+    if page_credit is not None:
+        resources.add(page_credit["ref"])
     states = read_states(db, account_id, resource_refs=list(resources), link_ids=link_ids)
     # One untouched tail survives at most one removal/move per intent. This
     # bounded prefix lets the kernel append after earlier effects in the same
@@ -752,6 +773,7 @@ def server_command(
             "command_seq": str(sequence),
             "lamport": str(lamport),
             "command": command,
+            "page_credit": page_credit,
         }
     )
     change = Change.model_validate(prepared["change"])
@@ -759,7 +781,7 @@ def server_command(
         raise InvalidRequestError(ApiErrorCode.E_CAPTURE_TOO_LARGE, "Command exceeds 2 MiB")
     merged = MergeResult.model_validate(prepared["states"])
     result = _touched(merged, [change])
-    _persist(db, account_id, result)
+    _persist(db, account_id, result, [change])
     db.execute(
         text(
             "INSERT INTO authored_changes(account_id,server_seq,replica_id,command_seq,change) "
@@ -831,7 +853,12 @@ def snapshot(db: Session, account_id: UUID) -> Iterator[str]:
     )
     yield (
         _json(
-            {"type": "header", "format_revision": 6, "head_cursor": watermark, "lamport": lamport}
+            {
+                "type": "header",
+                "format_revision": AUTHORED_FORMAT_REVISION,
+                "head_cursor": watermark,
+                "lamport": lamport,
+            }
         )
         + "\n"
     )
@@ -857,7 +884,7 @@ def snapshot(db: Session, account_id: UUID) -> Iterator[str]:
         _json(
             {
                 "type": "footer",
-                "format_revision": 6,
+                "format_revision": AUTHORED_FORMAT_REVISION,
                 "head_cursor": watermark,
                 "lamport": lamport,
                 "counts": counts,

@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import Fragment, Highlight, Media, NoteBlock, Page
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.schemas.authored import PageCredit
 from nexus.schemas.resource_graph import CitationSnapshot
 from nexus.services import (
     authored,
@@ -275,10 +276,19 @@ def note_create(value: NoteCreateInput, call: Call) -> NoteCreateSuccess:
     note = ResourceRef("note_block", uuid5(call.id, "nexus.note.create:note_block"))
     authored.lock_account(db, viewer)
     intents: list[dict[str, Any]] = []
+    page_credit: PageCredit | None = None
     if value.page_uri:
         owner = _ref(value.page_uri, ("page",))
         assert_ref_visible(db, viewer_id=viewer, ref=owner)
         label = "page"
+        at_ms = db.execute(
+            text(
+                "SELECT floor(extract(epoch FROM created_at) * 1000)::bigint "
+                "FROM tool_calls WHERE id=:id"
+            ),
+            {"id": call.id},
+        ).scalar_one()
+        page_credit = {"ref": owner.uri, "at_ms": at_ms}
     else:
         local_date = users.calendar_local_date(db, viewer)
         owner = assert_resource_ref(authored.daily_page_ref(db, viewer, local_date))
@@ -302,6 +312,7 @@ def note_create(value: NoteCreateInput, call: Call) -> NoteCreateSuccess:
         command={"kind": "batch", "intents": intents},
         resource_refs=[owner.uri],
         link_ids=[],
+        page_credit=page_credit,
     )
     call.created_refs.append(
         {"field": None, "kind": "note_block", "id": str(note.id), "label": label}

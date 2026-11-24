@@ -1282,6 +1282,8 @@ fresh displacement for that commit. if publication removes the heading from
 the mounted window, the pane translates its prior measured inset by the
 journal's new exact reservation coordinate. the correction never admits rows
 or becomes a visit restore.
+for named returns in intrinsic flat lists, the closest surviving row in the old
+order takes a deleted anchor's place. the following row wins a tie.
 
 `AnchorGeometry` is the common committed-frame contract for uniform collections
 and variable journal days and rows. it gives the pane ordered identities,

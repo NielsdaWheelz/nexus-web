@@ -3,12 +3,14 @@
 import type { Change, Corpus, FeedChange, HighlightState, LinkState, MergeResult, PassageState, Register, ReplicaState, ResourcePatch, ResourceProjection, ResourceState, SourceStub, Vector } from "./types.ts";
 import { canonicalSerialization } from "./canonical.ts";
 import { captureRevision, excerptView, excerptTextParts } from "./excerpt.ts";
-import { validateChange } from "./validate.ts";
+import { validateChange, validatePageWorkTime } from "./validate.ts";
 import { MAX_COMMAND_BYTES, CommandTooLargeError } from "./types.ts";
 import { bodyHasContent } from "./body.ts";
 import { mergeNote, mergeTitle } from "./documents.ts";
-import { isResourceRef, sortedEndpoints } from "./identity.ts";
+import { isResourceRef, sortedEndpoints, validateLocalDate } from "./identity.ts";
 import { mergeWork, projectWork } from "./work.ts";
+import { pageTitle, paneFilterText } from "./paneFilterText.ts";
+
 /** The feed republishes this replica's submitted causal change. Its durable
  * command prefix already contains the change, regardless of acknowledgement. */
 export function isLocalFeedEcho(entry: FeedChange, replica: ReplicaState): boolean {
@@ -53,7 +55,7 @@ export function mergeRegister<T>(a:Register<T>|null,b:Register<T>|null):Register
 }
 function requiredRegister<T>(a:Register<T>|null,b:Register<T>):Register<T> { return mergeRegister(a,b)!; }
 export function projectResource(state:ResourceState):ResourceProjection {
-  const common={excerpt:null,capture_revision:null,authored_by_viewer:true,ref:state.ref,kind:state.kind,visible:isVisible(state.touch_vv,state.delete_vv),body_pm_json:null,body_text:null,title:null,local_date:null,source_ref:null,source_publication:null,selection:null,color:null,embedded_refs:[],work:null};
+  const common={excerpt:null,capture_revision:null,authored_by_viewer:true,ref:state.ref,kind:state.kind,visible:isVisible(state.touch_vv,state.delete_vv),body_pm_json:null,body_text:null,title:null,title_key:null,local_date:null,last_work_at_ms:null,source_ref:null,source_publication:null,selection:null,color:null,embedded_refs:[],work:null};
   switch(state.kind) {
     case "note":
     case "highlight": {
@@ -67,13 +69,20 @@ export function projectResource(state:ResourceState):ResourceProjection {
       const {excerpt,...selection}=state.selection.value;
       return {...bodyProjection,source_ref:state.source_ref,source_publication:state.selection.value.publication,selection,color:state.color.value,excerpt:excerptView(excerpt,"compact",{kind:"capture"}),capture_revision:captureRevision(state.source_ref,{kind:"selection",value:state.selection.value})};
     }
-    case "page": return {...common,title:mergeTitle(state.title_state,null).title,local_date:state.local_date};
+    case "page": {
+      if (state.local_date !== null) validateLocalDate(state.local_date);
+      validatePageWorkTime(state.last_work_at_ms, state.local_date);
+      const title = mergeTitle(state.title_state, null).title;
+      const listed = common.visible && state.local_date === null;
+      return {...common, title, local_date:state.local_date, title_key:listed ? paneFilterText(pageTitle(title, null)) : null,
+        last_work_at_ms:listed ? state.last_work_at_ms : null};
+    }
   }
 }
 export function projectPassage(state: PassageState): ResourceProjection {
   const excerpt = excerptView(state.capture.value.excerpt, "compact", {kind:"capture"});
   const text = excerpt.kind === "content" ? excerptTextParts(excerpt.body).exact : "table excerpt";
-  return {ref:`passage_anchor:${state.anchor_id}`,kind:"source",authored_by_viewer:true,visible:true,body_pm_json:null,body_text:null,title:text,local_date:null,source_ref:state.source_ref,source_publication:state.capture.value.publication,selection:null,color:null,embedded_refs:[],excerpt,capture_revision:captureRevision(state.source_ref,{kind:"passage",value:state.capture.value}),work:null};
+  return {ref:`passage_anchor:${state.anchor_id}`,kind:"source",authored_by_viewer:true,visible:true,body_pm_json:null,body_text:null,title:text,title_key:null,local_date:null,last_work_at_ms:null,source_ref:state.source_ref,source_publication:state.capture.value.publication,selection:null,color:null,embedded_refs:[],excerpt,capture_revision:captureRevision(state.source_ref,{kind:"passage",value:state.capture.value}),work:null};
 }
 function resourceMerge(old:ResourceState|null,patch:ResourcePatch):ResourceState {
   if(!isResourceRef(patch.ref)) throw new TypeError("Invalid resource reference");
@@ -84,8 +93,16 @@ function resourceMerge(old:ResourceState|null,patch:ResourcePatch):ResourceState
   switch(patch.kind) {
     case "note": return {...causal,kind:"note",body_state:mergeNote(old?.kind==="note"?old.body_state:null,patch.body_update).body_state,work:mergeWork(old?.kind==="note"?old.work:null,patch.work)};
     case "page": {
-      if(old?.kind==="page" && old.local_date!==patch.local_date) throw new TypeError("Daily binding is immutable");
-      return {...causal,kind:"page",local_date:patch.local_date,title_state:mergeTitle(old?.kind==="page"?old.title_state:null,patch.title_update).title_state};
+      const prior = old?.kind === "page" ? old : null;
+      if (prior && prior.local_date !== patch.local_date) throw new TypeError("Daily binding is immutable");
+      if (!prior && (patch.title_update === null || !isVisible(patch.touch_vv, patch.delete_vv))) {
+        throw new TypeError("A page patch requires an existing page or a creation with a live touch and title initializer");
+      }
+      const previousTime = prior === null ? null : prior.last_work_at_ms;
+      const last_work_at_ms = patch.last_work_at_ms === null ? previousTime :
+        previousTime === null ? patch.last_work_at_ms : Math.max(previousTime, patch.last_work_at_ms);
+      const title_state = patch.title_update === null && prior ? prior.title_state : mergeTitle(prior?.title_state ?? null, patch.title_update).title_state;
+      return {...causal, kind:"page", local_date:patch.local_date, title_state, last_work_at_ms};
     }
     case "highlight": {
       if(!isResourceRef(patch.source_ref)) throw new TypeError("Invalid highlight source");

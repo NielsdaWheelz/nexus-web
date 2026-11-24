@@ -79,10 +79,11 @@ revision and retries when another commit advances that revision first. an open
 writing document installs its exact local receipt and reads causal state on a
 change from outside its own writer.
 
-the first title edit submits immediately. edits from the same occurrence can
-join the last queued title command while it waits for its turn. preparation,
-an intervening command, and causal capture seal those bytes. after preparation,
-retries use the same source sequence and payload. undo retains its own groups.
+the first daily title edit submits immediately. edits from the same occurrence
+can join the last queued daily title command while it waits for its turn.
+preparation, an intervening command, and causal capture seal those bytes. after
+preparation, retries use the same source sequence and payload. undo retains its
+own groups. undated page edits retain separate command admission for work credit.
 
 ## work
 
@@ -277,18 +278,29 @@ a selection captures publication, geometry, quote and context together. endpoint
 order is fractional position then link id; equal-key insertion rekeys only the
 observed tie run. receiving and indexing never manufacture a touch.
 
-the register lists visible undated pages by display title under sqlite `NOCASE`,
-then ref. keyset pagination uses that same pair and the `resources_register`
-partial index. the uppercased first code point heads each run. only ascii letters fold.
-an empty title files as `untitled page`. `opened here` resolves device recents
-and shows the first eight visible undated pages in recent order. a filter hides
-that group and applies to the loaded register prefix. `New page` opens an empty
-focused title on the paper. authored devices store no edit timestamps.
+notes opens the continuous journal at the account's current day. the separate
+add action appends and focuses one tail bullet. the local register lists each
+visible undated page once, including untitled pages. title filtering covers the
+whole register with literal unicode-normalized substring matching. dates use the
+account's calendar. the default order is greatest writing time, then display
+title under sqlite `NOCASE`, then ref. unknown times sort last. title order uses
+the same title and ref keys. indexed keyset pages establish continuation with one
+lookahead. back retains still-matching row identities and focus against one
+current store revision. a fresh visit ranks again.
+
+each effective authored edit credits its outer undated writing page at the
+originating device's time. explicitly targeted tool appends use their call time.
+work bookkeeping alone earns no credit. the timestamp merges by maximum and is
+included in the same immutable source change. a marker carries no touch or title
+update and can credit a tombstone without recreating it. marker-only pages skip
+relational page, search and suggestion effects.
 
 one local sql transaction commits touched merge bytes, projections, indexes,
 source sequence, store revision and immutable pending change. only durable commit
 acknowledges saved writing. uncertain replies reconcile the same source sequence;
 stale revisions remerge the frozen intent without allocating another touch.
+while a command is unresolved, a write-prefix read reports its first failure.
+after recovery commits it, a new prefix read includes the recovered write.
 local acceptance, server acceptance and availability to server tools are distinct
 facts; a local save alone promises neither of the latter two.
 
@@ -762,20 +774,24 @@ to satisfy a heap target. a single rich body is not virtualized. pressure is
 shared across journal dates. after pressure, that visit keeps reduced
 prefetch to avoid alternating eviction and reload; the next visit starts afresh.
 viewport leases cannot make structural commands fail merely because of scrolling. visual anchor
-ids and measurements retain no writing. the seed reserves no document; first
-content uses ordinary newborn admission. a failed command admission explains its
-actual limit at the requested action. absolute-tail append resolves the current tail at
-command preparation, rather than retaining a relationship that an earlier
-accepted unlink may remove. explicit insert-after retains its chosen anchor.
-if history retirement needs settlement, a new gesture requests insertion after
-it finishes; a delayed split is not replayed.
+ids and measurements retain no writing. first text in a seed prices its
+initializer, page prelude and link at the empty-outline position before
+publication. independent first writes may share that position. absolute-tail
+append resolves the current tail during preparation; explicit insert-after
+retains its chosen anchor.
+
+bound text prices forward, undo and redo against the observed Yjs state before
+publication. an edit starts a new typing group if its previous group cannot
+absorb it within the command limit. split and outline paste price the actual
+placement while holding the command lease. a later input or selection can
+invalidate a waiting split, keeping that input at its existing occurrence.
 no account-wide status or recovery inventory is
 introduced. the runtime's unpinned document cache remains a separate owner.
 
 ## device ownership
 
 firefox ports share the stable `/_nexus/authored/worker.js` worker named
-`nexus-authored-<account>-format-5`. `IDBBatchAtomicVFS` uses strict indexeddb commit
+`nexus-authored-<account>-format-<revision>`. `IDBBatchAtomicVFS` uses strict indexeddb commit
 and sqlite synchronous full. a browser web lock spans command preparation through
 uncertain commit settlement; an ephemeral port lease fences a late message from a
 retired or crashed owner. compatible shells reuse one account/format owner.
@@ -809,22 +825,20 @@ reopen before the cached shell loads.
 the product does not add a second activation protocol to repair that platform
 boundary. local corpus ownership remains independent of shell asset delivery.
 
-both hosts transactionally upgrade a drained format-4 store to format 5: add null
-work to canonical notes and every resource/passage projection; preserve replica
-identity, body bytes, source sequence and cursor. a nonempty outbox refuses the
-upgrade without writes. both hosts carry `E_AUTHORED_UPGRADE_PENDING` into the
-existing setup refusal: drain the previous version on this device, then retry.
-that surface offers no sign-out or discard action. unknown formats remain errors.
-canonical migration 0339
-adds note metadata, advances format-4 admissions and fences prior feed bytes at the
-locked head. coordinated release requires drained, caught-up devices and stopped
-old writers; pending immutable commands are never rewritten.
+both hosts check account, format and empty outbox before rebasing drained local
+formats 4–6 onto a format-7 snapshot. the transaction retains replica identity
+and counters, and does not expose the incomplete rebuild. a nonempty old outbox
+refuses with `E_AUTHORED_UPGRADE_PENDING` and keeps its bytes. drain using the
+previous release. migration 0348 sets old page times to null, promotes format-6
+producers and fences old feed bytes at the locked head. see the
+[coordinated rollout](../issues/release-notes-home.md).
 
 ## replication
 
 `POST /authored/replicas` provisions a fresh account replica. immutable contiguous
-changes upload through `POST /authored/changes`; accepted prefixes are recognized
-and compared before new commands merge. the account head lock commits canonical
+changes upload through `POST /authored/changes`. feed reads and writes require
+the current authored format. accepted prefixes are compared before new commands
+merge. the account head lock commits canonical
 states, projections, consecutive feed sequences and source acceptance together.
 server tools use that same owner within their existing fenced transaction.
 
@@ -836,7 +850,7 @@ rewrite committed bytes to fit. migration preflight reports existing oversize
 content. local queries return bounded rows; native transfer retains 24 kib raw
 chunks within 64 kib frames. the whole streamed corpus snapshot has no 3 mib cap.
 
-`GET /authored/changes?after=…` returns a bounded ascending prefix through one
+`GET /authored/changes?after=…&format_revision=7` returns a bounded prefix through one
 captured head. applying changes and advancing the cursor share one device
 transaction. an entry from this replica within its durable source prefix only
 advances the feed cursor. only incoming changes advance the corpus revision.
@@ -854,7 +868,7 @@ or passive stream exists. hide stops successors, never durable commits or an
 admitted acknowledgement; return and local commits wake the document scheduler.
 two visible documents may share one running unit without owning each other's lifetime.
 hello checks account, wire and format before storage, with an exact revision echo.
-wire admission and durable format admission remain separate. current authored format is 6.
+wire admission and durable format admission remain separate. current authored format is 7.
 
 `GET /authored/snapshot` streams a repeatable-read corpus with head and lamport in
 its header and completion footer, plus exact record counts. interrupted staging

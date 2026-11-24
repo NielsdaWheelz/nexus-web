@@ -9,11 +9,11 @@ import { excerptSourceWindows, type ExcerptSourceEvent, ExcerptCaptureError, cap
 import { mergeChanges, isVisible } from "./src/merge.ts";
 import * as Y from "yjs";
 import { applyBodyEdits, bodyInline, encodeBytes, hydrateNote, readBody } from "./src/documents.ts";
-import { createHighlightIntent, createNoteIntent, prepareChange, type CommandContext, type Intent } from "./src/commands.ts";
+import { createHighlightIntent, createNoteIntent, foldPageCredit, prepareChange, type CommandContext, type Intent } from "./src/commands.ts";
 import { bodyHasContent, parseBody } from "./src/body.ts";
 import { dailyId, linkId, normalizeQuote, passageId, passageKey, validateBindings } from "./src/identity.ts";
 import { generateKeyBetween } from "fractional-indexing";
-import type { Change, Corpus } from "./src/types.ts";
+import type { Change, Corpus, PageCredit } from "./src/types.ts";
 type ServerCommand =
   | Exclude<Intent, { kind: "create_note" | "create_highlight" | "add_link" | "batch" }>
   | { kind: "create_note"; ref: string; body_pm_json: unknown }
@@ -262,11 +262,17 @@ async function main(): Promise<void> {
       else throw new TypeError("Unknown semantic identity kind");
       break;
     case "prepare_server": {
-      closed(request, "op account_id states replica_id command_seq lamport command");
+      closed(request, "op account_id states replica_id command_seq lamport command page_credit");
       const account_id = text(request.account_id), states = corpus(request.states);
       const context = { replica_id: text(request.replica_id), command_seq: text(request.command_seq), lamport: text(request.lamport) };
       const command = await serverIntent(request.command, states, account_id, context);
-      const change = prepareChange(context, command, states);
+      let credit: PageCredit = null;
+      if (request.page_credit !== null) {
+        const {ref, at_ms} = closed(request.page_credit, "ref at_ms");
+        if (typeof at_ms !== "number") throw new TypeError("Expected page work time");
+        credit = {ref: text(ref), at_ms};
+      }
+      const change = foldPageCredit(prepareChange(context, command, states), states, credit);
       await validateBindings(account_id, states, [change]);
       result = { change, states: mergeChanges(states, [change]) };
       break;

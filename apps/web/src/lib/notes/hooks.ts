@@ -2,6 +2,7 @@
 /** React reads subscribe to the local account database, including online. */
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { Intent } from "@nexus/authored/commands";
+import { paneFilterText } from "@nexus/authored/paneFilterText";
 import type { AuthoredQuery, QueryResult } from "@nexus/authored/types";
 import { useAuthoredStore, useAuthoredAccountId } from "@/lib/authored/provider";
 import { getWritingRuntime, type WritingDocument, type WritingRuntime } from "./runtime";
@@ -70,15 +71,23 @@ export function useWritingDocument(ref: string | null, prelude: readonly Intent[
 /** Read a bounded prefix from one local revision. A newer subscription delivery
  * supersedes an in-flight traversal; mixed-revision pages are never published. */
 type CursorQuery = Extract<AuthoredQuery, { cursor: string | null }>;
-export function useAuthoredPrefix(query: CursorQuery | null, count: number) {
+export function useAuthoredPrefix(
+  query: CursorQuery | null, count: number,
+  complete?: (prefix: QueryResult) => Promise<QueryResult | null>,
+) {
   const store = useAuthoredStore();
   const accountId = useAuthoredAccountId();
   const key = JSON.stringify([accountId, query === null ? null : { ...query, cursor: null }]);
   const [state, setState] = useState<{ key: string; data: QueryResult | null; error: unknown | null; occurrence: object | null; pending: boolean }>({ key, data: null, error: null, occurrence: null, pending: query !== null });
   const [attempt, retry] = useState(0);
   useEffect(() => {
-    setState(old => query !== null && old.key === key ? {...old, pending: true} : {key, data: null, error: null, occurrence: null, pending: query !== null});
-    if (query === null) return;
+    if (query === null) {
+      setState({ key, data: null, error: null, occurrence: null, pending: false });
+      return;
+    }
+    const begin = () => setState(old => old.key === key ? { ...old, pending: true }
+      : { key, data: null, error: null, occurrence: null, pending: true });
+    begin();
     let generation = 0;
     let active = true;
     let latestRevision:bigint|null=null;
@@ -88,6 +97,7 @@ export function useAuthoredPrefix(query: CursorQuery | null, count: number) {
       if(!active || latestRevision!==null && revision<latestRevision)return;
       latestRevision=revision;
       const current = ++generation;
+      begin();
       void (async () => {
         const rows = first.scope_available === false ? [] : [...first.rows];
         let cursor = first.scope_available === false ? null : first.next_cursor;
@@ -100,7 +110,10 @@ export function useAuthoredPrefix(query: CursorQuery | null, count: number) {
           }
           rows.push(...next.rows); cursor = next.next_cursor;
         }
-        if (active && current === generation) setState({ key, data: { ...first, rows, next_cursor: cursor }, error: null, occurrence: null, pending: false });
+        const prefix = { ...first, rows, next_cursor: cursor };
+        const data = complete === undefined ? prefix : await complete(prefix);
+        if (data !== null && active && current === generation)
+          setState({ key, data, error: null, occurrence: null, pending: false });
       })().catch(error => { if (active && current === generation) setState(old => ({ key, data: old.key === key ? old.data : null, error, occurrence: old.key === key ? old.occurrence ?? {} : {}, pending: false })); });
     };
     const unsubscribe = store.subscribe(firstQuery, receive, error => {
@@ -111,8 +124,50 @@ export function useAuthoredPrefix(query: CursorQuery | null, count: number) {
     return () => { active = false; generation++; unsubscribe(); };
     // The serialized query is its stable value identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store, key, count, attempt]);
+  }, [store, key, count, attempt, complete]);
   return { data: query !== null && state.key === key ? state.data : null, error: query !== null && state.key === key ? state.error : null, occurrence: query !== null && state.key === key ? state.occurrence : null, pending: query !== null && (state.key !== key || state.pending), retry: () => retry(n => n + 1) };
+}
+
+/** Read the current ordered prefix and any departed candidates at one revision.
+ * The last page's lookahead is the witness for continuation. */
+export function useNotesRegister({ query, order, depth, getRetainedRefs }: {
+  query: string;
+  order: "worked" | "title";
+  depth: number;
+  getRetainedRefs: () => readonly string[];
+}) {
+  const store = useAuthoredStore();
+  const complete = useCallback(async (prefix: QueryResult): Promise<QueryResult | null> => {
+    const retained = getRetainedRefs();
+    const matches = new Map(prefix.rows.map(row => [row.resource.ref, row]));
+    const missing = retained.filter(ref => !matches.has(ref));
+    const needle = paneFilterText(query.trim());
+    for (let offset = 0; offset < missing.length; offset += 100) {
+      const result = await store.query({ kind: "resolve", refs: missing.slice(offset, offset + 100) });
+      if (result.store_revision !== prefix.store_revision) return null;
+      for (const row of result.rows) {
+        const resource = row.resource;
+        if (resource.title_key !== null && resource.title_key.includes(needle))
+          matches.set(resource.ref, row);
+      }
+    }
+    const rows: QueryResult["rows"] = [];
+    for (const ref of retained) {
+      const row = matches.get(ref);
+      if (row !== undefined) rows.push(row);
+      matches.delete(ref);
+    }
+    for (const row of prefix.rows) {
+      if (rows.length === depth) break;
+      if (matches.has(row.resource.ref)) rows.push(row);
+    }
+    return { ...prefix, rows };
+  }, [depth, getRetainedRefs, query, store]);
+  const read = useAuthoredPrefix({ kind: "pages", order, title_filter: query, cursor: null, limit: 100 }, depth / 100, complete);
+  const data = useMemo(() => read.data === null ? null : {
+    rows: read.data.rows.map(({ resource }) => resource), more: read.data.next_cursor !== null,
+  }, [read.data]);
+  return { ...read, data };
 }
 
 type Resolved = QueryResult["rows"][number]["resource"];

@@ -1,7 +1,8 @@
 /** Shared authored state and replication vocabulary. Decimal counters are exact signed
  * 64-bit SQL values. Patches carry causal evidence, never replacement projections. */
 import type { FrozenExcerpt, ExcerptView } from "./excerpt.ts";
-export const FORMAT_REVISION = 6;
+export const FORMAT_REVISION = 7;
+export const MAX_PAGE_WORK_AT_MS = 253402300799999;
 export const MAX_COMMAND_BYTES = 2 * 1024 * 1024;
 export class CommandTooLargeError extends TypeError {
   constructor() { super("this selection is too large to save. select a shorter passage."); this.name = "CommandTooLargeError"; }
@@ -17,6 +18,7 @@ export class WorkUnavailableError extends TypeError {
 }
 export type Counter = string;
 export type ResourceRef = string;
+export type PageCredit = { ref: ResourceRef; at_ms: number } | null;
 export type Vector = Readonly<Record<string, Counter>>;
 export interface Stamp { lamport: Counter; replica_id: string }
 export interface Register<T> { value: T; stamp: Stamp }
@@ -54,11 +56,11 @@ export type HighlightLocator = Extract<Locator, {type:"x_capture_offsets" | "web
 export interface SelectionCapture { excerpt: FrozenExcerpt; publication: Publication | null; locator: HighlightLocator; quote_exact: string; prefix: string | null; suffix: string | null; passage_ref: ResourceRef | null }
 interface ResourceCausality { ref: ResourceRef; touch_vv: Vector; delete_vv: Vector }
 export interface NotePatch extends ResourceCausality { kind: "note"; body_update: string | null; work: NoteWork | null }
-export interface PagePatch extends ResourceCausality { kind: "page"; local_date: string | null; title_update: string | null }
+export interface PagePatch extends ResourceCausality { kind: "page"; local_date: string | null; title_update: string | null; last_work_at_ms: number | null }
 export interface HighlightPatch extends ResourceCausality { kind: "highlight"; source_ref: ResourceRef; selection: Register<SelectionCapture>; color: Register<HighlightColor>; body_update: string | null }
 export type ResourcePatch = NotePatch | PagePatch | HighlightPatch;
 export interface NoteState extends ResourceCausality { kind: "note"; body_state: string; work: NoteWork | null }
-export interface PageState extends ResourceCausality { kind: "page"; local_date: string | null; title_state: string }
+export interface PageState extends ResourceCausality { kind: "page"; local_date: string | null; title_state: string; last_work_at_ms: number | null }
 export interface HighlightState extends ResourceCausality { kind: "highlight"; source_ref: ResourceRef; selection: Register<SelectionCapture>; color: Register<HighlightColor>; body_state: string }
 export type ResourceState = NoteState | PageState | HighlightState;
 export interface LinkState { link_id: string; endpoint_a: ResourceRef; endpoint_b: ResourceRef; add_vv: Vector; remove_vv: Vector; position_a: Register<string> | null; position_b: Register<string> | null }
@@ -69,7 +71,7 @@ export interface SourceStub { source_ref: ResourceRef; capture: Register<SourceC
 export interface Change { command_seq: Counter; lamport: Counter; resources: ResourcePatch[]; links: LinkState[]; passages: PassageState[]; source_stubs: SourceStub[] }
 export interface Corpus { resources: ResourceState[]; links: LinkState[]; passages: PassageState[]; source_stubs: SourceStub[] }
 export type SelectionLocation = Omit<SelectionCapture, "excerpt">;
-export interface ResourceProjection { excerpt: ExcerptView | null; capture_revision: string | null; authored_by_viewer: boolean; ref: ResourceRef; kind: ResourceState["kind"] | "source"; visible: boolean; body_pm_json: import("./body.ts").BodyJson | null; body_text: string | null; title: string | null; local_date: string | null; source_ref: ResourceRef | null; source_publication: Publication | null; selection: SelectionLocation | null; color: HighlightColor | null; embedded_refs: string[]; work: WorkView | null }
+export interface ResourceProjection { excerpt: ExcerptView | null; capture_revision: string | null; authored_by_viewer: boolean; ref: ResourceRef; kind: ResourceState["kind"] | "source"; visible: boolean; body_pm_json: import("./body.ts").BodyJson | null; body_text: string | null; title: string | null; title_key: string | null; local_date: string | null; last_work_at_ms: number | null; source_ref: ResourceRef | null; source_publication: Publication | null; selection: SelectionLocation | null; color: HighlightColor | null; embedded_refs: string[]; work: WorkView | null }
 export interface MergeResult extends Corpus { projections: ResourceProjection[] }
 export interface FeedChange { server_seq: Counter; replica_id: string; change: Change }
 export interface ReplicaState { account_id: string; replica_id: string; command_seq: Counter; store_revision: Counter; lamport: Counter; server_cursor: Counter; format_revision: number; provisioning_complete: boolean }
@@ -106,7 +108,7 @@ export type AuthoredQuery =
   | { kind: "excerpt"; ref: ResourceRef; reading_ref: string | null }
   | { kind: "source_alias"; ref: ResourceRef }
   | { kind: "adjacency"; ref: ResourceRef; cursor: string | null; limit: number }
-  | { kind: "pages"; cursor: string | null; limit: number }
+  | { kind: "pages"; order: "worked" | "title"; title_filter: string; cursor: string | null; limit: number }
   | { kind: "daily"; local_date: string }
   | { kind: "annotations"; source_ref: ResourceRef; cursor: string | null; limit: number }
   | { kind: "backlinks"; ref: ResourceRef; cursor: string | null; limit: number }

@@ -10,7 +10,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
-internal const val AUTHORED_FORMAT_REVISION = 6
+internal const val AUTHORED_FORMAT_REVISION = 7
 
 /** One serialized bundled-SQLite connection per bound account. Kotlin owns SQL
  * transactions, never CRDT merging. Every projection accompanies merged states
@@ -33,22 +33,30 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
     init {
         val directory = context.filesDir.resolve("authored").also { check(it.exists() || it.mkdirs()) }
         connection = BundledSQLiteDriver().open(directory.resolve("$account.sqlite3").path)
-        val schema = JSONArray(context.assets.open("app/authored-schema.json").bufferedReader().use { it.readText() })
-        for (index in 0 until schema.length()) run(schema.getString(index))
-        run("CREATE VIRTUAL TABLE temp.authored_fts_probe USING fts5(text)")
-        run("DROP TABLE temp.authored_fts_probe")
-        run("INSERT OR IGNORE INTO replica_state VALUES(1,?,?,0,0,0,0,?,0)", account.toString(), UUID.randomUUID().toString(), AUTHORED_FORMAT_REVISION)
         try {
+            val schema = JSONObject(context.assets.open("app/authored-schema.json").bufferedReader().use { it.readText() })
+            fun apply(name: String) {
+                val statements = schema.getJSONArray(name)
+                for (index in 0 until statements.length()) run(statements.getString(index))
+            }
+            apply("pragmas")
+            run("CREATE VIRTUAL TABLE temp.authored_fts_probe USING fts5(text)")
+            run("DROP TABLE temp.authored_fts_probe")
             transaction {
-                val state = replica()
-                check(state.getString("account_id") == account.toString())
-                val format = state.getInt("format_revision")
-                if (format == 4 || format == 5) {
-                    if (rows("SELECT 1 FROM pending_changes LIMIT 1").length() > 0)
+                val existing = rows("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='replica_state'").length() > 0
+                val state = if (existing) rows("SELECT account_id,format_revision FROM replica_state WHERE singleton=1").optJSONObject(0) else null
+                var rebuild = false
+                if (state != null) {
+                    check(state.getString("account_id") == account.toString())
+                    val format = state.getInt("format_revision")
+                    rebuild = format in 4..6
+                    check(rebuild || format == AUTHORED_FORMAT_REVISION) { "authored format mismatch; drain the previous client before reprovisioning this device" }
+                    if (rebuild && rows("SELECT 1 FROM pending_changes LIMIT 1").length() > 0)
                         throw LocalStateError("E_AUTHORED_UPGRADE_PENDING", "sync all writing with the previous client before updating this device")
-                    val upgrade = JSONArray(context.assets.open("app/authored-upgrade-to-6.json").bufferedReader().use { it.readText() })
-                    for (index in 0 until upgrade.length()) run(upgrade.getString(index))
-                } else check(format == AUTHORED_FORMAT_REVISION) { "authored format mismatch; drain the previous client before reprovisioning this device" }
+                }
+                apply("create")
+                run("INSERT OR IGNORE INTO replica_state VALUES(1,?,?,0,0,0,0,?,0)", account.toString(), UUID.randomUUID().toString(), AUTHORED_FORMAT_REVISION)
+                if (rebuild) apply("rebuild")
             }
         } catch (error: Throwable) { connection.close(); throw error }
     }
@@ -429,14 +437,17 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             return result.put("positions", positions).put("next_cursor", cursor)
         }
         val output = JSONArray()
-        for (index in 0 until records.length()) {
+        val pageLimit = if (kind == "pages") query.getInt("limit").coerceIn(1, 100) else null
+        val rowCount = if (pageLimit == null) records.length() else minOf(pageLimit, records.length())
+        for (index in 0 until rowCount) {
             val row = records.getJSONObject(index)
             output.put(JSONObject().put("resource", JSONObject(row.getString("projection_json"))).put("link", if (row.isNull("link_json")) JSONObject.NULL else JSONObject(row.getString("link_json"))).put("match_text", JSONObject.NULL).put("activation_ref", JSONObject.NULL).put("matched_field", JSONObject.NULL).put("activation_field", JSONObject.NULL))
         }
         var cursor: Any = JSONObject.NULL
-        if (query.has("limit") && output.length() == minOf(100, query.getInt("limit")) && output.length() > 0) {
-            val last = output.getJSONObject(output.length() - 1)
-            val record = records.getJSONObject(records.length() - 1)
+        val more = if (pageLimit != null) records.length() > pageLimit else query.has("limit") && rowCount == minOf(100, query.getInt("limit"))
+        if (more && rowCount > 0) {
+            val last = output.getJSONObject(rowCount - 1)
+            val record = records.getJSONObject(rowCount - 1)
             cursor = if (record.has("cursor_json")) record.getString("cursor_json") else last.getJSONObject("resource").getString("ref")
         }
         return result.put("rows", output).put("next_cursor", cursor)

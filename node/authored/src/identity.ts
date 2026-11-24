@@ -1,6 +1,7 @@
 /** Immutable semantic bindings. Existing ids win; fresh ids use disjoint UUIDv5
  * names. Quote normalization serves matching and never rewrites literal capture. */
 import { v5 } from "uuid";
+import type { LocalDate } from "./types.ts";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const SCHEMES = new Set(["media","library","evidence_span","content_chunk","highlight","page","note_block","fragment","message","oracle_reading","oracle_passage_anchor","external_snapshot","contributor","podcast","feed","reader_apparatus_item","passage_anchor"]);
 export function isResourceRef(ref: unknown): ref is string {
@@ -15,8 +16,13 @@ export function sortedEndpoints(a: string,b: string): [string,string] {
 export function linkKey(a:string,b:string):string {
   return sortedEndpoints(a,b).map(ref=>`${new TextEncoder().encode(ref).length}:${ref}`).join("");
 }
+export function validateLocalDate(value: LocalDate): void {
+  if (typeof value !== "string" || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/u.test(value) || value.startsWith("0000-")) throw new TypeError("Expected a YYYY-MM-DD civil date");
+  const date = new Date(`${value}T00:00:00Z`);
+  if (!Number.isFinite(date.valueOf()) || date.toISOString().slice(0, 10) !== value) throw new TypeError("Invalid civil date");
+}
 export function dailyId(account_id:string,local_date:string):string {
-  if (!/^\d{4}-\d{2}-\d{2}$/u.test(local_date) || new Date(`${local_date}T00:00:00Z`).toISOString().slice(0,10)!==local_date) throw new TypeError("Invalid local date");
+  validateLocalDate(local_date);
   return v5(`daily:${local_date}`,account_id);
 }
 export function linkId(account_id:string,a:string,b:string):string { return v5(`link:${linkKey(a,b)}`,account_id); }

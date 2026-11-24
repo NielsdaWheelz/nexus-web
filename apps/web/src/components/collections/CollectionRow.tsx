@@ -143,6 +143,7 @@ export default function CollectionRow({
     content={content}
     leadingVisual={row.artwork !== undefined ? <Artwork title={row.title.text} source={remoteArtwork(row.artwork.imageUrl)} size={44} /> : undefined}
     controls={<>
+      {row.kind === "note" && row.workDateMark ? <time className={styles.workDate} dateTime={row.workDateMark.date} aria-hidden="true">{row.workDateMark.label}</time> : null}
       {primaryControl ? <span ref={primaryControlRef} data-row-primary-control="">{primaryControl}</span> : null}
       {row.resourceActions && rowActionsAvailable ? <ResourceActions subject={row.resourceActions} density="Row" returnFocus={returnFocus} afterRemoval={successFocus} /> : null}
       {more}

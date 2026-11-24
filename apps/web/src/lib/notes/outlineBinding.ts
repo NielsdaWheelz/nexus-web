@@ -17,6 +17,8 @@ export interface OutlineBindingField {
   kind: "body" | "title";
   document: WritingDocument | null;
   origin: unknown;
+  admitText(baseline: Y.Doc, write: (doc: Y.Doc) => void): void;
+  checkFirstNote(body: NoteBody): void;
   body(): NoteBody;
   deferRefresh?(): boolean;
 }
@@ -216,16 +218,20 @@ export class OutlineBinding implements EditorBinding {
     transaction.setMeta(outlineEditedField, row_id);
     const entry = this.fields.get(row_id);
     if (!entry) throw new Error("outline field has no writing owner");
-    if (!entry.baseline || !entry.field.document) return;
+    if (!entry.baseline || !entry.field.document) {
+      const next = fieldById(transaction.doc, row_id);
+      if (next?.kind === "body") entry.field.checkFirstNote(canonicalBody(next));
+      return;
+    }
     this.updating = true;
-    try {
+    try {entry.field.admitText(entry.baseline, doc => {
       if (entry.field.kind === "body") {
         const edits: BodyEdit[] = [];
         for (const edit of route.edits) {if (edit.kind !== "body") throw new Error("a body cannot receive title edits"); edits.push(edit.edit);}
-        applyBodyEdits(entry.baseline, edits);
+        applyBodyEdits(doc, edits);
       } else {
-        const title = entry.baseline.getText("title");
-        entry.baseline.transact(() => {
+        const title = doc.getText("title");
+        doc.transact(() => {
           for (const edit of route.edits) {
             if (edit.kind !== "title") throw new Error("a title cannot receive body edits");
             title.delete(edit.from, edit.to - edit.from);
@@ -233,8 +239,7 @@ export class OutlineBinding implements EditorBinding {
           }
         });
       }
-      Y.applyUpdate(entry.field.document.doc, Y.encodeStateAsUpdate(entry.baseline, Y.encodeStateVector(entry.field.document.doc)), entry.field.origin);
-    } finally {this.updating = false;}
+    });} finally {this.updating = false;}
   }
   /** Ordinary input already applied through apply(); explicit attachment/link
    * insertion uses the same observed baseline, while raw input stays retained. */
@@ -242,22 +247,22 @@ export class OutlineBinding implements EditorBinding {
     const id = row_id ?? this.active()?.row_id;
     const entry = id ? this.fields.get(id) : null;
     if (!entry) throw new Error("there is no selected outline field");
-    const current = this.body(id);
-    if (sameBody(current, after)) return;
-    if (!sameBody(current, before)) throw new Error("the field changed. review this insertion before applying it.");
-    if (!entry.baseline || !entry.field.document) return;
+    const current = this.body(id), applied = sameBody(current, after);
+    if (!applied && !sameBody(current, before)) throw new Error("the field changed. review this insertion before applying it.");
+    if (!entry.baseline || !entry.field.document) {entry.field.checkFirstNote(after); return;}
+    if (applied) return;
     const old = docFromBody(before).firstChild!, next = docFromBody(after).firstChild!;
     const start = old.content.findDiffStart(next.content);
     this.updating = true;
-    try {
+    try {entry.field.admitText(entry.baseline, doc => {
       if (entry.field.kind === "title") {
         let plain = next.attrs.presentation === "prose";
         next.forEach(node => {if (!node.isText || node.marks.length) plain = false;});
         if (!plain) throw new Error("page titles accept plain text only");
         if (start !== null) {
           const end = old.content.findDiffEnd(next.content)!, overlap = Math.max(0, start - Math.min(end.a, end.b));
-          const title = entry.baseline.getText("title");
-          entry.baseline.transact(() => {title.delete(start, end.a + overlap - start); title.insert(start, next.textContent.slice(start, end.b + overlap));});
+          const title = doc.getText("title");
+          doc.transact(() => {title.delete(start, end.a + overlap - start); title.insert(start, next.textContent.slice(start, end.b + overlap));});
         }
       } else {
         const edits: BodyEdit[] = [];
@@ -271,10 +276,9 @@ export class OutlineBinding implements EditorBinding {
           edits.push({kind: "replace", from: start, to: end.a + overlap, content});
         }
         if (old.attrs.presentation !== next.attrs.presentation) edits.push({kind: "presentation", value: next.attrs.presentation});
-        applyBodyEdits(entry.baseline, edits);
+        applyBodyEdits(doc, edits);
       }
-      Y.applyUpdate(entry.field.document.doc, Y.encodeStateAsUpdate(entry.baseline, Y.encodeStateVector(entry.field.document.doc)), entry.field.origin);
-    } finally {this.updating = false;}
+    });} finally {this.updating = false;}
     this.refresh();
   }
   refresh(): void {

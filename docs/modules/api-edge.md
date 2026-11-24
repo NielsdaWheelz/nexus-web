@@ -277,8 +277,10 @@ wrong or missing assertions return 403 before a transaction. wire mismatch remai
 
 `POST /authored/replicas` admits a fresh replica; `POST /authored/changes` retries
 immutable contiguous source commands. accepted prefixes are compared and skipped.
-`GET /authored/changes?after=…` captures one head and returns a bounded complete
-ascending prefix, never a cursor past unapplied commands.
+upload requires the current envelope format and registered replica before decoding
+the nested changes. `GET /authored/changes?after=…&format_revision=7` captures one
+head and returns a bounded ascending prefix through the last delivered command.
+missing or stale feed format returns 426 `E_WIRE_MISMATCH`.
 
 `GET /authored/snapshot` uses a dedicated streaming bff route with `Stream`,
 `maxDuration=300`, no buffering and no-store/no-transform. its ndjson header and

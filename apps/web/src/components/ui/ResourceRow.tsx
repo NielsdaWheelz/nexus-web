@@ -13,6 +13,7 @@ export type ResourceRowPrimary =
       kind: "link";
       href: string | null;
       label?: string;
+      description?: string;
       onActivate?: (event: TargetActivationEvent) => void;
       paneLabelHint?: string;
       target?: "_self" | "_blank";
@@ -60,7 +61,7 @@ export default function ResourceRow({
       ref={primary.ref} className={cx(styles.primary, styles.titleLine)} data-row-focusable=""
       href={primary.href ?? undefined} data-pane-label-hint={primary.paneLabelHint}
       role={primary.href === null ? "link" : undefined} tabIndex={primary.href === null ? 0 : undefined}
-      aria-label={primary.label}
+      aria-label={primary.label} aria-description={primary.description}
       data-workspace-rich-target={primary.onActivate ? "true" : undefined}
       onClick={primary.onActivate} onKeyDown={primary.onActivate}
       target={primary.target} rel={primary.rel}

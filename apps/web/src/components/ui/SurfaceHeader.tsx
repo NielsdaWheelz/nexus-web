@@ -143,7 +143,8 @@ export default function SurfaceHeader({
     choices: drawing.choices, onChange: drawing.onChange,
   }] : menuActions;
   const actions = [...paneActions, ...viewActions];
-  const displaced = narrow ? [primaryAction?.action].filter((action): action is PanePrimaryAction => action !== undefined) : [];
+  const movePrimaryToMenu = narrow && !primaryAction?.action.keepOnNarrowHeader;
+  const displaced = movePrimaryToMenu ? [primaryAction?.action].filter((action): action is PanePrimaryAction => action !== undefined) : [];
   const seen = new Set(actions.map(action => action.id));
   const projectedPaneActions = [...paneActions, ...displaced.filter(action => {
     if (seen.has(action.id)) return false;
@@ -226,7 +227,7 @@ export default function SurfaceHeader({
                   label: <>{choice.icon}<span className="sr-only">{choice.label}</span></> }))}
                 onChange={drawing.onChange} />
             </div> : null}
-            {!narrow && primaryAction && primary && primaryState ? (
+            {!movePrimaryToMenu && primaryAction && primary && primaryState ? (
               <>
                 {primary.kind === "link" ? (
                   <ButtonLink

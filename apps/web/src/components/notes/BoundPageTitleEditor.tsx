@@ -9,6 +9,9 @@ import { useWordsAtRisk, useWritingDocument } from "@/lib/notes/hooks";
 import type {WritingDocument} from "@/lib/notes/runtime";
 import type { EditorHistory } from "@/lib/notes/structure";
 import {Field} from "@/components/feedback/Fact";
+import {useOutcome} from "@/components/feedback/Feedback";
+import {CommandTooLargeError} from "@nexus/authored/types";
+import {admitDisplayedText, replayLocalText, TEXT_LIMIT} from "@/lib/notes/textAdmission";
 import {isAuthoredStorageFailure} from "@/lib/notes/runtime";
 import Textarea from "@/components/ui/Textarea";
 import styles from "./BoundPageTitleEditor.module.css";
@@ -23,6 +26,7 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
   onEnter?: () => void; inputRef?: React.RefObject<HTMLTextAreaElement | null>;
 }) {
   const { platform } = useRenderEnvironment();
+  const { say } = useOutcome();
   const { document: opened, error, pending, retry } = useWritingDocument(suppliedDocument ? null : pageRef);
   const failureId = useId();
   // a failed commit of this title turns its caret, echoing the risk slip.
@@ -50,9 +54,9 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
   const step = useCallback((redo: boolean) => {
     if (latest.current.readingFrame !== null) return;
     if (history.current) {if (redo) history.current.redo(); else history.current.undo();}
-    else if (redo) manager.current?.redo(); else manager.current?.undo();
+    else if (document && manager.current) replayLocalText(document, manager.current, redo, () => say({fact: TEXT_LIMIT}));
     latest.current.onSelectionChange?.(selection());
-  }, [selection]);
+  }, [document, say, selection]);
   useLayoutEffect(() => {
     if (!document) return;
     const doc = new Y.Doc();
@@ -172,9 +176,21 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
     const text = doc.getText("title"), edit = textReplacement(text.toString(), next);
     const editingOrigin = history.current?.origin ?? origin.current;
     applying.current = true;
-    doc.transact(() => {text.delete(edit.from, edit.to - edit.from); text.insert(edit.from, edit.text);}, editingOrigin);
-    Y.applyUpdate(document.doc, Y.encodeStateAsUpdate(doc, Y.encodeStateVector(document.doc)), editingOrigin);
-    applying.current = false;
+    try {
+      const write = (target: Y.Doc) => target.transact(() => {
+        const title = target.getText("title");
+        title.delete(edit.from, edit.to - edit.from); title.insert(edit.from, edit.text);
+      });
+      if (history.current) history.current.admitText(doc, write);
+      else admitDisplayedText(document, doc, editingOrigin, write, manager.current);
+    } catch (error) {
+      if (!(error instanceof CommandTooLargeError)) throw error;
+      if (ref.current) {
+        ref.current.value = text.toString();
+        ref.current.setSelectionRange(beforeSelection.current.anchor - 1, beforeSelection.current.head - 1);
+      }
+      say({fact: TEXT_LIMIT}); return;
+    } finally {applying.current = false;}
     const at = selection();
     history.current?.record({selectionBefore: beforeSelection.current, selectionAfter: at});
     beforeSelection.current = at;

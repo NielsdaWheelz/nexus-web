@@ -77,7 +77,7 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
   }, [say]);
   const outline = useRef<LocalOutlineHandle | null>(null);
   const rootField = useMemo(() => ({label: "page title", initialTitle, placeholder: pageTitle("", date)}), [date, initialTitle]);
-  const root = useLocalOutlineRoot({rootRef, prelude, apiRef: outline, filter, rootField, entering: params.get("via") ?? undefined});
+  const root = useLocalOutlineRoot({rootRef, workPageRef: date === null ? rootRef : null, prelude, apiRef: outline, filter, rootField, entering: params.get("via") ?? undefined});
   usePaneReturnReady(root.ready || root.error !== null);
   const displayTitle = root.rootTitle ?? pageTitle(page?.title ?? initialTitle, date);
   usePaneChrome({workHistory: root.controller?.history,
