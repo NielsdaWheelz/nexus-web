@@ -503,7 +503,7 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
     case "mentions": {
       if (!Number.isSafeInteger(query.start) || query.start < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > AUTHORED_INDEX_RANGE) throw new RangeError("Invalid index range");
       if (query.kind === "mentions") return {sql: `WITH admitted AS (
-        SELECT i.owner_ref AS ref FROM reference_index i JOIN resources r ON r.ref=i.owner_ref WHERE i.target_ref=?3 AND r.visible=1
+        SELECT i.owner_ref AS ref FROM reference_index i JOIN resources r INDEXED BY resources_visible_refs ON r.ref=i.owner_ref WHERE i.target_ref=?3 AND r.visible=1
       ), slice AS (SELECT ref FROM admitted ORDER BY ref LIMIT ?1 OFFSET ?2)
       SELECT (SELECT count(*) FROM admitted) AS total,json_group_array(ref) AS items FROM slice`,
         params: [query.limit, query.start, query.ref]};
