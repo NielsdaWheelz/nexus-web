@@ -71,13 +71,16 @@ async function frame<T>(op: string, input: Record<string, unknown> = {}, signal?
 }
 function base64(bytes: Uint8Array): string { return btoa(String.fromCharCode(...bytes)); }
 function unbase64(value: string): Uint8Array { return Uint8Array.from(atob(value), char => char.charCodeAt(0)); }
+function projectionLiteral(p: MergeResult["projections"][number]): string[] {
+  return [p.ref, ...foldedFields({title: p.kind === "page" ? pageTitle(p.title ?? "", p.local_date) : p.title,
+    body: p.body_text, quote: p.selection?.quote_exact})];
+}
 async function call<T>(op: string, input: Record<string, unknown> = {}, signal?: AbortSignal, projections?: MergeResult["projections"]): Promise<T> {
   const encoder = new TextEncoder();
   let bytes = encoder.encode(JSON.stringify({ op, ...input }));
   if (projections?.length) {
     // Keep a canonical commit admissible even when its derived fields would exceed a native transfer.
-    const literal = projections.map(p => [p.ref, ...foldedFields({title: p.kind === "page" ? pageTitle(p.title ?? "", p.local_date) : p.title,
-      body: p.body_text, quote: p.selection?.quote_exact})]);
+    const literal = projections.map(projectionLiteral);
     const suffix = encoder.encode(`,"literal_fields":${JSON.stringify(literal)}}`);
     if (bytes.length - 1 + suffix.length <= 16 * 1024 * 1024) {
       const combined = new Uint8Array(bytes.length - 1 + suffix.length);
@@ -242,21 +245,25 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       // Each stage is unpublished until finishProvisioning commits its exact counts.
       const stage = async <T,>(records: readonly T[], corpus: (rows: T[]) => MergeResult,
         project: (row: T) => MergeResult["projections"][number] | undefined) => {
-        let rows: T[] = [], projections: MergeResult["projections"] = [], size = 0;
+        let rows: T[] = [], projections: MergeResult["projections"] = [], literals: string[][] = [], size = 0;
         const flush = async () => {
           if (rows.length === 0) return;
-          await call("stage", {states: {...corpus(rows), projections}}, undefined, projections);
-          rows = []; projections = []; size = 0;
+          await call("stage", {states: {...corpus(rows), projections}, literal_fields: literals});
+          rows = []; projections = []; literals = []; size = 0;
         };
         for (const row of records) {
           const projection = project(row);
           const bytes = encoder.encode(JSON.stringify(row)).byteLength +
             (projection === undefined ? 0 : encoder.encode(JSON.stringify(projection)).byteLength) + 2;
           if (bytes > ceiling) throw new RangeError("authored snapshot record exceeds the native transfer limit");
-          if (size + bytes > ceiling) await flush();
+          const literal = projection === undefined ? null : projectionLiteral(projection);
+          const literalBytes = literal === null ? 0 : encoder.encode(JSON.stringify(literal)).byteLength + 1;
+          const packed = bytes + literalBytes <= ceiling ? bytes + literalBytes : bytes;
+          if (size + packed > ceiling) await flush();
           rows.push(row);
           if (projection !== undefined) projections.push(projection);
-          size += bytes;
+          if (literal !== null && packed > bytes) literals.push(literal);
+          size += packed;
         }
         await flush();
       };
