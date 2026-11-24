@@ -788,10 +788,14 @@ export function usePaneReturnScrollport(input: {
 
 const still = (): ScrollMotion => "still";
 
+/** Companion's mounted panel owns a vertical scrollport independent of the pane body. */
+export const CompanionScrollMotion = createContext<ScrollMotion | null>(null);
+
 export function usePaneScrollMotion(): ScrollMotion {
   const { memory, paneId, visitId, routeKey } = useScope();
-  const read = useCallback(() => paneId === null ? "still" : memory.motionAt(paneId, visitId, routeKey),
-    [memory, paneId, visitId, routeKey]);
+  const companion = useContext(CompanionScrollMotion);
+  const read = useCallback(() => companion ?? (paneId === null ? "still" : memory.motionAt(paneId, visitId, routeKey)),
+    [companion, memory, paneId, visitId, routeKey]);
   return useSyncExternalStore(memory.subscribeMotion, read, still);
 }
 

@@ -15,6 +15,8 @@ import { createPortal } from "react-dom";
 import { RulingRegion } from "@/components/feedback/Ruling";
 import { paneSourceKey, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { FindResults } from "@/components/find/FindBar";
+import { observeScrollMotion, type ScrollMotion } from "@/lib/collections/scrollMotion";
+import { CompanionScrollMotion } from "@/lib/workspace/paneReturnMemento";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import Button from "@/components/ui/Button";
 import MobileSheet from "@/components/ui/MobileSheet";
@@ -315,6 +317,12 @@ export default function Companion(props: {
   const tabRefs = useRef(new Map<TabId, HTMLButtonElement>());
   const closeRef = useRef<HTMLButtonElement>(null);
   const asideRef = useRef<HTMLElement>(null);
+  const [motion, setMotion] = useState<ScrollMotion>("still");
+  const observeBody = useCallback((port: HTMLDivElement | null) => {
+    if (port === null) return;
+    setMotion("still");
+    return observeScrollMotion(port, setMotion);
+  }, []);
   const [host] = useState(() => {
     if (typeof document === "undefined") return null;
     const element = document.createElement("div");
@@ -558,9 +566,13 @@ export default function Companion(props: {
       role={hasTabs ? "tabpanel" : undefined}
       aria-labelledby={hasTabs ? `${baseId}-${id}-tab` : undefined}
       className={styles.body}
+      data-companion-scrollport=""
+      ref={id === activeId ? observeBody : undefined}
       hidden={id !== activeId}
     >
-      {id === activeId ? <RulingRegion value={rulingRegion}>{body}</RulingRegion> : null}
+      {id === activeId ? <CompanionScrollMotion value={motion}>
+        <RulingRegion value={rulingRegion}>{body}</RulingRegion>
+      </CompanionScrollMotion> : null}
     </div>
   ));
 
