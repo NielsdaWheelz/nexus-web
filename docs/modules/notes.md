@@ -111,10 +111,22 @@ one local revision. large registers load visible rank ranges and resolve saved
 occurrences directly. unfinished tasks and today's unchecked habits share
 numeric capture order, with replica and ref ties. the pending view places
 retained editors and completion receipts at the matching gap in that order.
+an already retained task refreshes its label and action facts through
+`work_row`. the editor reads its own canonical writing separately.
 large completed days keep seekable rows inside the journal. register items
 carry bounded labels. a mounted row reads an elided label on demand, using
 already-open writing when available. the habit register carries whether
 repetition is active. its visible rows read positive checks for the selected year.
+configured habits and non-configured notes with positive habit history
+contribute keys from separate partial indexes.
+
+large work and habit registers retain their order in the account's local
+sqlite connection through native motion. the pane positions a remembered
+line from its captured occurrence or ordinal. work translates a displayed
+ordinal through its local receipt and editor placements before resolving
+the current survivor. historical sections publish the revision of their
+own civil-date register.
+
 the journal agenda ends with `add a task`, which opens its capture form in
 place. a completion fills the sign immediately. after 600ms from the press,
 its receipt replaces the row. an active menu or an editor still in use keeps
