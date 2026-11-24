@@ -2,6 +2,7 @@
 
 // Reference intent is visit-owned draft state above prose persistence. Acceptance
 // freezes identity and placement; only the queue head seals its causal version.
+import { useDiscoveryOptions } from "@/lib/search/discoveryBoundary";
 import { useEffect, useId, useRef } from "react";
 import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
 import { captureLocator } from "@nexus/authored/capture";
@@ -74,7 +75,11 @@ export function useReferenceInput(
   );
   const context = JSON.stringify([draft.owner, state?.context, state?.raw]);
   const admitted = pickerOpen && state !== null && state.row_id === row_id && search.querySettled && !search.minimum && search.current;
-  const options = admitted ? search.items.map(item => ({ key: targetKey(item), disabledReason: state.message })) : [];
+  const viewport = useRef<HTMLDivElement>(null);
+  const showing = pickerOpen && state !== null && state.row_id === row_id;
+  const slots = useDiscoveryOptions({ key: context, viewport, open: showing, rows: admitted ? search.items : [],
+    id: targetKey, forward: search.fetchAhead });
+  const options = admitted ? slots.flatMap(slot => slot.row === null ? [] : [{ key: slot.id, disabledReason: state.message }]) : [];
   const reconciled = reconcileSearchActive({ context, admitted, options,
     initialKey: options[0]?.key ?? null, active: state?.active ?? null });
   const selected = admitted ? reconciled?.key ?? null : null;
@@ -85,7 +90,7 @@ export function useReferenceInput(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, reconciled]);
   const bindings = useSearchOptions({ listId, label: `link from ${state?.host.label ?? "editor"}`,
-    open: pickerOpen && state !== null && state.row_id === row_id, options, activeKey: selected,
+    open: showing, viewport, options, activeKey: selected,
     onActiveChange(key) {
       const value = draft.read();
       if (value && value === state) set({ ...value, active: { context, key } });
@@ -149,6 +154,7 @@ export function useReferenceInput(
     state,
     owner: draft.owner,
     search: { ...search, items: admitted ? search.items : [] },
+    slots,
     selected,
     bindings,
     acceptSelected() { if (selected !== null) accept(search.items.find(item => targetKey(item) === selected)); },

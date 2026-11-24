@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
-import { observeScrollMotion } from "@/lib/collections/scrollMotion";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { observeScrollMotion, writeScrollPosition } from "@/lib/collections/scrollMotion";
 
 export function discoveryViewport(viewport: HTMLElement): HTMLElement {
   return viewport.closest<HTMLElement>('[data-collection-constrained="true"]') ?? viewport;
@@ -34,20 +34,82 @@ export function useInitialDiscoveryDemand({ key, current, active, viewport, run 
   });
 }
 
-/** The constrained chooser can give its scrolling to the enclosing body. Only the
- * current port's trusted motion can admit demand. */
-export function useOptionForwardTravel(viewport: RefObject<HTMLElement | null>, open: boolean, run: () => void): void {
-  const latest = useRef(run);
-  useLayoutEffect(() => { latest.current = run; }, [run]);
+type Slot = { readonly id: string; readonly height: number };
+const optionNodes = (list: HTMLElement) => [...list.querySelectorAll<HTMLElement>(":scope > [data-discovery-option]")];
+
+export function heldDiscoveryOptionStyle(height: number | null): CSSProperties | undefined {
+  return height === null ? undefined : { blockSize: height, minBlockSize: 0, overflow: "hidden", flexShrink: 0 };
+}
+
+/** The actual option port owns its landing. A revoked option loses its content
+ * immediately; its slot survives the current gesture. */
+export function useDiscoveryOptions<T>(input: {
+  readonly key: string;
+  readonly viewport: RefObject<HTMLElement | null>;
+  readonly open: boolean;
+  readonly rows: readonly T[];
+  readonly id: (row: T) => string;
+  readonly forward: () => void;
+}) {
+  const { key, viewport, open, rows, id } = input;
+  const latest = useRef(input);
+  useLayoutEffect(() => { latest.current = input; }, [input]);
+  const [held, setHeld] = useState<{ readonly key: string; readonly slots: readonly Slot[] } | null>(null);
+  const landing = useRef<{ readonly key: string; readonly port: HTMLElement; readonly ids: readonly string[];
+    readonly at: number; readonly offset: number } | null>(null);
   useEffect(() => {
     const list = viewport.current;
-    if (!open || list === null) return;
-    const forward = (port: HTMLElement) => {
-      if (discoveryViewport(list) === port && nearDiscoveryTail(port, list.lastElementChild instanceof HTMLElement ? list.lastElementChild : list)) latest.current();
-    };
-    const stopList = observeScrollMotion(list, () => {}, forward);
+    if (!open || list === null) { setHeld(null); return; }
+    let slots: readonly Slot[] | null = null;
+    let owner: HTMLElement | null = null;
     const body = list.closest<HTMLElement>("[data-collection-body]");
-    const stopBody = body === null || body === list ? null : observeScrollMotion(body, () => {}, forward);
-    return () => { stopList(); stopBody?.(); };
-  }, [viewport, open]);
+    const observe = (port: HTMLElement) => observeScrollMotion(port, motion => {
+      if (motion === "still" ? owner !== port : discoveryViewport(list) !== port) return;
+      landing.current = null;
+      if (motion !== "still") {
+        if (slots !== null) return;
+        owner = port;
+        slots = optionNodes(list).map(node => ({ id: node.dataset.discoveryOption!, height: node.getBoundingClientRect().height }));
+        setHeld({ key, slots });
+        return;
+      }
+      if (slots === null) return;
+      const top = port.getBoundingClientRect().top + port.clientTop;
+      const eye = optionNodes(list).find(node => {
+        const box = node.getBoundingClientRect();
+        return box.bottom > top && box.top < top + port.clientHeight;
+      });
+      if (eye !== undefined) {
+        const ids = slots.map(slot => slot.id);
+        landing.current = { key, port, ids, at: ids.indexOf(eye.dataset.discoveryOption!), offset: eye.getBoundingClientRect().top - top };
+      }
+      slots = null;
+      owner = null;
+      setHeld(null);
+    }, () => {
+      const last = list.lastElementChild;
+      if (discoveryViewport(list) === port && nearDiscoveryTail(port, last instanceof HTMLElement ? last : list)) latest.current.forward();
+    });
+    const stopList = observe(list);
+    const stopBody = body === null || body === list ? null : observe(body);
+    return () => { stopList(); stopBody?.(); landing.current = null; };
+  }, [key, open, viewport]);
+
+  useLayoutEffect(() => {
+    const list = viewport.current, rest = landing.current;
+    if (held !== null || list === null || rest === null || rest.key !== key || rest.port !== discoveryViewport(list)) return;
+    landing.current = null;
+    const nodes = new Map(optionNodes(list).map(node => [node.dataset.discoveryOption!, node]));
+    const next = rest.ids.slice(rest.at).find(id => nodes.has(id))
+      ?? rest.ids.slice(0, rest.at).reverse().find(id => nodes.has(id));
+    const anchor = next === undefined ? null : nodes.get(next);
+    if (!anchor) return;
+    const port = rest.port;
+    const delta = anchor.getBoundingClientRect().top - (port.getBoundingClientRect().top + port.clientTop) - rest.offset;
+    if (Math.abs(delta) > 0.5) writeScrollPosition(port, port.scrollTop + delta);
+  }, [held, key, viewport]);
+
+  if (held === null || held.key !== key || !open) return rows.map(row => ({id: id(row), row, height: null}));
+  const byId = new Map(rows.map(row => [id(row), row]));
+  return held.slots.map(slot => ({ ...slot, row: byId.get(slot.id) ?? null }));
 }

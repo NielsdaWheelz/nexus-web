@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import DiscoveryTail from "@/components/collections/DiscoveryTail";
-import { discoveryViewport, nearDiscoveryTail, useInitialDiscoveryDemand, useOptionForwardTravel } from "@/lib/search/discoveryBoundary";
+import { discoveryViewport, heldDiscoveryOptionStyle, nearDiscoveryTail, useDiscoveryOptions, useInitialDiscoveryDemand } from "@/lib/search/discoveryBoundary";
 import collection from "@/components/ui/Collection.module.css";
 import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import Button from "@/components/ui/Button";
@@ -88,7 +88,8 @@ export default function ContributorFilter({
   const repeated = failure?.code === "E_REPEATED_CURSOR";
   const canContinue = live && search.current && !search.complete && failure === null;
   const run = () => { if (canContinue) search.fetchAhead(); };
-  useOptionForwardTravel(viewport, live, run);
+  const slots = useDiscoveryOptions({ key: q, viewport, open: active && live, rows: suggestions,
+    id: item => item.handle, forward: run });
   useInitialDiscoveryDemand({ key: search.requestedKey, current: search.current, active: canContinue && search.active,
     viewport: () => viewport.current === null ? null : discoveryViewport(viewport.current), run });
   return (
@@ -105,10 +106,11 @@ export default function ContributorFilter({
         onKeyDownCapture={event => {
           if (event.key === "Tab" && !event.shiftKey && viewport.current !== null && nearDiscoveryTail(discoveryViewport(viewport.current))) run();
         }}>
-        {suggestions.map(item => <Button key={item.handle}
-          className={styles.suggestion}
-          onClick={() => { inputRef.current?.focus({ preventScroll: true }); onAdd(item); setQuery(""); }}
-        >{item.display_name}</Button>)}
+        {slots.map(({id, row: item, height}) => item === null
+          ? <div key={id} data-discovery-option={id} style={heldDiscoveryOptionStyle(height)} aria-hidden="true" />
+          : <Button key={id} data-discovery-option={id} style={heldDiscoveryOptionStyle(height)} className={styles.suggestion}
+            onClick={() => { inputRef.current?.focus({ preventScroll: true }); onAdd(item); setQuery(""); }}
+          >{item.display_name}</Button>)}
       </div> : null}
       {repeated ? <Fact line={{ fact: "couldn’t load more authors.", reason: "the source repeated its continuation." }} />
         : failure !== null ? <Failed error={failure} noun={search.current ? "more authors" : "authors"} retry={{

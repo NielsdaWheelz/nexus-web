@@ -2,7 +2,7 @@
 
 // Controlled suggestion bindings. Admission and active identity belong to the
 // feature; this module owns no query, request, selection or mutation lifetime.
-import { useLayoutEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent } from "react";
+import { useLayoutEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent, type RefObject } from "react";
 import { discoveryViewport, nearDiscoveryTail } from "@/lib/search/discoveryBoundary";
 import { revealCollectionItem } from "./collection";
 
@@ -39,7 +39,7 @@ export function reconcileSearchActive({ context, admitted, options, initialKey, 
 }
 
 export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
-  listId, label, open, options, activeKey, onActiveChange, onActivate, onForward, allowShiftEnter = false,
+  listId, label, open, options, activeKey, onActiveChange, onActivate, onForward, viewport, allowShiftEnter = false,
 }: {
   readonly listId: string;
   readonly label: string;
@@ -50,8 +50,10 @@ export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
   readonly onActivate: (key: string, event: SearchActivationEvent) => void;
   readonly allowShiftEnter?: boolean;
   readonly onForward?: () => void;
+  readonly viewport?: RefObject<T | null>;
 }) {
-  const listRef = useRef<T | null>(null);
+  const ownViewport = useRef<T | null>(null);
+  const listRef = viewport ?? ownViewport;
   const latest = useRef({ open, options, onActiveChange, onActivate });
   latest.current = { open, options, onActiveChange, onActivate };
   const press = useRef<{
@@ -66,7 +68,7 @@ export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
     const list = listRef.current;
     const item = activeItemKey === null ? null : document.getElementById(searchOptionId(listId, activeItemKey));
     if (list && item) revealCollectionItem(list, item);
-  }, [listId, open, activeItemKey, activeIndex]);
+  }, [listId, open, activeItemKey, listRef]);
   const activate = (key: string, event: SearchActivationEvent) => {
     const current = latest.current;
     const option = current.open ? current.options.find(option => option.key === key) : null;
