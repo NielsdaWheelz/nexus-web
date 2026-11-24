@@ -23,7 +23,7 @@ import { searchPrefixTimeoutMs } from "@/lib/search/policy";
 import { useHydratedBrowserTimeZone } from "@/lib/time/browserTimeZone";
 import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
-import { definePaneVisitDataKey, usePaneForwardTravel, usePaneReturnScrollport, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
+import { definePaneVisitDataKey, PaneRefreshAnchor, usePaneForwardTravel, usePaneReturnScrollport, usePaneScrollMotion, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import styles from "./LibrarianSearch.module.css";
@@ -110,7 +110,11 @@ export function useLibrarianSearch() {
   const saveSelection = usePaneVisitDataWriter(SELECTION);
   const [selection, setSelection] = useState<SearchActive>(restored);
   const current = eligible && list.current && settled;
-  const rows = list.current || list.shownKey?.startsWith(`${key}:`) ? list.items : [];
+  const received = list.current || list.shownKey?.startsWith(`${key}:`) ? list.items : [];
+  const motion = usePaneScrollMotion();
+  const presented = useRef({ key, rows: received });
+  const rows = motion === "seek" && presented.current.key === key ? presented.current.rows : received;
+  useLayoutEffect(() => { presented.current = { key, rows }; }, [key, rows]);
   const canContinue = current && !list.complete && list.failure === null;
   const options = rows.map(row => ({ key: row.item.ref, disabledReason: row.item.activation.href === null ? "message unavailable" : null }));
   const selected = reconcileSearchActive({ context: key, admitted: current, options, initialKey: rows[0]?.item.ref ?? null, active: selection });
@@ -198,23 +202,26 @@ function LibrarianSearchResults({ query, eligible, list, current, canContinue, r
   const failure = list.failure?.error ?? null;
   const rejected = failure?.code === "E_INVALID_CURSOR";
   const repeated = failure?.code === "E_REPEATED_CURSOR";
+  const failureNotice = failure !== null ? <Fact line={{ fact: list.current ? "couldn’t load more messages." : "couldn’t search messages.",
+    reason: repeated ? "the source repeated its continuation." : rejected ? "the ranking has changed." : undefined }}
+    verbs={[{ label: rejected || repeated ? "refresh results" : "retry", commandKey: "search librarian", busy: list.running !== null,
+      run: rejected || repeated ? refresh : list.retry }]} /> : null;
   return <div ref={navigation.listRef} className={styles.scrollport}>
+    <PaneRefreshAnchor identity={query} value={rows} ready={current}>
     <div ref={content} className={styles.searchResults} data-pane-return-scope="Librarian.Search">
       {!eligible ? <Fact line={{ fact: "type at least two characters" }} />
-        : failure ? <Fact line={{ fact: list.current ? "couldn’t load more messages." : "couldn’t search messages.",
-          reason: repeated ? "the source repeated its continuation." : rejected ? "the ranking has changed." : undefined }}
-          verbs={[{ label: rejected || repeated ? "refresh results" : "retry", commandKey: "search librarian", busy: list.running !== null,
-            run: rejected || repeated ? refresh : list.retry }]} />
-        : !list.current ? rows.length === 0 ? <Ruling /> : null
+        : !list.current ? failureNotice ?? (rows.length === 0 ? <Ruling /> : null)
         : list.complete && rows.length === 0 ? <Fact line={{ fact: `no messages match “${query}”` }} /> : null}
       <div {...navigation.listProps} className={styles.rows} aria-busy={eligible && !list.current || undefined}>
         {rows.map(row => <MessageResult key={row.item.ref} row={row} current={current}
           option={navigation.optionProps(row.item.ref)} timeZone={timeZone} />)}
       </div>
+      {list.current ? failureNotice : null}
       <DiscoveryTail label="continue searching messages" action={canContinue ? list.more : null}
         busy={list.running !== null} show={rows.length === 0 || list.continuationNeedsAction} />
       {announcement}
     </div>
+    </PaneRefreshAnchor>
   </div>;
 }
 

@@ -403,7 +403,7 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
       ? <Fact line={{ fact: query.view === "passages" ? "no passages match this search." : "no results match this search." }}
         verbs={filtered ? clearFilters : undefined} speak={active} />
       : null;
-  return <PaneRefreshAnchor identity={key} value={refreshValue} ready={enabled && !stale}>
+  return <PaneRefreshAnchor identity={visit.adopted?.key ?? key} value={refreshValue} ready={enabled && !stale}>
     <div ref={root} data-pane-return-scope="Search.Results" onPointerDownCapture={select} onFocusCapture={select} onKeyDownCapture={event => {
       interact();
       if (!event.shiftKey && ["Tab", "ArrowDown", "PageDown", "End"].includes(event.key)) {
