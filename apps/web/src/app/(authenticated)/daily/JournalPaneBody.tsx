@@ -99,7 +99,7 @@ function Journal({ arrival }: { arrival: string }) {
   const rankedSource = useMemo<DailyIndexSource>(() => ({kind: "daily_index", arrival,
     retained: syntheticDates === "" ? [] : syntheticDates.split(",")}), [arrival, syntheticDates]);
   const ranked = useRankedAuthoredWindow(rankedSource, revision,
-    description?.kind === "description" ? description : null, dailyIndex, index.retry);
+    description?.kind === "description" ? description : null, dailyIndex);
   const current = useMemo(() => {
     const byRank = new Map<number, DailyIndexEntry>();
     const total = description?.kind === "description" ? description.total : 0;

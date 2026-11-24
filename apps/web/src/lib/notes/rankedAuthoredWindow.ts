@@ -19,7 +19,6 @@ export function useRankedAuthoredWindow<Row extends RankedRow>(
   revision: string | null,
   description: Description<Row> | null,
   select: (result: QueryResult) => RankedIndexResult<Row> | null,
-  refreshDescription?: () => void,
 ) {
   const store = useAuthoredStore(), account = useAuthoredAccountId();
   const key = JSON.stringify([account, source, revision]);
@@ -60,7 +59,7 @@ export function useRankedAuthoredWindow<Row extends RankedRow>(
         return [start, range.items] as const;
       }));
       if (retired) return;
-      if (results.some(result => result === null)) { refreshDescription?.(); return; }
+      if (results.some(result => result === null)) return;
       const blocks = new Map(results.filter(result => result !== null));
       const positions = new Map<string, number | null>();
       const pinned: Locations<Row> = [];
@@ -81,7 +80,7 @@ export function useRankedAuthoredWindow<Row extends RankedRow>(
           ? {...source, at: {kind: "locate", dates: refs}, expected_revision: revision}
           : {...source, at: {kind: "locate", refs}, expected_revision: revision});
         if (retired) return;
-        if (result.store_revision !== revision) { refreshDescription?.(); return; }
+        if (result.store_revision !== revision) return;
         const locations = select(result);
         if (locations?.kind !== "locations") throw new Error("Missing authored index positions");
         for (const ref of refs) positions.set(ref, null);
@@ -95,7 +94,7 @@ export function useRankedAuthoredWindow<Row extends RankedRow>(
     return () => { retired = true; };
     // The currently admitted cache is read once per demand, then replaced.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wanted, key, count, revision, description, sampled, store, select, attempt, refreshDescription]);
+  }, [wanted, key, count, revision, description, sampled, store, select, attempt]);
 
   const resolved = cache?.key === key ? cache : null;
   const items = useMemo<ReadonlyMap<number, Row>>(() => {

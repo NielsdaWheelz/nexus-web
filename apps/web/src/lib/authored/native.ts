@@ -1,6 +1,6 @@
 /** Native adapter uses the same shared semantic kernel. Kotlin admits only
  * closed SQL transactions and fixed foreground transport operations. */
-import { bindingQueries, changesDailyIndex, excerptQuery, searchQuery, sourceAliasQuery, pageTitle, foldedFields, type CompiledQuery } from "@nexus/authored/queries";
+import { bindingQueries, excerptQuery, searchQuery, sourceAliasQuery, pageTitle, foldedFields, type CompiledQuery } from "@nexus/authored/queries";
 import { decodeBytes } from "@nexus/authored/documents";
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
@@ -157,11 +157,11 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   let closed = false;
   let queue: Promise<unknown> = Promise.resolve();
   const serialize = <T,>(work: () => Promise<T>): Promise<T> => { const next = queue.then(work); queue = next.catch(() => undefined); return next; };
-  const queries = new Set<(corpusChanged: boolean, dailyIndexChanged: boolean) => void>();
+  const queries = new Set<(corpusChanged: boolean) => void>();
   const evidence = new Set<() => void>();
   const closedWaiters = new Set<() => void>();
   const statuses = new Set<(status: SyncStatus, detail: string | null, failure: SyncFailure) => void>();
-  const changed = (corpusChanged = false, dailyIndexChanged = false) => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.detail, sync.facts.failure); for (const listener of queries) listener(corpusChanged, dailyIndexChanged); };
+  const changed = (corpusChanged = false) => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.detail, sync.facts.failure); for (const listener of queries) listener(corpusChanged); };
   const queryLocal = async (query: Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult> => {
     if (query.kind === "outline_windows") {
       const plans = await nativeQueryPlans(query);
@@ -363,20 +363,20 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
         const states = await changeStates([frame.change]);
         await validateBindings(accountId, states, [frame.change]);
         frame = { ...frame, states: mergeChanges(states, [frame.change]) };
-        const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease }, undefined, frame.states.projections); sync.facts.pending = true; if (result.kind === "committed") changed(true, changesDailyIndex(frame.change)); replication.wake(); return result; }
+        const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease }, undefined, frame.states.projections); sync.facts.pending = true; if (result.kind === "committed") changed(true); replication.wake(); return result; }
       finally { sync.facts.saving = false; changed(); }
     }),
     subscribe: (query, listener, failed) => {
       let live = true, queued = false;
-      const read = (corpusChanged: boolean, dailyIndexChanged: boolean) => {
-        if (!live || queued || !(query.kind === "daily_index" ? dailyIndexChanged : corpusChanged)) return;
+      const read = (corpusChanged: boolean) => {
+        if (!live || queued || !corpusChanged) return;
         queued = true;
         void serialize(async () => {
           queued = false;
           return live ? queryLocal(query) : null;
         }).then(value => { if (live && value !== null) listener(value); }, error => { if (live) failed(error); });
       };
-      queries.add(read); read(true, true);
+      queries.add(read); read(true);
       return () => { live = false; queries.delete(read); };
     },
     evidence_changed: listener => { evidence.add(listener); return () => { evidence.delete(listener); }; },

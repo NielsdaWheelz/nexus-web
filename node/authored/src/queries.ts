@@ -4,7 +4,7 @@
  * return separate literal evidence without rewriting canonical resource content.
  * Adjacency uses the exact (position,link_id) tuple, including prefix/equal keys. */
 import { excerptTextParts, excerptView, scopeExcerpt, type ExcerptScope, type ExcerptNode } from "./excerpt.ts";
-import { AUTHORED_INDEX_RANGE, type AuthoredQuery, type Change, type OutlineRange, type PassageState, type QueryResult, type QueryRow, type ResourceProjection, type SelectionCapture, type ResourceState, type PassageCapture } from "./types.ts";
+import { AUTHORED_INDEX_RANGE, type AuthoredQuery, type OutlineRange, type PassageState, type QueryResult, type QueryRow, type ResourceProjection, type SelectionCapture, type ResourceState, type PassageCapture } from "./types.ts";
 import { normalizeQuote } from "./identity.ts";
 import { validateLocalDate } from "./work.ts";
 import { foldFilterText } from "./filter.ts";
@@ -402,12 +402,6 @@ function outlineWindow(query: Omit<Extract<AuthoredQuery, {kind: "outline_window
     ORDER BY part,position,link_id,ref`,
     params: [query.ref, query.anchor_link_id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit, JSON.stringify(query.excluded_link_ids), query.entering_link_id,
       ...(query.start_rank === null ? [] : [query.start_rank])]};
-}
-
-/** A note touch can revive retained completion dates after observed deletion,
- * including a body-only edit. The complete local query decides membership. */
-export function changesDailyIndex(change: Change): boolean {
-  return change.resources.some(resource => resource.kind === "note" || resource.kind === "page" && resource.local_date !== null);
 }
 
 /** Every compiled slice is executed in one host store turn, under one revision. */
