@@ -7,9 +7,10 @@ an uncached rank, `rankedAuthoredWindow.ts` cannot load that rank for the
 frozen presentation. the pane can keep a pixel offset at release, but may
 lack the old occurrence identity.
 
-the journal now carries civil-month occupancy and derives the exact old
-date identity from its held geometry. the other sparse authored registers
-still need a retained read observation.
+the journal carries civil-month occupancy and derives the exact old date
+identity from its held geometry. notes retains an identity-only sqlite
+order for each published large register. habits, work and incoming
+mentions need the same old-order proof.
 
 in stock headless firefox at `65628f444`, run
 `20261124-055941-9f855bd9b9fe` pressed the notes thumb and moved to
@@ -23,6 +24,11 @@ in stock headless firefox at `7e4b82265`, run
 at −120 css px. deleting the first habit left the held extent at 83,322
 px. returning to the same 65,457 px offset while pressed showed an empty
 viewport. release picked a different durable occurrence.
+
+the pending work replay at `7e4b82265` held the pane's 24,713 px extent
+through deletion of the first task. at the untouched end of the old
+range, the rank-455 occurrence should have kept its −22 css px line.
+release aligned a different task at new rank 445.
 
 retain the read observation in the sqlite owner for the held interaction.
 verify a native hold, a write that reorders rows, motion to a previously
