@@ -57,10 +57,11 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
     return () => resize.disconnect();
   }, [getPort, ids.length, list, windowed]);
 
+  const getItemKey = useCallback((rank: number) => ids[rank]!, [ids]);
   const index = useVirtualizer<HTMLElement, HTMLLIElement>({
     count: ids.length, enabled: windowed, getScrollElement: getPort,
     anchorTo: origin?.companion ? "end" : "start",
-    getItemKey: rank => ids[rank]!, estimateSize: () => estimate, scrollMargin: margin, overscan: 4,
+    getItemKey, estimateSize: () => estimate, scrollMargin: margin, overscan: 4,
     rangeExtractor(range) {
       const ranks = new Set(defaultRangeExtractor(range));
       for (const id of [...pinned, ...demands.values()]) {
