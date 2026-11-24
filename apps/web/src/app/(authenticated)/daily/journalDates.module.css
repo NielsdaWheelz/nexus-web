@@ -1,0 +1,107 @@
+.dialog {
+  max-inline-size: 26rem;
+}
+
+.calendar {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.monthControls {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.grid {
+  width: 100%;
+  table-layout: fixed;
+  border-spacing: var(--space-1);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.grid th {
+  font: var(--apparatus-font);
+  color: var(--ink-muted);
+}
+
+.grid td {
+  padding: 0;
+}
+
+.day {
+  display: grid;
+  place-items: center;
+  position: relative;
+  inline-size: 100%;
+  min-block-size: var(--size-xl);
+  padding: var(--space-1);
+  border: var(--stroke-hairline) solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.day:hover {
+  background: var(--surface-2);
+}
+
+.grid [aria-selected="true"] > .day {
+  border-color: currentColor;
+  font-weight: var(--weight-semibold);
+}
+
+.day[aria-current="date"] > time {
+  text-decoration: underline;
+  text-underline-offset: var(--space-1);
+}
+
+.day:focus-visible {
+  outline: var(--focus-ring-width) solid var(--ring);
+  outline-offset: var(--focus-ring-offset);
+  z-index: 1;
+}
+
+.day[data-recorded]::after,
+.mark {
+  inline-size: var(--space-1);
+  block-size: var(--space-1);
+  border: var(--stroke-hairline) solid currentColor;
+  border-radius: 50%;
+}
+
+.day[data-recorded]::after {
+  content: "";
+  position: absolute;
+  inset-block-end: var(--space-1);
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font: var(--apparatus-font);
+  color: var(--ink-muted);
+}
+
+.exact {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.exact > input {
+  flex: 1;
+  min-inline-size: 0;
+}
+
+@media (forced-colors: active) {
+  .day { border-color: transparent; }
+  .grid [aria-selected="true"] > .day { border-color: ButtonText; }
+  .day:focus-visible { outline-color: Highlight; }
+}

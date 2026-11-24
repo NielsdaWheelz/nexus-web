@@ -1,8 +1,8 @@
 /** Native adapter uses the same shared semantic kernel. Kotlin admits only
  * closed SQL transactions and fixed foreground transport operations. */
-import { bindingQueries, changesDailyIndex, excerptQuery, searchQuery, sourceAliasQuery, type CompiledQuery } from "@nexus/authored/queries";
+import { bindingQueries, changedResourceRefs, changesDailyIndex, excerptQuery, invalidatesQuery, searchQuery, sourceAliasQuery, titleOnlyChanges, type CompiledQuery } from "@nexus/authored/queries";
 import { validateBindings } from "@nexus/authored/identity";
-import { mergeChanges } from "@nexus/authored/merge";
+import { isLocalFeedEcho, mergeChanges } from "@nexus/authored/merge";
 import { FORMAT_REVISION, type AuthoredStore, type Change, type FeedChange, type ReplicaState, type StateSelection, type QueryResult, type SyncFailure, type SyncStatus } from "@nexus/authored/types";
 import type { ScopeInputsPage, ScopeProgress, ScopeTextPage, ScopeNormalizationInterval, ScopeRawChunk, ScopeNormalizationObservation, NormalizedScopeChunk } from "@nexus/authored/scope";
 import { selectionFor } from "./persistence";
@@ -105,11 +105,14 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   let closed = false;
   let queue: Promise<unknown> = Promise.resolve();
   const serialize = <T,>(work: () => Promise<T>): Promise<T> => { const next = queue.then(work); queue = next.catch(() => undefined); return next; };
-  const queries = new Set<(corpusChanged: boolean, dailyIndexChanged: boolean) => void>();
+  const queries = new Set<(corpusChanged: boolean, dailyIndexChanged: boolean, resourceRefs: readonly string[] | null, onlyTitles: boolean, ownsCommit: boolean) => void>();
   const evidence = new Set<() => void>();
   const closedWaiters = new Set<() => void>();
   const statuses = new Set<(status: SyncStatus, detail: string | null, failure: SyncFailure) => void>();
-  const changed = (corpusChanged = false, dailyIndexChanged = false) => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.detail, sync.facts.failure); for (const listener of queries) listener(corpusChanged, dailyIndexChanged); };
+  const changed = (corpusChanged = false, dailyIndexChanged = false, resourceRefs: readonly string[] | null = null, onlyTitles = false, ownsCommit = false) => {
+    for (const listener of statuses) listener(syncStatus(sync.facts), sync.detail, sync.facts.failure);
+    for (const listener of queries) listener(corpusChanged, dailyIndexChanged, resourceRefs, onlyTitles, ownsCommit);
+  };
   const queryLocal = async (query: Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult> => {
     if (query.kind !== "search" && query.kind !== "search_preview" && query.kind !== "search_admission" && query.kind !== "source_alias" && query.kind !== "excerpt") {
       return call<QueryResult>("query", {query, plans: await nativeQueryPlans(query)});
@@ -140,16 +143,26 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
     replica: () => call<ReplicaState>("replica"),
     pending: async () => (await call<{ changes: Change[] }>("pending")).changes,
     acknowledge: async (sequence: string) => { await call("acknowledge", { sequence }); },
-    applyRemote: async (entries: FeedChange[], nextCursor: string): Promise<ReplicaState> => {
+    applyRemote: async (entries: FeedChange[], nextCursor: string): Promise<{replica: ReplicaState; applied: Change[]; only_titles: boolean}> => {
+      let raced = false;
       for (;;) {
         const current = await call<ReplicaState>("replica");
-        if (BigInt(current.server_cursor) >= BigInt(nextCursor)) return current;
+        // Native documents share SQLite. This document may not have observed
+        // an entry written by another document on the same replica.
+        const applied = entries.map(entry => entry.change);
+        if (BigInt(current.server_cursor) >= BigInt(nextCursor)) return {replica: current, applied, only_titles: false};
         const changes = entries.filter(entry => BigInt(entry.server_seq) > BigInt(current.server_cursor));
-        const states = await changeStates(changes.map(entry => entry.change));
-        await validateBindings(accountId, states, changes.map(entry => entry.change));
-        const merged = mergeChanges(states, changes.map(entry => entry.change));
-        const result = await call<ReplicaState | { kind: "stale" }>("apply_remote", { expected_store_revision: current.store_revision, changes, next_cursor: nextCursor, states: merged });
-        if (!("kind" in result)) return result;
+        const incoming = changes.filter(entry => !isLocalFeedEcho(entry, current)).map(entry => entry.change);
+        const states = await changeStates(incoming);
+        await validateBindings(accountId, states, incoming);
+        const merged = mergeChanges(states, incoming);
+        const result = await call<ReplicaState | { kind: "stale" }>("apply_remote", {
+          expected_store_revision: current.store_revision, expected_server_cursor: current.server_cursor, changes, next_cursor: nextCursor, states: merged,
+        });
+        if (!("kind" in result)) return {
+          replica: result, applied, only_titles: !raced && incoming.length === entries.length && titleOnlyChanges(incoming, states, merged),
+        };
+        raced = true;
       }
     },
     resetProvisioning: async () => { await call("reset_provisioning"); },
@@ -222,15 +235,39 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       try {
         const states = await changeStates([frame.change]);
         await validateBindings(accountId, states, [frame.change]);
-        frame = { ...frame, states: mergeChanges(states, [frame.change]) };
-        const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease }); sync.facts.pending = true; if (result.kind === "committed") changed(true, changesDailyIndex(frame.change)); replication.wake(); return result; }
+        const merged = mergeChanges(states, [frame.change]);
+        frame = { ...frame, states: merged };
+        const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease });
+        sync.facts.pending = true;
+        if (result.kind === "committed") changed(true, changesDailyIndex(frame.change), changedResourceRefs([frame.change]), titleOnlyChanges([frame.change], states, merged), true);
+        replication.wake();
+        return result;
+      }
       finally { sync.facts.saving = false; changed(); }
     }),
     subscribe: (query, listener, failed) => {
       let live = true;
-      const read = (corpusChanged: boolean, dailyIndexChanged: boolean) => { if (!(query.kind === "daily_index" ? dailyIndexChanged : corpusChanged)) return; void serialize(() => queryLocal(query)).then(value => { if (live) listener(value); }, error => { if (live) failed(error); }); };
-      queries.add(read); read(true, true);
+      let generation = 0;
+      let observed: QueryResult | null = null;
+      const read = (corpusChanged: boolean, dailyIndexChanged: boolean, resourceRefs: readonly string[] | null, onlyTitles: boolean) => {
+        if (!invalidatesQuery(query, corpusChanged, dailyIndexChanged, resourceRefs, onlyTitles, observed)) return;
+        const current = ++generation;
+        observed = null;
+        void serialize(() => queryLocal(query)).then(value => {
+          if (!live) return;
+          if (query.kind === "outline_windows" && generation === current) observed = value;
+          listener(value);
+        }, error => { if (live) failed(error); });
+      };
+      queries.add(read); read(true, true, null, false);
       return () => { live = false; queries.delete(read); };
+    },
+    onResourceChange: (ref, listener) => {
+      const notify = (corpus: boolean, _index: boolean, refs: readonly string[] | null, _titles: boolean, ownsCommit: boolean) => {
+        if (corpus && !ownsCommit && (refs === null || refs.includes(ref))) listener();
+      };
+      queries.add(notify);
+      return () => { queries.delete(notify); };
     },
     evidence_changed: listener => { evidence.add(listener); return () => { evidence.delete(listener); }; },
     sync_status: listener => { statuses.add(listener); listener(syncStatus(sync.facts), sync.detail, sync.facts.failure); return () => { statuses.delete(listener); }; },

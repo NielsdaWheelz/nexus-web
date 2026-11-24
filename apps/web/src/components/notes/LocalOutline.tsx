@@ -49,7 +49,7 @@ export interface LocalOutlineHandle {
 }
 type Props = {rootRef: string; workPageRef?: string | null; rootField?: RootField; prelude?: readonly Intent[]; apiRef?: React.RefObject<LocalOutlineHandle | null>;
   filter?: string; occurrencePrefix?: string; attached?: boolean; historyAllowance?: OutlineHistoryAllowance | null; presentationAllowance?: OutlinePresentationAllowance | null; rootPresentation?: RootPresentation; initialRows?: 1 | 32;
-  onControllerReady?(controller: OutlineController | null): void; childrenVisible?: boolean;
+  onControllerReady?(controller: OutlineController | null): void; childrenVisible?: boolean; quietOpening?: boolean;
   /** The link the pane was opened through; the outline omits it, so the parent is not listed as a child. */
   entering?: string};
 const EMPTY_INTENTS: readonly Intent[] = [];
@@ -72,6 +72,7 @@ export interface LocalOutlineRoot {
   rootTitle: string | null;
   rootReady: boolean;
   rootRead: OutlineRootMetadata;
+  opening: "pending" | "ready" | "failed";
   error: unknown | null;
   retry(): void;
   /** The session's first content is on screen: every window it first requested, the root's and each open branch's, painted or
@@ -87,7 +88,7 @@ function OutlineRoot(props: Props) {return useLocalOutlineRoot(props).view;}
 /** The route and editing host consume one root read; descendants retain their
  * own collectors. Canonical root metadata survives paging and refresh failure. */
 export function useLocalOutlineRoot({rootRef, workPageRef = null, rootField, prelude = EMPTY_INTENTS, apiRef, filter = "", occurrencePrefix = rootRef, entering, onControllerReady, childrenVisible = true,
-  attached = true, historyAllowance = null, presentationAllowance = null, rootPresentation = "paper", initialRows = 32}: Props): LocalOutlineRoot {
+  attached = true, historyAllowance = null, presentationAllowance = null, rootPresentation = "paper", initialRows = 32, quietOpening = false}: Props): LocalOutlineRoot {
   const runtime = useWritingRuntime();
   const guard = useWorkGuard();
   const accountId = useAuthoredAccountId();
@@ -145,22 +146,23 @@ export function useLocalOutlineRoot({rootRef, workPageRef = null, rootField, pre
   const rootEditor = presented && presentation.rootEditor !== null ? wrap(presentation.rootEditor) : null;
   const view = current && presented ? <div hidden={!childrenVisible}><MountedOutline key={current.id} controller={current.controller} pending={pending}
     rootRef={rootRef} rootField={configuredField} filter={filter} occurrencePrefix={occurrencePrefix} failure={failure} setFailure={setFailure}
-    received={received} onReady={setEditor}/></div>
+    received={received} onReady={setEditor} quietOpening={quietOpening}/></div>
     // Before the session mounts, its ruling stands in the session's own type, whatever hosts the outline.
-    : presented ? <div {...type}><Ruling/></div> : null;
+    : presented && !quietOpening ? <div {...type}><Ruling/></div> : null;
   if (current && painted !== current.controller && editor === current.controller &&
     [...current.controller.requests.keys()].every(id => current.controller.windows.has(id) || current.controller.branchRead(id).error !== null)) setPainted(current.controller);
   const read = controller?.branchRead(input.root_id);
-  return {rootEditor, rootTitle: presentation.rootTitle, rootReady: presentation.rootReady, rootRead, error: read?.error ?? null,
+  const opening = !presented ? "pending" : controller?.windows.has(input.root_id) ? "ready" : read?.error != null ? "failed" : "pending";
+  return {opening, rootEditor, rootTitle: presentation.rootTitle, rootReady: presentation.rootReady, rootRead, error: read?.error ?? null,
     retry: () => read?.retry(), ready: current !== null && painted === current.controller, controller,
     retainSession: controller?.retainsSession() ?? false, showTitle: presentation.showTitle, view};
 }
 
-function MountedOutline({controller, pending, rootRef, rootField, filter, occurrencePrefix, failure, setFailure, received, onReady}: {
+function MountedOutline({controller, pending, rootRef, rootField, filter, occurrencePrefix, failure, setFailure, received, onReady, quietOpening}: {
   controller: OutlineController; pending: ReturnType<typeof useEditorDraft<Session>>;
   rootRef: string; rootField: RootField | undefined; filter: string; occurrencePrefix: string; failure: unknown | null;
   setFailure: React.Dispatch<React.SetStateAction<unknown | null>>;
-  received(window: OutlineWindow): void; onReady(controller: OutlineController | null): void;
+  received(window: OutlineWindow): void; onReady(controller: OutlineController | null): void; quietOpening: boolean;
 }) {
   const resources = useContext(ResourceOutlineContext);
   useLayoutEffect(() => controller.readLayout().geometry.refreshRange());
@@ -253,7 +255,7 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
         <p>select the text and copy it.</p><textarea readOnly value={manualCopy ?? ""} aria-label="pending outline text"/>
       </Dialog>
       {/* rows stand once the root's window is installed, not once it is read: its admission can fail */}
-      {rootState.error !== null ? <AuthoredReadFailure {...rootState} noun="linked items"/>
+      {quietOpening ? null : rootState.error !== null ? <AuthoredReadFailure {...rootState} noun="linked items"/>
         : controller.windows.has(pending.value.input.root_id) ? null : <Ruling/>}
       {[...controller.requests.values()].map(request => <BranchCollector key={request.parent_id} controller={controller} request={request} received={request.parent_id === pending.value.input.root_id ? received : null}/>)}
       <NoteEditor editorKey={`outline:${occurrencePrefix}`} occurrenceKey={`outline:${occurrencePrefix}`} containingNoteRef={rootRef}

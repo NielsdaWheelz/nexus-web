@@ -17,6 +17,7 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import type { MeasuredIndexWindow } from "@/lib/collections/measuredIndexWindow";
+import { paneVisibleBand } from "@/lib/panes/paneScroll";
 import { isEditableTarget, isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eventTarget";
 import { getInteractionGeneration } from "@/lib/ui/overlay";
 import { useWorkGuard, type WorkGuard, type WorkOwner, type WorkScope } from "@/lib/unsavedWork";
@@ -25,6 +26,8 @@ const ANCHORS = "[data-collection-row-id], [data-note-block-id]";
 
 export type AnchorPosition =
   | { readonly kind: "ready"; readonly offset: number }
+  /** The committed layout knows this offset before the occurrence is mounted. */
+  | { readonly kind: "reserved"; readonly offset: number }
   | { readonly kind: "pending"; readonly estimate: number | null }
   | { readonly kind: "missing" }
   | { readonly kind: "failed" };
@@ -43,7 +46,10 @@ export interface AnchorGeometry {
   read(): AnchorGeometryFrame | null;
   /** All measured extents affecting this geometry have reached its committed frame. */
   layoutReady(): boolean;
-  demand(id: string): () => void;
+  /** An enclosing occurrence also admits the subtree needed to locate the target. */
+  demand(id: string, descendant?: boolean): () => void;
+  /** Windowed occurrences can stand before their child geometry is admitted. */
+  descendantState?(id: string): "pending" | "ready" | "failed";
   element(id: string): HTMLElement | null;
   refreshRange(): void;
 }
@@ -52,10 +58,14 @@ interface Anchor {
   scope: string;
   id: string;
 }
+interface EyeLine extends Anchor {
+  offset: number;
+  parents: Anchor[];
+}
 interface Memento {
   routeKey: string;
   scrollTop: number;
-  eyeLine: (Anchor & { offset: number; parents: Anchor[] }) | null;
+  eyeLine: EyeLine | null;
   anchors: Anchor[];
   /** Set when the visit was left by keyboard: the focused row, if any. */
   focus: { anchor: Anchor | null; parents: Anchor[] } | null;
@@ -66,15 +76,28 @@ interface Scrollport {
   element: HTMLElement;
   content: HTMLElement;
   inputGeneration: number;
+  observedTop: number;
+  moving: boolean;
+  heldPointer: number | null;
+  restFrame: number | null;
+  clampedArrival: { anchor: Anchor; valid(): boolean } | null;
+}
+interface MeasuredAnchor extends Anchor {
+  top: number;
+  managed: boolean;
+}
+interface JournalHeading {
+  top: number;
+  inset: number;
+  height: number;
 }
 interface RefreshSnapshot {
   paneId: string;
   port: Scrollport;
-  inputGeneration: number;
-  eyeLine: Memento["eyeLine"];
-  anchors: Anchor[];
-  restored: boolean;
-  requested: boolean;
+  oldTop: number;
+  anchors: MeasuredAnchor[];
+  order: readonly string[];
+  clampedArrival: { anchor: Anchor; heading: JournalHeading; valid(): boolean } | null;
   scheduled: boolean;
 }
 interface Readiness {
@@ -83,16 +106,18 @@ interface Readiness {
   root: HTMLElement | null;
 }
 interface PendingRestore {
-  visitId: string;
-  routeKey: string;
+  port: Scrollport;
+  memento: Memento | null;
+  valid: () => boolean;
+  retainClampedArrival: boolean;
   frame: number | null;
-  stop: () => void;
   readonly mounted: Map<string, () => void>;
 }
 
 /** The store's half: remember a pane's visit before it leaves; forget dead visits. */
 export interface PaneReturnMemento {
   capture(paneId: string): void;
+  captureDeparture(paneId: string): void;
   forget(reachableVisits: ReadonlyMap<string, string>): void;
   read(visitId: string, routeKey: string, name: string): unknown;
   write(visitId: string, routeKey: string, name: string, value: unknown): void;
@@ -150,6 +175,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
   const refreshes = new Map<string, RefreshSnapshot>();
   const collections = new Map<string, Set<CollectionGeometry>>();
   const anchoring = new Map<HTMLElement, string>();
+  const restListeners = new Map<string, Set<() => void>>();
   const holds = new Map<string, { readonly element: HTMLElement; readonly top: number; scheduled: boolean }>();
 
   function frames(port: Scrollport): CollectionGeometry[] {
@@ -176,35 +202,101 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     return parentAnchors(port, geometryFor(port, anchor)?.frame?.root ?? findAnchor(port.content, anchor));
   }
 
-  function captureEyeLine(port: Scrollport): Memento["eyeLine"] {
-    // At scroll zero, the pane's top owns position instead of a visible row.
-    if (port.element.scrollTop === 0) return null;
-    const viewport = port.element.getBoundingClientRect();
-    let eyeLine: Memento["eyeLine"] = null;
+  function origin(frame: AnchorGeometryFrame): number {
+    const {root, scrollport} = frame;
+    return root.getBoundingClientRect().top - scrollport.getBoundingClientRect().top + scrollport.scrollTop;
+  }
+
+  function locate(port: Scrollport, anchor: Anchor, published = false): AnchorPosition {
+    const entry = geometryFor(port, anchor);
+    if (entry === undefined) {
+      const row = findAnchor(port.content, anchor);
+      if (!row?.getClientRects().length) return {kind: "missing"};
+      return {kind: "ready", offset: row.getBoundingClientRect().top - port.element.getBoundingClientRect().top + port.element.scrollTop};
+    }
+    const frame = published ? entry.frame : entry.geometry.read();
+    if (frame === null) return {kind: "pending", estimate: null};
+    const position = frame.position(anchor.id);
+    if (position.kind !== "ready" && position.kind !== "reserved") return position;
+    const row = published || position.kind === "reserved" ? null : entry.geometry.element(anchor.id);
+    const offset = row?.getClientRects().length
+      ? row.getBoundingClientRect().top - port.element.getBoundingClientRect().top + port.element.scrollTop
+      : (published ? frame.origin + port.element.clientTop : origin(frame)) + position.offset;
+    return {kind: position.kind, offset};
+  }
+
+  function journalHeading(port: Scrollport, anchor: Anchor, published = false, previous: JournalHeading | null = null): JournalHeading | null {
+    const position = locate(port, anchor, published);
+    if (position.kind === "reserved" && previous !== null)
+      return {...previous, top: position.offset + previous.inset};
+    if (position.kind !== "ready") return null;
+    const article = geometryFor(port, anchor)?.geometry.element(anchor.id);
+    const heading = article?.querySelector("[data-journal-heading] h2");
+    if (!article || !heading?.getClientRects().length) return null;
+    const box = heading.getBoundingClientRect();
+    const inset = box.top - article.getBoundingClientRect().top;
+    return {top: position.offset + inset, inset, height: box.height};
+  }
+
+  function headingVisible(port: Scrollport, heading: JournalHeading, scrollTop: number): boolean {
+    const band = paneVisibleBand(port.element);
+    const y = heading.top + port.element.getBoundingClientRect().top - scrollTop;
+    return y + heading.height > band.top && y < band.bottom;
+  }
+
+  function captureEyeLine(port: Scrollport, published = false): EyeLine | null {
+    const {element, content} = port;
+    const scroll = element.scrollTop;
+    if (scroll === 0) return null;
+    const box = element.getBoundingClientRect();
+    const band = paneVisibleBand(element);
+    const selected: {line: EyeLine | null; start: number | null} = {line: null, start: null};
+    const consider = (anchor: Anchor, top: number, bottom: number, start: number | null, parents: Anchor[]) => {
+      if (bottom <= top || bottom <= band.top || top >= band.bottom) return;
+      if (start !== null && (start < band.top || start >= Math.min(bottom, band.bottom))) start = null;
+      const current = selected.line;
+      const inside = start !== null;
+      const currentInside = selected.start !== null;
+      if (current && inside === currentInside) {
+        const same = (a: Anchor, b: Anchor) => a.scope === b.scope && a.id === b.id;
+        if (current.parents.some(parent => same(anchor, parent))) return;
+        if (!parents.some(parent => same(current, parent)) &&
+          (start ?? top) >= (selected.start ?? current.offset + box.top)) return;
+      } else if (currentInside && !inside) return;
+      selected.line = {...anchor, offset: top - box.top, parents};
+      selected.start = start;
+    };
     const windows = frames(port);
-    for (const row of port.content.querySelectorAll<HTMLElement>(ANCHORS)) {
-      if (windows.some(entry => entry.frame!.root.contains(row))) continue;
+    for (const row of content.querySelectorAll<HTMLElement>(ANCHORS)) {
+      if (!row.getClientRects().length) continue;
+      const anchor = anchorOf(row, content);
+      if (anchor === null) continue;
       const rect = row.getBoundingClientRect();
-      if (rect.bottom <= viewport.top || rect.top >= viewport.bottom) continue;
-      const anchor = anchorOf(row, port.content);
-      if (anchor && (eyeLine === null || rect.top - viewport.top < eyeLine.offset)) {
-        eyeLine = { ...anchor, offset: rect.top - viewport.top, parents: parentAnchors(port, row) };
-      }
+      const entry = windows.find(item => item.scope === anchor.scope);
+      const frame = entry?.frame;
+      const position = frame?.position(anchor.id);
+      if (frame && position?.kind !== "ready") continue;
+      const top = published && frame && position?.kind === "ready"
+        ? box.top + element.clientTop + frame.origin + position.offset - scroll : rect.top;
+      const heading = row.hasAttribute("data-journal-date") ? row.querySelector("[data-journal-heading]") : null;
+      const start = heading?.getClientRects().length ? top + heading.getBoundingClientRect().top - rect.top
+        : row.hasAttribute("data-journal-date") ? null : top;
+      const day = row.parentElement?.closest("article[data-journal-date]");
+      const bottom = day ? Math.min(top + rect.height, top + day.getBoundingClientRect().bottom - rect.top) : top + rect.height;
+      consider(anchor, top, bottom, start, parentAnchors(port, row));
     }
-    for (const entry of frames(port)) {
+    // A uniform window can prove a row even while it is outside the current mounted range.
+    for (const entry of windows) {
       const frame = entry.frame!;
-      const relative = port.element.scrollTop - frame.origin;
-      const row = frame.firstVisible(relative, relative + port.element.clientHeight);
-      if (row === null) continue;
-      const offset = port.element.clientTop + frame.origin + row.offset - port.element.scrollTop;
-      const parents = parentAnchors(port, frame.root);
-      const selected = eyeLine;
-      // A child refines its enclosing logical row, never another row in the same feed.
-      if (selected?.parents.some(parent => parent.scope === entry.scope && parent.id === row.id)) continue;
-      const nested = selected !== null && parents.some(parent => parent.scope === selected.scope && parent.id === selected.id);
-      if (eyeLine === null || nested || offset < eyeLine.offset) eyeLine = { scope: entry.scope, id: row.id, offset, parents };
+      const base = published ? frame.origin + element.clientTop : origin(frame);
+      const top = band.top - box.top + scroll - base;
+      const row = frame.firstVisible(top, top + band.bottom - band.top);
+      if (row === null || entry.geometry.element(row.id)?.getClientRects().length ||
+          frame.position(row.id).kind !== "ready") continue;
+      const y = box.top + base + row.offset - scroll;
+      consider({scope: entry.scope, id: row.id}, y, band.bottom, y, parentAnchors(port, frame.root));
     }
-    return eyeLine;
+    return selected.line;
   }
 
   /** Logical windows expand to their full order at their DOM position. */
@@ -216,12 +308,12 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       for (const id of frame.anchors) {
         const position = frame.position(id);
         if (position.kind === "missing") continue;
-        const offset = position.kind === "ready" ? position.offset : position.kind === "pending" ? position.estimate : null;
+        const offset = position.kind === "pending" ? position.estimate : position.kind === "failed" ? null : position.offset;
         result.push({ anchor: { scope: entry.scope, id }, top: frame.origin + (offset ?? Number.POSITIVE_INFINITY) });
       }
     }
     for (const row of port.content.querySelectorAll<HTMLElement>(ANCHORS)) {
-      if (windows.some(item => item.frame!.root.contains(row))) continue;
+      if (!row.getClientRects().length || windows.some(item => item.frame!.root.contains(row))) continue;
       const anchor = anchorOf(row, port.content);
       if (anchor !== null) result.push({anchor, top: row.getBoundingClientRect().top - port.element.getBoundingClientRect().top -
         port.element.clientTop + port.element.scrollTop});
@@ -257,32 +349,39 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     for (const entry of frames(port)) entry.geometry.refreshRange();
   }
 
-  /** The memento is the sole pane scroll writer, including logical row positions. */
-  function place(port: Scrollport, memento: Memento): void {
-    const { element } = port;
+  function rebaseFrames(port: Scrollport): boolean {
     let moved = false;
-    // A sibling can move a window without rerendering it. Keep its committed
-    // row offsets, but acknowledge the live origin before range publication.
     for (const entry of frames(port)) {
       const frame = entry.geometry.read();
       if (frame === null) { entry.frame = null; continue; }
-      const origin = frame.root.getBoundingClientRect().top - element.getBoundingClientRect().top - element.clientTop + element.scrollTop;
-      moved ||= origin !== entry.frame?.origin;
-      entry.frame = origin === frame.origin ? frame : { ...frame, origin };
+      const top = origin(frame) - port.element.clientTop;
+      moved ||= top !== entry.frame?.origin;
+      entry.frame = top === frame.origin ? frame : {...frame, origin: top};
     }
+    return moved;
+  }
+
+  function clamp(port: Scrollport, top: number): number {
+    return Math.min(Math.max(0, port.element.scrollHeight - port.element.clientHeight), Math.max(0, top));
+  }
+
+  function writeTop(port: Scrollport, top: number): boolean {
+    const target = clamp(port, top);
+    if (target === port.element.scrollTop) return false;
+    port.element.scrollTop = target;
+    port.observedTop = port.element.scrollTop;
+    return true;
+  }
+
+  function place(restore: PendingRestore, memento: Memento): void {
+    const {port} = restore;
+    const moved = rebaseFrames(port);
     const anchor = memento.eyeLine;
-    const frame = anchor === null ? null : geometryFor(port, anchor)?.frame ?? null;
-    const position = frame !== null && anchor !== null ? frame.position(anchor.id) : null;
-    const offset = position?.kind === "ready" ? position.offset : position?.kind === "pending" ? position.estimate : null;
-    const row = anchor && findAnchor(port.content, anchor);
-    const top = frame !== null && anchor !== null && offset !== null
-      ? frame.origin + offset + element.clientTop - anchor.offset
-      : row
-        ? element.scrollTop + row.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor!.offset
-        : memento.scrollTop;
-    const previous = element.scrollTop;
-    element.scrollTop = Math.min(Math.max(0, element.scrollHeight - element.clientHeight), Math.max(0, top));
-    if (element.scrollTop !== previous || moved) refreshRanges(port);
+    const position = anchor === null ? null : locate(port, anchor);
+    const top = anchor !== null && position?.kind === "ready" ? position.offset - anchor.offset : memento.scrollTop;
+    if (restore.retainClampedArrival && anchor && position?.kind === "ready" && top - clamp(port, top) > 1)
+      port.clampedArrival = {anchor, valid: restore.valid};
+    if (writeTop(port, top) || moved) refreshRanges(port);
   }
 
   function updateAnchoring(): void {
@@ -301,8 +400,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     }
   }
 
-  /** Refresh/filter retention uses the current body and measured extents. A
-   * separately loading suggestion section must not suspend an accepted layout. */
+  /** Numeric retention needs the extent of the body that owns the position. */
   function bodyReady(port: Scrollport): boolean {
     const bodies = [...(readiness.get(`${port.visitId}|${port.routeKey}`) ?? [])].filter(entry => entry.kind === "Body");
     return bodies.length > 0 && bodies.every(entry => entry.ready);
@@ -326,10 +424,10 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     queueMicrotask(() => {
       held.scheduled = false;
       const port = scrollports.get(paneId);
-      if (holds.get(paneId) !== held || port === undefined || held.element !== port.element || !positionReady(port)) return;
+      if (holds.get(paneId) !== held || port === undefined || held.element !== port.element ||
+          sampleTravel(paneId, port) || !positionReady(port)) return;
       flushSync(() => {
-        port.element.scrollTop = held.top;
-        refreshRanges(port);
+        if (writeTop(port, held.top)) refreshRanges(port);
         holds.delete(paneId);
       });
     });
@@ -340,43 +438,97 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     if (!restore) return;
     pending.delete(paneId);
     if (restore.frame !== null) cancelAnimationFrame(restore.frame);
-    restore.stop();
+    const focus = restore.memento?.focus;
+    const {port} = restore;
+    if (restoreFocus && focus && restore.valid()) {
+      const row = focus.anchor && findAnchor(port.content, focus.anchor);
+      const control = row?.matches("[data-row-focusable]") ? row : row?.querySelector<HTMLElement>("[data-row-focusable]");
+      const landmark = port.element.closest<HTMLElement>("[data-pane-shell]");
+      if (landmark?.dataset.active === "true") (control ?? landmark).focus({preventScroll: true});
+    }
     for (const release of restore.mounted.values()) release();
-    const port = scrollports.get(paneId);
-    const focus = mementos.get(restore.visitId)?.focus;
-    if (!restoreFocus || !focus || port?.visitId !== restore.visitId) return;
-    const row = focus.anchor && findAnchor(port.content, focus.anchor);
-    const control = row?.matches("[data-row-focusable]")
-      ? row
-      : row?.querySelector<HTMLElement>("[data-row-focusable]");
-    const landmark = port.element.closest<HTMLElement>("[data-pane-shell]");
-    (control ?? landmark)?.focus({ preventScroll: true });
   }
 
-  function attempt(paneId: string): void {
-    const restore = pending.get(paneId);
+  function cancelPlacement(paneId: string): void {
     const port = scrollports.get(paneId);
-    if (!restore || !port || port.visitId !== restore.visitId) return;
-    const memento = mementos.get(restore.visitId);
-    if (memento?.routeKey !== restore.routeKey) {
-      port.element.scrollTop = 0;
+    if (port) port.clampedArrival = null;
+    finish(paneId, false);
+    holds.delete(paneId);
+    refreshes.delete(paneId);
+  }
+
+  function settle(paneId: string, port: Scrollport): void {
+    if (!port.moving || port.heldPointer !== null || port.restFrame !== null) return;
+    port.restFrame = requestAnimationFrame(() => {
+      port.restFrame = null;
+      const generation = port.inputGeneration;
+      sampleTravel(paneId, port);
+      if (port.heldPointer !== null || generation !== port.inputGeneration) return;
+      port.moving = false;
+      restListeners.get(`${port.visitId}|${port.routeKey}`)?.forEach(listener => listener());
+      applyHold(paneId);
+    });
+  }
+
+  /** Read the live offset before writing. Scroll events can trail native motion. */
+  function sampleTravel(paneId: string, port: Scrollport): boolean {
+    const top = port.element.scrollTop;
+    const previous = port.observedTop;
+    if (top === previous) return port.moving;
+    port.observedTop = top;
+    if (top < previous) {
+      const clamped = clamp(port, previous);
+      if (clamped !== previous && Math.abs(top - clamped) <= 1) return port.moving;
+    }
+    if (port.restFrame !== null) {
+      cancelAnimationFrame(port.restFrame);
+      port.restFrame = null;
+    }
+    port.inputGeneration++;
+    port.moving = true;
+    cancelPlacement(paneId);
+    return true;
+  }
+
+  function inputLease(paneId: string, port: Scrollport): () => boolean {
+    const generation = port.inputGeneration;
+    const interaction = getInteractionGeneration();
+    return () => {
+      if (scrollports.get(paneId) !== port || getInteractionGeneration() !== interaction) return false;
+      sampleTravel(paneId, port);
+      return port.inputGeneration === generation;
+    };
+  }
+
+  function attempt(paneId: string, atFrame = false): void {
+    const restore = pending.get(paneId);
+    if (!restore) return;
+    if (!restore.valid()) return finish(paneId, false);
+    const {port, memento} = restore;
+    if (memento === null) {
+      if (writeTop(port, 0)) refreshRanges(port);
       return finish(paneId, false);
     }
     const admit = (anchor: Anchor, parents: readonly Anchor[]): "ready" | "pending" | "missing" | "failed" => {
-      for (const target of [...parents, anchor]) {
+      for (const [index, target] of [...parents, anchor].entries()) {
+        const enclosing = parents[index - 1];
         const entry = geometryFor(port, target);
+        if (entry === undefined && findAnchor(port.content, target)?.getClientRects().length) continue;
+        const childState = enclosing && geometryFor(port, enclosing)?.geometry.descendantState?.(enclosing.id);
         if (entry === undefined) {
-          if (findAnchor(port.content, target) !== null) continue;
-          return isReady(port) ? "missing" : "pending";
+          if (childState === "failed") return "failed";
+          if (childState === "pending") return "pending";
+          return childState === "ready" || isReady(port) ? "missing" : "pending";
         }
         const frame = entry.geometry.read();
-        if (frame === null) return "pending";
-        const position = frame.position(target.id);
-        if (position.kind === "failed") return "failed";
-        const key = anchorKey(target);
-        if (!restore.mounted.has(key)) restore.mounted.set(key, entry.geometry.demand(target.id));
-        if (!entry.ready || !entry.geometry.layoutReady() || position.kind === "pending") return "pending";
-        if (position.kind === "missing") return "missing";
+        if (frame === null && childState === "failed") return "failed";
+        const position = frame?.position(target.id);
+        if (position?.kind === "failed" || position?.kind === "missing") return position.kind;
+        const descendant = index < parents.length;
+        const key = anchorKey(target) + (descendant ? "+" : "");
+        if (!restore.mounted.has(key))
+          restore.mounted.set(key, entry.geometry.demand(target.id, descendant));
+        if (!entry.ready || position?.kind !== "ready") return "pending";
       }
       return "ready";
     };
@@ -388,7 +540,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       if (state === "missing") {
         const next = survivingAnchor(port, eyeLine, eyeLine.parents, memento.anchors);
         memento.eyeLine = next === null ? null : {...next, offset: eyeLine.offset, parents: parentsFor(port, next)};
-        return attempt(paneId);
+        return attempt(paneId, atFrame);
       }
     }
     const focused = memento.focus;
@@ -398,113 +550,92 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       else if (state === "missing") {
         const next = survivingAnchor(port, focused.anchor, focused.parents, memento.anchors);
         memento.focus = {anchor: next, parents: next === null ? [] : parentsFor(port, next)};
-        return attempt(paneId);
-      } else if (state === "pending" || geometryFor(port, focused.anchor)?.geometry.element(focused.anchor.id) === null) return;
+        return attempt(paneId, atFrame);
+      } else if (state === "pending" || !findAnchor(port.content, focused.anchor)?.getClientRects().length) return;
     }
-    const ready = () => pending.get(paneId) === restore && scrollports.get(paneId) === port &&
-      (memento.eyeLine !== null || memento.focus?.anchor ? bodyReady(port) : isReady(port)) &&
-      frames(port).every(entry => entry.geometry.layoutReady());
-    // The scheduled frame owns placement; publications only advance admission.
-    if (!ready() || restore.frame !== null) return;
-    // Committed rows lay out over the next frames: place again, then focus.
-    restore.frame = requestAnimationFrame(() => {
-      if (!ready()) { restore.frame = null; return; }
-      flushSync(() => place(port, memento));
+    // An exact target establishes its own readiness. A numeric return needs the
+    // settled extent so an early clamp does not throw away part of the offset.
+    if (memento.eyeLine === null && !memento.focus?.anchor && !isReady(port)) return;
+    if (atFrame) {
+      flushSync(() => { place(restore, memento); finish(paneId, true); });
+    } else if (restore.frame === null) {
       restore.frame = requestAnimationFrame(() => {
-        if (!ready()) { restore.frame = null; return; }
-        flushSync(() => { place(port, memento); finish(paneId, true); });
+        restore.frame = null;
+        attempt(paneId, true);
       });
-    });
-    place(port, memento);
+    }
   }
 
-  function requestRestore(paneId: string, port: Scrollport): void {
-    finish(paneId, false);
-    refreshes.delete(paneId);
-    holds.delete(paneId);
-    // The reader's own scrolling wins over a restore still waiting for rows.
-    const cancel = (event: Event) => {
-      if (isNavigationAttention(event)) finish(paneId, false);
-    };
-    const intents = NAVIGATION_ATTENTION_EVENTS;
-    for (const type of intents) {
-      port.element.addEventListener(type, cancel, { capture: true, passive: true });
-    }
-    pending.set(paneId, {
-      visitId: port.visitId,
-      routeKey: port.routeKey,
-      frame: null,
-      mounted: new Map(),
-      stop: () => {
-        for (const type of intents) {
-          port.element.removeEventListener(type, cancel, { capture: true });
-        }
-      },
-    });
+  function requestRestore(paneId: string, port: Scrollport, memento: Memento | null, retainClampedArrival = false): void {
+    sampleTravel(paneId, port);
+    cancelPlacement(paneId);
+    pending.set(paneId, {port, memento, valid: inputLease(paneId, port), retainClampedArrival, frame: null, mounted: new Map()});
     attempt(paneId);
   }
 
-  function captureRefresh(paneId: string): RefreshSnapshot | null {
+  function captureRefresh(paneId: string, published = false): RefreshSnapshot | null {
     const port = scrollports.get(paneId);
-    if (!port || pending.has(paneId)) return null;
-    const captured = refreshes.get(paneId);
-    if (captured?.port === port && captured.inputGeneration === port.inputGeneration) return captured;
-    refreshes.delete(paneId);
-    const snapshot: RefreshSnapshot = { paneId, port, inputGeneration: port.inputGeneration,
-      eyeLine: captureEyeLine(port), anchors: orderedAnchors(port), restored: false, requested: false, scheduled: false };
+    if (!port || pending.has(paneId) || holds.has(paneId) || !anchoring.has(port.element) || sampleTravel(paneId, port)) return null;
+    const previous = refreshes.get(paneId);
+    if (previous?.port === port) return previous;
+    const oldTop = port.element.scrollTop;
+    const line = captureEyeLine(port, published);
+    const anchors: MeasuredAnchor[] = [];
+    let order: readonly string[] = [];
+    if (line !== null) {
+      const entry = geometryFor(port, line);
+      anchors.push({scope: line.scope, id: line.id, top: line.offset + oldTop, managed: entry !== undefined});
+      for (const parent of line.parents.toReversed()) {
+        const position = locate(port, parent, published);
+        if (position.kind === "ready")
+          anchors.push({...parent, top: position.offset, managed: geometryFor(port, parent) !== undefined});
+      }
+      order = entry?.frame?.anchors ?? [...port.content.querySelectorAll<HTMLElement>(ANCHORS)].flatMap(row => {
+        const candidate = anchorOf(row, port.content);
+        return candidate?.scope === line.scope ? [candidate.id] : [];
+      });
+    }
+    const arrival = port.clampedArrival;
+    const heading = arrival?.valid() ? journalHeading(port, arrival.anchor, published) : null;
+    const clampedArrival = arrival && heading && headingVisible(port, heading, oldTop) ? {...arrival, heading} : null;
+    const snapshot = {paneId, port, oldTop, anchors, order, clampedArrival, scheduled: false};
     refreshes.set(paneId, snapshot);
     return snapshot;
   }
 
   function restoreRefresh(snapshot: RefreshSnapshot): void {
-    snapshot.requested = true;
-    if (snapshot.restored || snapshot.scheduled) return;
+    if (snapshot.scheduled) return;
     snapshot.scheduled = true;
-    // A nested section's class layout callback can precede its sibling's layout
-    // registration. One end-of-commit attempt sees every section's current geometry.
     queueMicrotask(() => {
-      snapshot.scheduled = false;
-      if (snapshot.restored || refreshes.get(snapshot.paneId) !== snapshot) return;
-      if (scrollports.get(snapshot.paneId) !== snapshot.port || snapshot.port.inputGeneration !== snapshot.inputGeneration) {
-        snapshot.restored = true;
-        refreshes.delete(snapshot.paneId);
-        return;
-      }
-      if (!positionReady(snapshot.port)) return;
-      const eyeLine = snapshot.eyeLine;
-      if (eyeLine !== null) {
-        const entry = geometryFor(snapshot.port, eyeLine);
-        const position = entry?.geometry.read()?.position(eyeLine.id);
-        if (position?.kind === "failed") {
-          snapshot.restored = true;
-          refreshes.delete(snapshot.paneId);
-          return;
+      const {paneId, port, oldTop, anchors, order, clampedArrival} = snapshot;
+      if (refreshes.get(paneId) !== snapshot) return;
+      refreshes.delete(paneId);
+      if (scrollports.get(paneId) !== port || !anchoring.has(port.element) || sampleTravel(paneId, port)) return;
+
+      let target = oldTop;
+      for (const [index, anchor] of anchors.entries()) {
+        let next = locate(port, anchor);
+        if (index === 0 && next.kind === "missing" && (!anchor.managed || geometryFor(port, anchor))) {
+          // Confirmed deletion may put a measured successor on the vacated line.
+          for (let rank = order.indexOf(anchor.id) + 1; rank < order.length; rank++) {
+            next = locate(port, {scope: anchor.scope, id: order[rank]});
+            if (next.kind !== "missing") break;
+          }
         }
-        if (position?.kind === "pending" || (entry !== undefined && position === undefined) || (entry === undefined &&
-          eyeLine.parents.length > 0 && findAnchor(snapshot.port.content, eyeLine) === null)) {
-          // The existing restore owns demand and cancellation for an unknown row.
-          snapshot.restored = true;
-          refreshes.delete(snapshot.paneId);
-          mementos.set(snapshot.port.visitId, {routeKey: snapshot.port.routeKey, scrollTop: snapshot.port.element.scrollTop,
-            eyeLine, anchors: snapshot.anchors, focus: null});
-          requestRestore(snapshot.paneId, snapshot.port);
-          return;
-        }
+        if (next.kind !== "ready") continue;
+        target += next.offset - anchor.top;
+        break;
       }
-      flushSync(() => {
-        snapshot.restored = true;
-        refreshes.delete(snapshot.paneId);
-        const { port, eyeLine } = snapshot;
-        if (scrollports.get(snapshot.paneId) !== port || port.inputGeneration !== snapshot.inputGeneration) return;
-        if (eyeLine === null) { refreshRanges(port); return; }
-        const entry = geometryFor(port, eyeLine);
-        const position = entry?.geometry.read()?.position(eyeLine.id);
-        const anchor = position?.kind === "ready" || findAnchor(port.content, eyeLine) !== null ? eyeLine
-          : survivingAnchor(port, eyeLine, eyeLine.parents, snapshot.anchors);
-        if (anchor !== null) place(port, {routeKey: port.routeKey, scrollTop: 0, anchors: snapshot.anchors,
-          eyeLine: {...anchor, offset: eyeLine.offset, parents: parentsFor(port, anchor)}, focus: null});
-        else { port.element.scrollTop = 0; refreshRanges(port); }
-      });
+      const heading = clampedArrival?.valid() ? journalHeading(port, clampedArrival.anchor, false, clampedArrival.heading) : null;
+      if (clampedArrival && heading && !headingVisible(port, heading, clamp(port, target)))
+        target = oldTop + heading.top - clampedArrival.heading.top;
+      const moved = rebaseFrames(port);
+      const delta = clamp(port, target) - port.element.scrollTop;
+      if (delta !== 0) {
+        port.element.scrollBy({top: delta, behavior: "instant"});
+        port.observedTop = port.element.scrollTop;
+      }
+      if (delta !== 0 || moved) flushSync(() => refreshRanges(port));
     });
   }
 
@@ -512,33 +643,46 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     for (const [paneId, port] of scrollports) {
       if (port.visitId !== visitId) continue;
       attempt(paneId);
-      const snapshot = refreshes.get(paneId);
-      if (snapshot?.requested) restoreRefresh(snapshot);
       applyHold(paneId);
     }
   }
 
+  function capture(paneId: string): void {
+    const port = scrollports.get(paneId);
+    // A pending restore's memento is still the truth for its visit.
+    if (!port) return;
+    sampleTravel(paneId, port);
+    const restore = pending.get(paneId);
+    if (restore?.memento && restore.memento === mementos.get(port.visitId)) return;
+    const { element, content } = port;
+    const eyeLine = captureEyeLine(port);
+    // Leaving by keyboard is read now (D6): a visible focus ring inside the pane.
+    const active = document.activeElement;
+    const keyboard =
+      active instanceof HTMLElement &&
+      element.closest("[data-pane-shell]")?.contains(active) === true &&
+      active.matches(":focus-visible") &&
+      !isEditableTarget(active);
+    const row = keyboard ? active.closest<HTMLElement>(ANCHORS) : null;
+    mementos.set(port.visitId, {
+      routeKey: port.routeKey,
+      scrollTop: element.scrollTop,
+      eyeLine, anchors: orderedAnchors(port),
+      focus: keyboard ? {anchor: row && anchorOf(row, content), parents: parentAnchors(port, row)} : null,
+    });
+  }
+
   return {
-    capture(paneId: string): void {
+    capture,
+    captureDeparture(paneId: string): void {
+      capture(paneId);
       const port = scrollports.get(paneId);
-      // A pending restore's memento is still the truth for its visit.
-      if (!port || pending.get(paneId)?.visitId === port.visitId) return;
-      const { element, content } = port;
-      const eyeLine = captureEyeLine(port);
-      // Leaving by keyboard is read now (D6): a visible focus ring inside the pane.
-      const active = document.activeElement;
-      const keyboard =
-        active instanceof HTMLElement &&
-        element.closest("[data-pane-shell]")?.contains(active) === true &&
-        active.matches(":focus-visible") &&
-        !isEditableTarget(active);
-      const row = keyboard ? active.closest<HTMLElement>(ANCHORS) : null;
-      mementos.set(port.visitId, {
-        routeKey: port.routeKey,
-        scrollTop: element.scrollTop,
-        eyeLine, anchors: orderedAnchors(port),
-        focus: keyboard ? {anchor: row && anchorOf(row, content), parents: parentAnchors(port, row)} : null,
-      });
+      if (port !== undefined) {
+        port.inputGeneration++;
+        port.clampedArrival = null;
+      }
+      finish(paneId, false);
+      refreshes.delete(paneId);
     },
     forget(reachable: ReadonlyMap<string, string>): void {
       for (const [visitId, value] of mementos) {
@@ -580,20 +724,56 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       scrollports.set(paneId, port);
       const intent = (event: Event) => {
         if (!isNavigationAttention(event)) return;
-        port.inputGeneration += 1;
-        holds.delete(paneId);
-        refreshes.delete(paneId);
+        if (event.type === "pointerdown" && event instanceof PointerEvent && event.pointerType === "mouse" && event.button === 0)
+          port.heldPointer = event.pointerId;
+        port.inputGeneration++;
+        cancelPlacement(paneId);
       };
-      const intents = NAVIGATION_ATTENTION_EVENTS;
-      for (const type of intents) port.element.addEventListener(type, intent, { capture: true, passive: true });
-      if (restore) requestRestore(paneId, port);
+      const scroll = () => { sampleTravel(paneId, port); };
+      const end = () => { sampleTravel(paneId, port); settle(paneId, port); };
+      const release = (event: Event) => {
+        if (port.heldPointer === null || event instanceof PointerEvent && event.pointerId !== port.heldPointer) return;
+        port.heldPointer = null;
+        end();
+      };
+      for (const type of NAVIGATION_ATTENTION_EVENTS)
+        port.element.addEventListener(type, intent, {capture: true, passive: true});
+      port.element.addEventListener("scroll", scroll, {passive: true});
+      port.element.addEventListener("scrollend", end, {passive: true});
+      document.addEventListener("pointerup", release, true);
+      document.addEventListener("pointercancel", release, true);
+      window.addEventListener("blur", release);
+      if (restore) {
+        const memento = mementos.get(port.visitId);
+        requestRestore(paneId, port, memento?.routeKey === port.routeKey ? memento : null);
+      }
       applyHold(paneId);
       return () => {
-        for (const type of intents) port.element.removeEventListener(type, intent, { capture: true });
+        for (const type of NAVIGATION_ATTENTION_EVENTS)
+          port.element.removeEventListener(type, intent, {capture: true});
+        port.element.removeEventListener("scroll", scroll);
+        port.element.removeEventListener("scrollend", end);
+        document.removeEventListener("pointerup", release, true);
+        document.removeEventListener("pointercancel", release, true);
+        window.removeEventListener("blur", release);
+        if (port.restFrame !== null) cancelAnimationFrame(port.restFrame);
         if (scrollports.get(paneId) !== port) return;
         refreshes.delete(paneId);
-        if (pending.get(paneId)?.visitId === port.visitId) finish(paneId, false);
+        if (pending.get(paneId)?.port === port) finish(paneId, false);
         scrollports.delete(paneId);
+      };
+    },
+    moving(paneId: string, visitId: string, routeKey: string): boolean {
+      const port = scrollports.get(paneId);
+      return port?.visitId === visitId && port.routeKey === routeKey && sampleTravel(paneId, port);
+    },
+    onRest(visitId: string, routeKey: string, listener: () => void): () => void {
+      const key = `${visitId}|${routeKey}`;
+      const listeners = restListeners.get(key) ?? new Set();
+      restListeners.set(key, listeners.add(listener));
+      return () => {
+        listeners.delete(listener);
+        if (!listeners.size) restListeners.delete(key);
       };
     },
     ready(visitId: string, routeKey: string, entry: Readiness): () => void {
@@ -620,7 +800,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     prepareSourceArrival(visitId: string): void {
       mementos.delete(visitId);
       for (const [paneId, restore] of pending) {
-        if (restore.visitId === visitId) finish(paneId, false);
+        if (restore.port.visitId === visitId) finish(paneId, false);
       }
     },
     read(visitId: string, routeKey: string, name: string): unknown {
@@ -635,7 +815,10 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       if (values.size) visitData.set(visitId, { routeKey, values });
       else visitData.delete(visitId);
     },
-    captureRefresh,
+    captureRefresh(paneId: string, visitId: string, routeKey: string): RefreshSnapshot | null {
+      const port = scrollports.get(paneId);
+      return port?.visitId === visitId && port.routeKey === routeKey ? captureRefresh(paneId) : null;
+    },
     restoreRefresh,
     collection(paneId: string, entry: CollectionGeometry, ready: boolean): void {
       entry.ready = ready;
@@ -645,19 +828,17 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       const before = entry.frame;
       const next = entry.geometry.read();
       const port = scrollports.get(paneId);
-      const changed = before !== null && next !== null && (before.revision !== next.revision || before.origin !== next.origin ||
-        (before.anchors !== next.anchors && (before.anchors.length !== next.anchors.length || before.anchors.some((id, index) => id !== next.anchors[index]))));
-      // Geometry epochs use the same whole-pane snapshot as row publications.
-      const captured = changed && port && !holds.has(paneId) ? captureRefresh(paneId) : null;
+      const changed = before !== null && next !== null && (before.revision !== next.revision ||
+        before.origin !== next.origin || before.anchors.length !== next.anchors.length);
+      const active = port?.visitId === entry.visitId && port.routeKey === entry.routeKey;
+      const captured = changed && active ? captureRefresh(paneId, true) : null;
       entry.frame = next;
       updateAnchoring();
       if (captured !== null) restoreRefresh(captured);
-      if (port !== undefined) {
+      if (active) {
         attempt(paneId);
         if (changed || (before === null) !== (next === null)) refreshRanges(port);
       }
-      const snapshot = refreshes.get(paneId);
-      if (snapshot?.requested) restoreRefresh(snapshot);
       applyHold(paneId);
     },
     forgetCollection(entry: CollectionGeometry): void {
@@ -667,21 +848,20 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       updateAnchoring();
       resumeVisit(entry.visitId);
     },
-    reveal(paneId: string, anchor: Anchor, focus: boolean): void {
+    reveal(paneId: string, visitId: string, routeKey: string, anchor: Anchor, focus: boolean): void {
       const port = scrollports.get(paneId);
-      if (!port) return;
+      if (port?.visitId !== visitId || port.routeKey !== routeKey) return;
       const parents = parentsFor(port, anchor);
-      mementos.set(port.visitId, {routeKey: port.routeKey, scrollTop: port.element.scrollTop, anchors: orderedAnchors(port),
-        eyeLine: {...anchor, offset: 0, parents}, focus: focus ? {anchor, parents} : null});
-      requestRestore(paneId, port);
+      const inset = paneVisibleBand(port.element).top - port.element.getBoundingClientRect().top;
+      requestRestore(paneId, port, {routeKey: port.routeKey, scrollTop: port.element.scrollTop, anchors: orderedAnchors(port),
+        eyeLine: {...anchor, offset: inset, parents}, focus: focus ? {anchor, parents} : null}, anchor.scope === "journal");
     },
 
     inputLease(paneId: string, visitId: string, routeKey: string): () => boolean {
       const port = scrollports.get(paneId);
-      const generation = port?.inputGeneration;
-      const interaction = getInteractionGeneration();
-      return () => port !== undefined && scrollports.get(paneId) === port && port.visitId === visitId && port.routeKey === routeKey &&
-        port.inputGeneration === generation && getInteractionGeneration() === interaction;
+      if (port?.visitId !== visitId || port.routeKey !== routeKey) return () => false;
+      sampleTravel(paneId, port);
+      return inputLease(paneId, port);
     },
 
     /** Keeps the live offset across a same-path view swap (filters, sort). */
@@ -690,6 +870,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       refreshes.delete(paneId);
       const port = scrollports.get(paneId);
       if (port === undefined) return null;
+      port.clampedArrival = null;
       const held = { element: port.element, top: port.element.scrollTop, scheduled: false };
       holds.set(paneId, held);
       return () => { if (holds.get(paneId) === held) applyHold(paneId); };
@@ -777,7 +958,8 @@ export function usePaneReturnScrollport(input: {
     // An in-place query change (same continuity key) keeps the live scroll.
     const restore = continuityKey === null || previous.current !== continuityKey;
     previous.current = continuityKey;
-    const port = { visitId, routeKey, element, content, inputGeneration: 0 };
+    const port: Scrollport = {visitId, routeKey, element, content, inputGeneration: 0,
+      observedTop: element.scrollTop, moving: false, heldPointer: null, restFrame: null, clampedArrival: null};
     return memory.register(paneId, port, restore);
   }, [enabled, scrollportRef, contentRef, continuityKey, memory, paneId, visitId, routeKey]);
 }
@@ -832,13 +1014,13 @@ export function PaneRefreshAnchor({
   ready: boolean;
   children: ReactNode;
 }) {
-  const { memory, paneId } = useScope();
+  const { memory, paneId, visitId, routeKey } = useScope();
   return (
     <RefreshAnchorBoundary
       identity={identity}
       value={value}
       enabled={ready && paneId !== null}
-      capture={() => (paneId ? memory.captureRefresh(paneId) : null)}
+      capture={() => (paneId ? memory.captureRefresh(paneId, visitId, routeKey) : null)}
       restore={memory.restoreRefresh}
     >
       {children}
@@ -899,11 +1081,20 @@ export function usePaneAnchorGeometry({ scope, geometry, ready }: {
 
 /** Captures the committed frame before an imperative editor or measurement change. */
 export function usePaneBeforeLayout(): () => () => void {
-  const { memory, paneId } = useScope();
+  const { memory, paneId, visitId, routeKey } = useScope();
   return useCallback(() => {
-    const snapshot = paneId === null ? null : memory.captureRefresh(paneId);
+    const snapshot = paneId === null ? null : memory.captureRefresh(paneId, visitId, routeKey);
     return () => { if (snapshot !== null) memory.restoreRefresh(snapshot); };
-  }, [memory, paneId]);
+  }, [memory, paneId, visitId, routeKey]);
+}
+
+/** Natural-size owners can conserve extent during travel and publish it at rest. */
+export function usePaneScrollMotion() {
+  const {memory, paneId, visitId, routeKey} = useScope();
+  return useMemo(() => ({
+    moving: () => paneId !== null && memory.moving(paneId, visitId, routeKey),
+    onRest: (listener: () => void) => memory.onRest(visitId, routeKey, listener),
+  }), [memory, paneId, visitId, routeKey]);
 }
 
 /** A delayed arrival yields to newer input, overlays or a replaced scrollport. */
@@ -914,10 +1105,10 @@ export function usePaneInputLease(): () => () => boolean {
 }
 
 export function usePaneRevealAnchor(): (scope: string, id: string, focus: boolean) => void {
-  const { memory, paneId } = useScope();
+  const { memory, paneId, visitId, routeKey } = useScope();
   return useCallback((scope: string, id: string, focus: boolean) => {
-    if (paneId !== null) memory.reveal(paneId, { scope, id }, focus);
-  }, [memory, paneId]);
+    if (paneId !== null) memory.reveal(paneId, visitId, routeKey, { scope, id }, focus);
+  }, [memory, paneId, visitId, routeKey]);
 }
 
 /** A self-loading list inside a body holds the restore until it has rows too. */

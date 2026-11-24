@@ -4,10 +4,10 @@
  * return separate literal evidence without rewriting canonical resource content.
  * Adjacency uses the exact (position,link_id) tuple, including prefix/equal keys. */
 import { excerptTextParts, excerptView, scopeExcerpt, type ExcerptScope, type ExcerptNode } from "./excerpt.ts";
-import type { AuthoredQuery, Change, LinkState, OutlineRange, PassageState, QueryResult, QueryRow, ResourceProjection, SelectionCapture, ResourceState, PassageCapture } from "./types.ts";
+import type { AuthoredQuery, Change, Corpus, LinkState, MergeResult, OutlineRange, PassageState, QueryResult, QueryRow, ResourceProjection, SelectionCapture, ResourceState, PassageCapture } from "./types.ts";
 import { PAGE_TITLE_MONTHS, pageTitle, paneFilterText } from "./paneFilterText.ts";
 import { normalizeQuote, validateLocalDate } from "./identity.ts";
-import { counter } from "./merge.ts";
+import { counter, isVisible } from "./merge.ts";
 import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, SEARCH_FAMILIES, type ScopeInterval, type ScopeReading } from "./scope.ts";
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
 const HIGHLIGHT_TEXT_FIELDS = ["prefix", "quote_exact", "suffix"] as const;
@@ -358,7 +358,7 @@ function outlineWindow(query: Omit<Extract<AuthoredQuery, {kind: "outline_window
       UNION ALL SELECT 'before',link_id,position,position_json,other_ref,NULL FROM before_edge
       UNION ALL SELECT 'after',link_id,position,position_json,other_ref,NULL FROM after_edge
       UNION ALL SELECT 'tail',link_id,position,position_json,other_ref,NULL FROM tail_edge),
-    wanted(ref) AS(SELECT ?1 UNION SELECT other_ref FROM edges),
+    wanted(ref) AS(SELECT ?1 UNION SELECT other_ref FROM page_links),
     readable AS NOT MATERIALIZED(${BOUNDED_READABLE})
     SELECT 'resource' AS part,r.ref,r.projection_json AS value_json,NULL AS child_available,
       NULL AS next_cursor,NULL AS previous_cursor,NULL AS position,NULL AS link_id FROM readable r
@@ -374,6 +374,41 @@ function outlineWindow(query: Omit<Extract<AuthoredQuery, {kind: "outline_window
  * including a body-only edit. The complete local query decides membership. */
 export function changesDailyIndex(change: Change): boolean {
   return change.resources.some(resource => resource.kind === "note" || resource.kind === "page" && resource.local_date !== null);
+}
+
+/** A resource read depends only on its own row in the three readable families. */
+export function changedResourceRefs(changes: readonly Change[]): string[] {
+  const refs = new Set<string>();
+  for (const change of changes) {
+    for (const resource of change.resources) refs.add(resource.ref);
+    for (const source of change.source_stubs) refs.add(source.source_ref);
+    for (const passage of change.passages) refs.add(`passage_anchor:${passage.anchor_id}`);
+  }
+  return [...refs];
+}
+
+/** A title can change without affecting outline membership or child proofs only
+ * when the local store already had the page and it stays visible in this commit. */
+export function titleOnlyChanges(changes: readonly Change[], before: Corpus, after: MergeResult): boolean {
+  if (!changes.length || changes.some(change => !change.resources.length || change.links.length || change.source_stubs.length || change.passages.length)) return false;
+  const prior = new Map(before.resources.map(resource => [resource.ref, resource]));
+  const next = new Map(after.projections.map(resource => [resource.ref, resource]));
+  return changes.every(change => change.resources.every(patch => {
+    const resource = prior.get(patch.ref);
+    return patch.kind === "page" && patch.title_update !== null && patch.last_work_at_ms === null &&
+      Object.keys(patch.delete_vv).length === 0 && resource?.kind === "page" &&
+      isVisible(resource.touch_vv, resource.delete_vv) && next.get(patch.ref)?.visible === true;
+  }));
+}
+
+export function invalidatesQuery(query: AuthoredQuery, corpusChanged: boolean, dailyIndexChanged: boolean, resourceRefs: readonly string[] | null, onlyTitles: boolean, observed: QueryResult | null): boolean {
+  if (query.kind === "daily_index") return dailyIndexChanged && !onlyTitles;
+  if (!corpusChanged || resourceRefs === null) return corpusChanged;
+  if (query.kind === "resource") return resourceRefs.includes(query.ref);
+  if (onlyTitles && (query.kind === "work_pending" || query.kind === "work_completed" || query.kind === "habits")) return false;
+  if (query.kind === "outline_windows" && onlyTitles && observed?.outline_windows)
+    return resourceRefs.includes(query.ref) || observed.outline_windows.some(slice => slice.rows.some(row => resourceRefs.includes(row.resource.ref)));
+  return true;
 }
 
 /** Every compiled slice is executed in one host store turn, under one revision. */

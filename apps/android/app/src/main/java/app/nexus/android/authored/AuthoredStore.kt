@@ -201,12 +201,30 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
     }
     fun applyRemote(frame: JSONObject): JSONObject = transaction {
         val current = replica()
-        if (frame.getString("expected_store_revision") != current.getString("store_revision")) return@transaction JSONObject().put("kind", "stale")
-        val entries = frame.getJSONArray("changes"); var cursor = current.getString("server_cursor").toLong(); var lamport = current.getString("lamport").toLong()
-        for (index in 0 until entries.length()) { val entry = entries.getJSONObject(index); val next = entry.getString("server_seq").toLong(); require(next == cursor + 1); cursor = next; lamport = maxOf(lamport, entry.getJSONObject("change").getString("lamport").toLong()) }
+        if (frame.getString("expected_store_revision") != current.getString("store_revision") ||
+            frame.getString("expected_server_cursor") != current.getString("server_cursor")
+        ) return@transaction JSONObject().put("kind", "stale")
+        require(current.getBoolean("provisioning_complete"))
+        val entries = frame.getJSONArray("changes")
+        val replicaId = current.getString("replica_id")
+        val committedPrefix = current.getString("command_seq").toLong()
+        var cursor = current.getString("server_cursor").toLong()
+        var lamport = current.getString("lamport").toLong()
+        var incoming = 0
+        for (index in 0 until entries.length()) {
+            val entry = entries.getJSONObject(index)
+            val next = entry.getString("server_seq").toLong()
+            require(next == cursor + 1)
+            val change = entry.getJSONObject("change")
+            if (entry.getString("replica_id") == replicaId) {
+                require(change.getString("command_seq").toLong() in 1L..committedPrefix)
+            } else incoming++
+            cursor = next
+            lamport = maxOf(lamport, change.getString("lamport").toLong())
+        }
         require(cursor.toString() == frame.getString("next_cursor"))
-        write(frame.getJSONObject("states"))
-        run("UPDATE replica_state SET server_cursor=?,store_revision=store_revision+?,lamport=? WHERE singleton=1", cursor, entries.length(), lamport)
+        if (incoming > 0) write(frame.getJSONObject("states"))
+        run("UPDATE replica_state SET server_cursor=?,store_revision=store_revision+?,lamport=? WHERE singleton=1", cursor, incoming, lamport)
         replica()
     }
     fun resetProvisioning() = transaction { for (table in listOf("resources", "links", "passages", "source_stubs", "reference_index", "search_documents")) run("DELETE FROM $table") }
@@ -340,7 +358,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             JSONObject().put("score", if (found.length() == 0) JSONObject.NULL else found.getJSONObject(0).getDouble("score"))
         } finally { run(sql("search_match_clear")) }
     }
-    private fun outlineWindow(records: JSONArray): JSONObject {
+    private fun outlineWindow(records: JSONArray, rootRef: String): JSONObject {
         val resources = linkedMapOf<String, JSONObject>()
         var metadata: JSONObject? = null
         for (index in 0 until records.length()) {
@@ -350,24 +368,23 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             } else if (record.getString("part") == "meta") metadata = record
         }
         val meta = metadata ?: error("outline window metadata is missing")
-        val output = JSONArray(); val children = JSONArray(); val rawRefs = mutableSetOf<String>()
-        val proof = JSONObject().put("before", JSONObject.NULL).put("after", JSONObject.NULL).put("tail", JSONObject.NULL)
+        val output = JSONArray(); val children = JSONArray()
+        val proof = JSONObject().put("root", resources[rootRef] ?: JSONObject.NULL)
+            .put("before", JSONObject.NULL).put("after", JSONObject.NULL).put("tail", JSONObject.NULL)
         for (index in 0 until records.length()) {
             val record = records.getJSONObject(index); val part = record.getString("part")
             if (part == "resource" || part == "meta") continue
-            val resource = resources[record.getString("ref")] ?: error("outline edge peer is missing from its proven revision")
             val link = JSONObject(record.getString("value_json"))
             when (part) {
                 "raw" -> {
+                    val resource = resources[record.getString("ref")] ?: error("outline row resource is missing from its proven revision")
                     output.put(JSONObject().put("resource", resource).put("link", link).put("match_text", JSONObject.NULL).put("activation_ref", JSONObject.NULL).put("matched_field", JSONObject.NULL).put("activation_field", JSONObject.NULL))
-                    rawRefs.add(resource.getString("ref"))
                     children.put(if (record.isNull("child_available")) JSONObject.NULL else record.getInt("child_available") == 1)
                 }
                 "before", "after", "tail" -> proof.put(part, link)
                 else -> error("unknown outline window record")
             }
         }
-        proof.put("resources", JSONArray().apply { for ((ref, resource) in resources) if (ref !in rawRefs) put(resource) })
         return JSONObject().put("rows", output).put("children", children).put("proof", proof)
             .put("next_cursor", meta.get("next_cursor")).put("previous_cursor", meta.get("previous_cursor"))
     }
@@ -390,7 +407,8 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             .put("scope_available", true).put("daily_index", JSONObject.NULL).put("outline_windows", JSONObject.NULL)
         if (kind == "outline_windows") {
             val windows = JSONArray()
-            for (index in 0 until count) windows.put(outlineWindow(read(index)))
+            val ref = query.getString("ref")
+            for (index in 0 until count) windows.put(outlineWindow(read(index), ref))
             return result.put("outline_windows", windows)
         }
         val records = read(0)

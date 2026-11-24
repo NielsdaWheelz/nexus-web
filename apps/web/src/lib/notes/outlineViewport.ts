@@ -1,13 +1,13 @@
 /** Sparse branch geometry retains identities and measurements, never writing.
  * The controller remains the only occurrence tree and command owner. */
 import type {LinkState, OutlineRange} from "@nexus/authored/types";
-import type {OutlineEdge, OutlineWindow} from "./useOutlineWindow";
+import type {OutlineWindow} from "./useOutlineWindow";
 
 /** `height` is a measurement of the mounted row, or null: an unmeasured item takes the estimate when read. */
 interface Item {link: string; position: string; height: number | null}
 interface Branch {items: Item[]; first: boolean; last: boolean; joined: Set<string>}
 export type BranchPart = {kind: "row"; link: string} | {kind: "gap"; key: string; height: number; range: OutlineRange; direction: "before" | "after"; waiting?: true};
-export interface RowMetric {id: string; anchor: string | null; parent: string | null; link: string | null; top: number; height: number; gap: boolean}
+export interface RowMetric {id: string; anchor: string | null; parent: string | null; link: string | null; top: number; height: number; measured: boolean; gap: boolean}
 
 function position(link: LinkState, ref: string): string {return (link.endpoint_a === ref ? link.position_a : link.position_b)?.value ?? "";}
 function ordered(a: {position: string; link: string}, b: {position: string; link: string}): number {
@@ -15,13 +15,13 @@ function ordered(a: {position: string; link: string}, b: {position: string; link
 }
 
 export function provesEmptyOutline(window: OutlineWindow): boolean {
-  return window.data.scope_available && window.data.rows.length === 0 && window.data.next_cursor === null && window.data.previous_cursor === null &&
+  return window.data.scope_available && !window.data.hasRawRows && window.data.next_cursor === null && window.data.previous_cursor === null &&
     window.beforeEdge === null && window.afterEdge === null && window.tailEdge === null;
 }
 
-export function continuationLink(window: OutlineWindow, edge: OutlineEdge, direction: "before" | "after"): string | null {
-  if (window.rows.some(row => row.link?.link_id === edge.link.link_id)) return edge.link.link_id;
-  const boundary = {link: edge.link.link_id, position: position(edge.link, window.ref)};
+export function continuationLink(window: OutlineWindow, edge: LinkState, direction: "before" | "after"): string | null {
+  if (window.rows.some(row => row.link?.link_id === edge.link_id)) return edge.link_id;
+  const boundary = {link: edge.link_id, position: position(edge, window.ref)};
   const rows = window.rows.filter(row => {
     const compared = ordered({link: row.link!.link_id, position: position(row.link!, window.ref)}, boundary);
     return direction === "after" ? compared > 0 : compared < 0;
@@ -33,7 +33,6 @@ export function mergeOutlineWindows(windows: readonly OutlineWindow[]): OutlineW
   const first = windows[0];
   if (!first || windows.some(window => window.ref !== first.ref || window.branch !== first.branch || window.data.store_revision !== first.data.store_revision || window.data.scope_available !== first.data.scope_available))
     throw new Error("outline windows must share one branch and revision");
-  const resources = new Map(windows.flatMap(window => [...window.resources]));
   const childAvailability = new Map(windows.flatMap(window => [...window.childAvailability]));
   const rows = [...new Map(windows.flatMap(window => window.rows.map(row => [row.link!.link_id, row] as const))).values()]
     .sort((a, b) => ordered({link: a.link!.link_id, position: position(a.link!, first.ref)}, {link: b.link!.link_id, position: position(b.link!, first.ref)}));
@@ -42,11 +41,10 @@ export function mergeOutlineWindows(windows: readonly OutlineWindow[]): OutlineW
     return left && right ? ordered({link: left.link_id, position: position(left, first.ref)}, {link: right.link_id, position: position(right, first.ref)}) : 0;
   });
   const head = parts[0]!, tail = parts.at(-1)!;
-  return {...first, rows, resources, childAvailability, editableRefs: new Set(windows.flatMap(window => [...window.editableRefs])),
+  return {...first, rows, childAvailability, editableRefs: new Set(windows.flatMap(window => [...window.editableRefs])),
     beforeEdge: head.beforeEdge, afterEdge: tail.afterEdge, tailEdge: tail.tailEdge,
-    data: {...first.data, rows, children: rows.map(row => childAvailability.get(row.link!.link_id) ?? null),
-      previous_cursor: head.data.previous_cursor, next_cursor: tail.data.next_cursor,
-      proof: {...first.data.proof, before: head.beforeEdge?.link ?? null, after: tail.afterEdge?.link ?? null, tail: tail.tailEdge?.link ?? null, resources: [...resources.values()]}}};
+    data: {...first.data, hasRawRows: windows.some(window => window.data.hasRawRows),
+      previous_cursor: head.data.previous_cursor, next_cursor: tail.data.next_cursor}};
 }
 
 export class OutlineViewport {
@@ -87,13 +85,13 @@ export class OutlineViewport {
         const beforeEnd = window.afterEdge === null || ordered(item, {link: tail.link_id, position: position(tail, sample.ref)}) <= 0;
         if (afterStart && beforeEnd && !live.has(item.link)) items.delete(item.link);
       }
-      for (const link of [...window.rows.map(row => row.link!), ...[window.beforeEdge, window.afterEdge, window.tailEdge].flatMap(edge => edge ? [edge.link] : [])])
+      for (const link of [...window.rows.map(row => row.link!), ...[window.beforeEdge, window.afterEdge, window.tailEdge].flatMap(edge => edge ? [edge] : [])])
         items.set(link.link_id, {link: link.link_id, position: position(link, sample.ref), height: items.get(link.link_id)?.height ?? null});
       if (window.beforeEdge === null && window.rows.length) prior.first = true;
       if (window.afterEdge === null && window.rows.length) prior.last = true;
     }
     for (const window of windows) {
-      const links = [...(window.beforeEdge ? [window.beforeEdge.link.link_id] : []), ...window.rows.map(row => row.link!.link_id), ...(window.afterEdge ? [window.afterEdge.link.link_id] : [])];
+      const links = [...(window.beforeEdge ? [window.beforeEdge.link_id] : []), ...window.rows.map(row => row.link!.link_id), ...(window.afterEdge ? [window.afterEdge.link_id] : [])];
       for (let index = 1; index < links.length; index++) prior.joined.add(`${links[index - 1]}/${links[index]}`);
     }
     prior.items = [...items.values()].sort(ordered); this.branches.set(parent, prior);
@@ -158,17 +156,18 @@ export class OutlineViewport {
     let top = 0;
     const next = rows.map(row => {
       const element = elements.get(row.id);
-      const measured = row.gapHeight === null && element?.isConnected ? element.getBoundingClientRect().height : null;
-      if (measured !== null && measured > 0) {this.heights.set(row.id, measured); this.smallest = Math.min(this.smallest ?? measured, measured);}
-      const height = row.gapHeight ?? measured ?? this.heights.get(row.id) ?? this.estimate;
-      const metric = {id: row.id, anchor: row.anchor, parent: row.parent, link: row.link, top, height, gap: row.gapHeight !== null};
+      const measuredHeight = row.gapHeight === null && element?.isConnected ? element.getBoundingClientRect().height : 0;
+      const measured = measuredHeight > 0;
+      if (measured) {this.heights.set(row.id, measuredHeight); this.smallest = Math.min(this.smallest ?? measuredHeight, measuredHeight);}
+      const height = row.gapHeight ?? (measured ? measuredHeight : this.heights.get(row.id) ?? this.estimate);
+      const metric = {id: row.id, anchor: row.anchor, parent: row.parent, link: row.link, top, height, measured, gap: row.gapHeight !== null};
       top += height;
       return metric;
     });
     if (next.length === this.committed.length && next.every((metric, index) => {
       const previous = this.committed[index]!;
       return metric.id === previous.id && metric.anchor === previous.anchor && metric.parent === previous.parent && metric.link === previous.link &&
-        metric.top === previous.top && metric.height === previous.height && metric.gap === previous.gap;
+        metric.top === previous.top && metric.height === previous.height && metric.measured === previous.measured && metric.gap === previous.gap;
     })) return;
     this.committed = next;
     this.version++;

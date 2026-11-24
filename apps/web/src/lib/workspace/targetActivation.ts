@@ -27,7 +27,7 @@ export type WorkspacePaneEntry =
   | { readonly kind: "FocusLibrarianSearch"; readonly text: string; readonly start: number; readonly end: number; readonly direction: "forward" | "backward" | "none" }
   | { readonly kind: "ComposeChat"; readonly text: string }
   | { readonly kind: "ComposePage"; readonly title: string }
-  | { readonly kind: "RevealDailyDate" }
+  | { readonly kind: "RevealDailyDate"; readonly focus?: true }
   | { readonly kind: "InspectSource"; readonly target: SourceArrivalTarget; readonly purpose: "Open" | "RestoreVisit" }
   // page or daily pane: a new empty row at the end, focused (a latent day: its draft)
   | { readonly kind: "AppendNote" }

@@ -23,10 +23,13 @@
   margin-block-start: .5lh;
 }
 
-/* Every day has the same padding, so journalWindow reads one trailing value. The break lives in its last line. */
 .day {
   position: absolute;
   inset-inline: 0;
+  overflow: clip;
+}
+
+.natural {
   padding-block: .5lh 2.5lh;
 }
 
@@ -119,22 +122,6 @@
   gap: var(--space-2);
 }
 
-/* The running head: the name of the day under the scroller's top edge. It yields while that day's head is in view. */
-.runningHead {
-  transition:
-    opacity var(--duration-fast) var(--ease-glide),
-    background-color var(--duration-fast) var(--ease-glide),
-    color var(--duration-fast) var(--ease-glide);
-}
-
-.runningHead[data-yielded] {
-  opacity: 0;
-}
-
-.runningHead:is(:hover, :focus-visible, [aria-expanded="true"]) {
-  opacity: 1;
-}
-
 .runningName {
   font-family: var(--reader-font-family, var(--font-serif));
   font-size: var(--text-sm);
@@ -143,7 +130,7 @@
   color: var(--ink);
 }
 
-.day:focus-within > .continuation {
+.day:focus-within .continuation {
   position: static;
   width: auto;
   height: auto;
@@ -154,7 +141,14 @@
   white-space: normal;
 }
 
-.picker {
-  display: grid;
-  gap: var(--space-3);
+.runningName[data-yielded] {
+  visibility: hidden;
+}
+
+.status {
+  position: absolute;
+  inset-inline: var(--space-6);
+  margin-block-start: 3lh;
+  max-block-size: calc(100% - 3lh);
+  overflow: auto;
 }

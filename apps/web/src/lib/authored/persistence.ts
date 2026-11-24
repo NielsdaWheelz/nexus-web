@@ -11,15 +11,15 @@
  * Fresh complete metadata may reuse one exactly unchanged active reading's complete
  * raw/normalized rows. Unpublished first-setup work is not a cross-revision donor. */
 import { validateBindings } from "@nexus/authored/identity";
-import { mergeChanges } from "@nexus/authored/merge";
+import { isLocalFeedEcho, mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
 import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, REBUILD_DEVICE_SQL } from "@nexus/authored/schema";
-import { bindingQueries, compileQuery, compileOutlineWindows, excerptQuery, searchQuery, sourceAliasQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
+import { bindingQueries, compileQuery, compileOutlineWindows, excerptQuery, searchQuery, sourceAliasQuery, titleOnlyChanges, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
 import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange, type LinkState, type OutlineWindowProof, type OutlineWindowSlice, type ResourceProjection } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
 import { SCOPE_SQL, type ScopeInputsPage, type ScopeProgress, type ScopeTextPage, type ScopeNormalizationInterval, type ScopeRawChunk, type ScopeNormalizationObservation, type NormalizedScopeChunk } from "@nexus/authored/scope";
 
-function decodeOutlineWindow(raw: Record<string, unknown>[]): OutlineWindowSlice {
+function decodeOutlineWindow(raw: Record<string, unknown>[], rootRef: string): OutlineWindowSlice {
   const resources = new Map<string, ResourceProjection>();
   for (const record of raw) if (record.part === "resource") {
     const resource: ResourceProjection = JSON.parse(String(record.value_json));
@@ -27,20 +27,19 @@ function decodeOutlineWindow(raw: Record<string, unknown>[]): OutlineWindowSlice
   }
   const meta = raw.find(record => record.part === "meta");
   if (!meta) throw new Error("outline window metadata is missing");
-  const rows: QueryResult["rows"] = [], children: QueryResult["children"] = [], rawRefs = new Set<string>();
-  const proof: OutlineWindowProof = {resources: [], before: null, after: null, tail: null};
+  const rows: QueryResult["rows"] = [], children: QueryResult["children"] = [];
+  const proof: OutlineWindowProof = {root: resources.get(rootRef) ?? null, before: null, after: null, tail: null};
   for (const record of raw) {
     if (record.part === "resource" || record.part === "meta") continue;
-    const resource = resources.get(String(record.ref));
-    if (!resource) throw new Error("outline edge peer is missing from its proven revision");
     const link: LinkState = JSON.parse(String(record.value_json));
     if (record.part === "raw") {
-      rows.push({resource, link, match_text: null, activation_ref: null, matched_field: null, activation_field: null}); rawRefs.add(resource.ref);
+      const resource = resources.get(String(record.ref));
+      if (!resource) throw new Error("outline row resource is missing from its proven revision");
+      rows.push({resource, link, match_text: null, activation_ref: null, matched_field: null, activation_field: null});
       children.push(record.child_available === null ? null : Number(record.child_available) === 1);
     } else if (record.part === "before" || record.part === "after" || record.part === "tail") proof[record.part] = link;
     else throw new Error("unknown outline window record");
   }
-  proof.resources = [...resources.values()].filter(resource => !rawRefs.has(resource.ref));
   return {rows, children, proof, next_cursor: meta.next_cursor === null ? null : String(meta.next_cursor),
     previous_cursor: meta.previous_cursor === null ? null : String(meta.previous_cursor)};
 }
@@ -59,7 +58,7 @@ export class Persistence {
           rebuild = format === 4 || format === 5 || format === 6;
           if (!rebuild && format !== FORMAT_REVISION)
             throw new Error("authored format mismatch; drain the previous client before reprovisioning this device");
-          if (rebuild && (await this.db.all("SELECT 1 FROM pending_changes LIMIT 1")).length > 0)
+          if (rebuild && await this.hasPending())
             throw Object.assign(new Error("sync all writing with the previous client before updating this device"), { code: "E_AUTHORED_UPGRADE_PENDING" });
         }
       }
@@ -101,13 +100,16 @@ export class Persistence {
     return this.states(selection);
   }
   async query(query: AuthoredQuery): Promise<QueryResult> {
+    // The worker keeps this revision fixed across every statement of the query.
+    const { provisioning_complete, store_revision } = await this.replica();
+    if (!provisioning_complete) throw new Error("authored corpus is still preparing");
     if (query.kind === "excerpt") {
       const result = await excerptQuery(plan => this.db.all(plan.sql,plan.params),query);
-      return {store_revision:(await this.replica()).store_revision,...result};
+      return {store_revision,...result};
     }
     if (query.kind === "source_alias") {
       const result = await sourceAliasQuery(plan => this.db.all(plan.sql, plan.params), query);
-      return {store_revision:(await this.replica()).store_revision,...result};
+      return {store_revision,...result};
     }
     if (query.kind === "search" || query.kind === "search_preview" || query.kind === "search_admission") {
       const result = await searchQuery(plan => this.db.all(plan.sql, plan.params), query, async (text, expression) => {
@@ -119,29 +121,29 @@ export class Persistence {
           return row ? Number(row.score) : null;
         } finally { await this.db.run(SEARCH_MATCH_SQL.search_match_clear); }
       });
-      return {store_revision:(await this.replica()).store_revision,...result};
+      return {store_revision,...result};
     }
     if (query.kind === "outline_windows") {
       const windows: OutlineWindowSlice[] = [];
-      for (const compiled of compileOutlineWindows(query)) windows.push(decodeOutlineWindow(await this.db.all(compiled.sql, compiled.params)));
-      return {store_revision: (await this.replica()).store_revision, rows: [], children: [], outline_windows: windows, daily_index: null,
+      for (const compiled of compileOutlineWindows(query)) windows.push(decodeOutlineWindow(await this.db.all(compiled.sql, compiled.params), query.ref));
+      return {store_revision, rows: [], children: [], outline_windows: windows, daily_index: null,
         next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], scope_available: true};
     }
     const compiled = compileQuery(query);
     const raw = await this.db.all(compiled.sql, compiled.params);
-    if (query.kind === "daily_index") return {store_revision: (await this.replica()).store_revision,
+    if (query.kind === "daily_index") return {store_revision,
       daily_index: raw.map(row => ({local_date: String(row.local_date), ref: row.ref === null ? null : String(row.ref)})),
       rows: [], children: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null,
       positions: [], scope_available: true, outline_windows: null};
     if (query.kind === "outline_children") return {
-      store_revision: (await this.replica()).store_revision, rows: [], next_cursor: null,
+      store_revision, rows: [], next_cursor: null,
       previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [],
       children: raw.map(row => row.child_available === null ? null : Number(row.child_available) === 1), scope_available: true, daily_index: null, outline_windows: null,
     };
-    if (query.kind === "binding") return { store_revision: (await this.replica()).store_revision, rows: [], children: [], next_cursor: null, previous_cursor: null, positions: [], binding_id: raw[0] ? String(raw[0].binding_id) : null, canonical_source_ref: null, scope_available: true, daily_index: null, outline_windows: null };
+    if (query.kind === "binding") return { store_revision, rows: [], children: [], next_cursor: null, previous_cursor: null, positions: [], binding_id: raw[0] ? String(raw[0].binding_id) : null, canonical_source_ref: null, scope_available: true, daily_index: null, outline_windows: null };
     if (query.kind === "positions") {
       const positions = raw.map(row => JSON.parse(String(row.position_json)));
-      return { store_revision: (await this.replica()).store_revision, rows: [], children: [], positions, next_cursor: query.at.kind === "tie" && positions.length === Math.min(100, query.at.limit) ? String(raw.at(-1)?.cursor_json) : null, previous_cursor: null, binding_id: null, canonical_source_ref: null, scope_available: true, daily_index: null, outline_windows: null };
+      return { store_revision, rows: [], children: [], positions, next_cursor: query.at.kind === "tie" && positions.length === Math.min(100, query.at.limit) ? String(raw.at(-1)?.cursor_json) : null, previous_cursor: null, binding_id: null, canonical_source_ref: null, scope_available: true, daily_index: null, outline_windows: null };
     }
     const pageLimit = query.kind === "pages" ? Math.max(1, Math.min(100, Math.floor(query.limit))) : null;
     const records = pageLimit === null ? raw : raw.slice(0, pageLimit);
@@ -152,7 +154,7 @@ export class Persistence {
       const cursor = records.at(-1)?.cursor_json;
       next = typeof cursor === "string" ? cursor : last.resource.ref;
     }
-    return { store_revision: (await this.replica()).store_revision, rows, next_cursor: next, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, outline_windows: null };
+    return { store_revision, rows, next_cursor: next, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, outline_windows: null };
   }
   async write(states: MergeResult) {
     for (const state of states.resources) {
@@ -180,38 +182,54 @@ export class Persistence {
       await this.db.run(SEARCH_INDEX_SQL, [ref]);
     }
   }
-  async commit(frame: CommitFrame): Promise<CommitResult> {
+  async commit(frame: CommitFrame): Promise<CommitResult & { only_titles: boolean }> {
     const bytes = JSON.stringify(frame.change);
     if (new TextEncoder().encode(bytes).byteLength > MAX_COMMAND_BYTES) throw new Error("authored command exceeds 2 mib");
     return this.db.transaction(async () => {
       const current = await this.replica();
+      if (!current.provisioning_complete) throw new Error("authored corpus is still preparing");
       if (frame.replica_id !== current.replica_id) throw new Error("wrong authored replica");
-      if (BigInt(frame.change.command_seq) <= BigInt(current.command_seq)) return { kind: "committed", command_seq: frame.change.command_seq, store_revision: current.store_revision };
+      if (BigInt(frame.change.command_seq) <= BigInt(current.command_seq)) return { kind: "committed", command_seq: frame.change.command_seq, store_revision: current.store_revision, only_titles: false };
       if (BigInt(frame.change.command_seq) !== BigInt(current.command_seq) + BigInt(1)) throw new Error("authored command sequence gap");
-      if (frame.expected_store_revision !== current.store_revision) return { kind: "stale", store_revision: current.store_revision, states: await this.changeStates(frame.change) };
+      if (frame.expected_store_revision !== current.store_revision) return { kind: "stale", store_revision: current.store_revision, states: await this.changeStates(frame.change), only_titles: false };
       const states = await this.changeStates(frame.change);
       await validateBindings(current.account_id, states, [frame.change]);
-      await this.write(mergeChanges(states, [frame.change]));
+      const merged = mergeChanges(states, [frame.change]);
+      await this.write(merged);
       await this.db.run("INSERT INTO pending_changes VALUES(?,?,?)", [BigInt(frame.change.command_seq), bytes, new TextEncoder().encode(bytes).byteLength]);
       const revision = (BigInt(current.store_revision) + BigInt(1)).toString();
       await this.db.run("UPDATE replica_state SET command_seq=?,store_revision=?,lamport=MAX(lamport,?) WHERE singleton=1", [BigInt(frame.change.command_seq), BigInt(revision), BigInt(frame.change.lamport)]);
-      return { kind: "committed", command_seq: frame.change.command_seq, store_revision: revision };
+      return { kind: "committed", command_seq: frame.change.command_seq, store_revision: revision, only_titles: titleOnlyChanges([frame.change], states, merged) };
     });
   }
-  async applyRemote(entries: FeedChange[], nextCursor: string): Promise<ReplicaState> {
+  async applyRemote(entries: FeedChange[], nextCursor: string): Promise<{ replica: ReplicaState; applied: Change[]; only_titles: boolean }> {
     return this.db.transaction(async () => {
-      let current = await this.replica();
+      const current = await this.replica();
+      if (!current.provisioning_complete) throw new Error("authored corpus is still preparing");
+      let cursor = BigInt(current.server_cursor);
+      let lamport = BigInt(current.lamport);
+      const applied: Change[] = [];
+      let onlyTitles = true;
       for (const entry of entries) {
-        if (BigInt(entry.server_seq) <= BigInt(current.server_cursor)) continue;
-        if (BigInt(entry.server_seq) !== BigInt(current.server_cursor) + BigInt(1)) throw new Error("authored feed sequence gap");
-        const states = await this.changeStates(entry.change);
-        await validateBindings(current.account_id, states, [entry.change]);
-        await this.write(mergeChanges(states, [entry.change]));
-        await this.db.run("UPDATE replica_state SET server_cursor=?,store_revision=store_revision+1,lamport=MAX(lamport,?) WHERE singleton=1", [BigInt(entry.server_seq), BigInt(entry.change.lamport)]);
-        current = await this.replica();
+        const sequence = BigInt(entry.server_seq);
+        if (sequence <= cursor) continue;
+        if (sequence !== cursor + 1n) throw new Error("authored feed sequence gap");
+        cursor = sequence;
+        const clock = BigInt(entry.change.lamport);
+        if (clock > lamport) lamport = clock;
+        if (isLocalFeedEcho(entry, current)) continue;
+        const change = entry.change;
+        const states = await this.changeStates(change);
+        await validateBindings(current.account_id, states, [change]);
+        const merged = mergeChanges(states, [change]);
+        onlyTitles &&= titleOnlyChanges([change], states, merged);
+        await this.write(merged);
+        applied.push(change);
       }
-      if (current.server_cursor !== nextCursor) throw new Error("authored feed cursor disagrees with applied commands");
-      return current;
+      if (cursor.toString() !== nextCursor) throw new Error("authored feed cursor disagrees with applied commands");
+      if (current.server_cursor === nextCursor) return { replica: current, applied, only_titles: false };
+      await this.db.run("UPDATE replica_state SET server_cursor=?,store_revision=store_revision+?,lamport=? WHERE singleton=1", [cursor, applied.length, lamport]);
+      return { replica: await this.replica(), applied, only_titles: applied.length > 0 && onlyTitles };
     });
   }
   async resetProvisioning() {
@@ -228,6 +246,9 @@ export class Persistence {
       }
       await this.db.run("UPDATE replica_state SET provisioning_complete=1,server_cursor=?,store_revision=store_revision+1,lamport=MAX(lamport,?) WHERE singleton=1", [BigInt(cursor), BigInt(lamport)]);
     });
+  }
+  async hasPending(): Promise<boolean> {
+    return (await this.db.all("SELECT 1 FROM pending_changes LIMIT 1")).length > 0;
   }
   async pending(): Promise<Change[]> {
     const rows = await this.db.all(PENDING_CHANGES_SQL);

@@ -5,7 +5,7 @@
  * plus an ephemeral port lease; a delayed retired port cannot borrow a new holder.
  * An already admitted SQL commit finishes before the next queued preparation read.
  * This needs no cross-port ordering assumption or durable mutation ledger. */
-import { changesDailyIndex } from "@nexus/authored/queries";
+import { changedResourceRefs, changesDailyIndex } from "@nexus/authored/queries";
 import { FORMAT_REVISION, type CommitFrame, type AuthoredQuery, type StateSelection } from "@nexus/authored/types";
 import { ApiError, readResponse } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
@@ -31,7 +31,11 @@ function serialize<T>(operation: () => Promise<T>): Promise<T> {
   queue = next.catch(() => undefined);
   return next;
 }
-function changed(corpusChanged = false, dailyIndexChanged = false) { for (const port of ports) port.postMessage({ kind: "changed", corpus_changed: corpusChanged, daily_index_changed: dailyIndexChanged, status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.detail ?? null, failure: sync?.facts.failure ?? null }); }
+function changed(corpusChanged = false, dailyIndexChanged = false, resourceRefs: readonly string[] | null = null, onlyTitles = false, commandOwner: MessagePort | null = null) {
+  for (const port of ports) port.postMessage({ kind: "changed", corpus_changed: corpusChanged, daily_index_changed: dailyIndexChanged,
+    resource_refs: resourceRefs, only_titles: onlyTitles, owns_commit: port === commandOwner,
+    status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.detail ?? null, failure: sync?.facts.failure ?? null });
+}
 /** `readResponse` takes any abort for its caller's, and here the caller may not have aborted:
  * Firefox rejects `text()` with AbortError when `response`'s deadline passes mid-body. That is
  * a body that died, as it is in Chromium, so it reads as one. */
@@ -91,7 +95,7 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
       const state = await persistence.replica();
       sync.facts.ready = state.provisioning_complete;
       sync.facts.cursor = state.server_cursor;
-      sync.facts.pending = (await persistence.pending()).length > 0;
+      sync.facts.pending = await persistence.hasPending();
     }
     return { wire_revision: WIRE_REVISION, format_revision: FORMAT_REVISION, status: syncStatus(sync!.facts), detail: sync!.detail, failure: sync!.facts.failure };
   }
@@ -119,20 +123,16 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
     case "read_snapshot": return persistence.readSnapshot(input.selection as unknown as StateSelection);
     case "replica": return persistence.replica();
     case "states": return persistence.states(input.selection as unknown as StateSelection);
-    case "query": {
-      if (!(await persistence.replica()).provisioning_complete) throw new Error("authored corpus is still preparing");
-      return persistence.query(input.query as unknown as AuthoredQuery);
-    }
+    case "query": return persistence.query(input.query as unknown as AuthoredQuery);
     case "commit": {
       const held = (await navigator.locks.query()).held?.find(lock => lock.name === `nexus-authored-command-${account}`);
       if (preparation?.port !== port || preparation.lease !== input.lease || held?.clientId !== preparation.holder) throw new Error("authored preparation retired before local commit");
-      if (!(await persistence.replica()).provisioning_complete) throw new Error("authored corpus is still preparing");
       sync!.facts.saving = true; changed();
       try {
         const frame = input.frame as unknown as CommitFrame;
-        const result = await persistence.commit(frame);
-        if (result.kind === "committed") changed(true, changesDailyIndex(frame.change));
-        sync!.facts.pending = (await persistence.pending()).length > 0;
+        const { only_titles: onlyTitles, ...result } = await persistence.commit(frame);
+        if (result.kind === "committed") changed(true, changesDailyIndex(frame.change), changedResourceRefs([frame.change]), onlyTitles, port);
+        sync!.facts.pending = await persistence.hasPending();
         return result;
       } finally { sync!.facts.saving = false; changed(); }
     }
@@ -157,8 +157,9 @@ scope.onconnect = event => {
           if (data.op !== "close" && data.op !== "retire") port.postMessage({ id: data.id, ok: true, result });
         } catch (error) { port.postMessage({ id: data.id, ok: false, error: error instanceof Error ? error.message : "authored operation failed", status: error instanceof ApiError ? error.status : null, code: error instanceof ApiError ? error.code : error instanceof Error && "code" in error && (error.code === "E_AUTHORED_LOCAL" || error.code === "E_AUTHORED_UPGRADE_PENDING") ? error.code : null }); }
       };
-      // Network work reacquires the SQL queue for each local transaction.
-      if (data.op === "sync_step") void answer();
+      // Network work reacquires the SQL queue. Ending the matching ephemeral
+      // lease touches only the message port's preparation token.
+      if (data.op === "sync_step" || data.op === "command_end") void answer();
       else void serialize(answer);
     };
     submit();
