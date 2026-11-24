@@ -107,18 +107,18 @@ open pane. a tap follows; a stationary 500ms touch hold opens beside with
 250ms drag; typed resource rows can fork. × marks a non-current pane for close
 on sheet dismissal; tapping its line keeps it open. current × closes at once.
 
-the nexus control opens through native button activation: pointer click,
-keyboard and assistive technology. primary button-0 presses are captured so
-input blur restoring the player band cannot retarget their release. mouse, pen
-and touch share the 8 css px movement threshold: reaching it cancels activation,
-even if the pointer returns inside. only a primary-touch horizontal swipe can
-invoke the adjacent-pane workspace command and show the destination title for
-600ms, or `first pane` / `last pane` at the clamp; it adds no second nexus ingress,
-navigation event or additional sheet gesture. admitted touch presses suppress
-compatibility mouse focus so it cannot move nexus between release and click.
-without a committed swipe, a cancelled touch preserves the existing input focus;
-an accepted click transfers focus into nexus, and a committed swipe uses normal
-destination focus. mouse/pen focus and keyboard activation remain native.
+primary button-0 presses are captured. a stationary touch opens nexus at
+captured release, even if the outline row withdraws and moves the button during
+the press. touch suppresses compatibility mouse focus and consumes the same
+contact's follow-up click even if it retargets. mouse, pen, keyboard and
+assistive technology open through native button click. mouse, pen and touch
+share an 8 css px movement threshold.
+reaching it cancels tap activation even if the pointer returns inside.
+only a primary-touch horizontal swipe invokes the adjacent-pane workspace
+command. it shows the destination title for 600ms, or `first pane` / `last pane`
+at the clamp. a cancelled touch preserves the existing input focus. an accepted
+activation transfers focus into nexus, and a committed swipe uses normal
+destination focus.
 When task activation occurs during an already-acquired physical contact,
 `SwitchboardTask` rejects the retargeted pointer click unless the same pointer
 began inside the already-active task. That task-local provenance check carries
