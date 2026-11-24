@@ -63,9 +63,9 @@ interface Anchor {
   scope: string;
   id: string;
 }
-type RetainedOrder = { value: ReturnOrder; release(): void };
+type RetainedOrder = { scope: string; value: ReturnOrder; release(): void };
 interface Memento {
-  orders?: Map<string, RetainedOrder>;
+  order?: RetainedOrder;
   routeKey: string;
   scrollTop: number;
   eyeLine: (Anchor & { offset: number; parents: Anchor[] }) | null;
@@ -176,7 +176,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
   const holds = new Map<string, { readonly element: HTMLElement; readonly top: number; scheduled: boolean }>();
 
   function remember(visitId: string, value: Memento | null) {
-    for (const order of mementos.get(visitId)?.orders?.values() ?? []) order.release();
+    mementos.get(visitId)?.order?.release();
     if (value === null) mementos.delete(visitId);
     else mementos.set(visitId, value);
   }
@@ -426,7 +426,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       return "ready";
     };
     const recover = (anchor: Anchor): Anchor | null | undefined => {
-      const order = memento.orders?.get(anchor.scope)?.value;
+      const order = memento.order?.scope === anchor.scope ? memento.order.value : undefined;
       if (order === undefined) return survivingAnchor(port, anchor, memento.anchors);
       if (revision === null) return undefined;
       const index = order.prefix.indexOf(anchor.id);
@@ -514,7 +514,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       frame: null,
       mounted: new Map(),
       neighbors: new Map(),
-      captured: memento?.orders?.size ? {eyeLine: memento.eyeLine, focus: memento.focus} : null,
+      captured: memento?.order ? {eyeLine: memento.eyeLine, focus: memento.focus} : null,
       revision: null,
       stop: () => {
         for (const type of intents) {
@@ -609,14 +609,16 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         !isEditableTarget(active);
       const row = keyboard ? active.closest<HTMLElement>(ANCHORS) : null;
       const focus = keyboard ? {anchor: row && anchorOf(row, content), parents: parentAnchors(port, row)} : null;
-      const orders = new Map<string, RetainedOrder>();
+      let order: RetainedOrder | undefined;
       for (const anchor of [eyeLine, focus?.anchor]) {
-        if (!anchor || orders.has(anchor.scope)) continue;
+        if (!anchor) continue;
         const value = geometryFor(port, anchor)?.frame?.returnOrder;
-        if (value !== undefined) orders.set(anchor.scope, {value, release: value.retain()});
+        if (value === undefined) continue;
+        order = {scope: anchor.scope, value, release: value.retain()};
+        break;
       }
       remember(port.visitId, {routeKey: port.routeKey, scrollTop: element.scrollTop,
-        eyeLine, anchors: orderedAnchors(port), focus, orders});
+        eyeLine, anchors: orderedAnchors(port), focus, order});
     },
     forget(reachable: ReadonlyMap<string, string>): void {
       for (const [visitId, value] of mementos) {
@@ -717,9 +719,9 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     forkVisitPresentation(sourceVisitId: string, sourceRouteKey: string, visitId: string, routeKey: string): void {
       const shell = mementos.get(sourceVisitId);
       if (shell?.routeKey === sourceRouteKey) {
-        const {orders, ...view} = shell;
+        const {order, ...view} = shell;
         remember(visitId, {...structuredClone(view), routeKey, focus: null,
-          orders: new Map([...orders ?? []].map(([scope, {value}]) => [scope, {value, release: value.retain()}]))});
+          order: order === undefined ? undefined : {...order, release: order.value.retain()}});
       }
       const source = visitData.get(sourceVisitId);
       if (source?.routeKey !== sourceRouteKey) return;

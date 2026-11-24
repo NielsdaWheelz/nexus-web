@@ -2,6 +2,7 @@ package app.nexus.android.authored
 
 import android.net.Uri
 import android.util.Base64
+import android.util.Log
 import android.webkit.WebView
 import app.nexus.android.AppRouter
 import app.nexus.android.BuildConfig
@@ -80,7 +81,10 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
         val tokens = pageOrders.toList()
         pageOrders.clear()
         if (account != null && tokens.isNotEmpty()) orderRetirement.launch {
-            commands.withLock { store?.takeIf { it.account == account }?.releasePageOrders(tokens) }
+            commands.withLock {
+                runCatching { store?.takeIf { it.account == account }?.releasePageOrders(tokens) }
+                    .onFailure { Log.w("AuthoredBridge", "could not release a retired page order", it) }
+            }
         }
         boundAccount = null
         documentOwner = null
