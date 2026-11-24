@@ -4,7 +4,7 @@
  * return separate literal evidence without rewriting canonical resource content.
  * Adjacency uses the exact (position,link_id) tuple, including prefix/equal keys. */
 import { excerptTextParts, excerptView, scopeExcerpt, type ExcerptScope, type ExcerptNode } from "./excerpt.ts";
-import type { AuthoredQuery, Change, OutlineRange, PassageState, QueryResult, QueryRow, ResourceProjection, SelectionCapture, ResourceState, PassageCapture } from "./types.ts";
+import { PAGE_REGISTER_RANGE, type AuthoredQuery, type Change, type OutlineRange, type PassageState, type QueryResult, type QueryRow, type ResourceProjection, type SelectionCapture, type ResourceState, type PassageCapture } from "./types.ts";
 import { normalizeQuote } from "./identity.ts";
 import { validateLocalDate } from "./work.ts";
 import { foldFilterText } from "./filter.ts";
@@ -396,14 +396,15 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
   switch (query.kind) {
     case "page_register":
     case "outline_filter": {
-      if (!Number.isSafeInteger(query.start) || query.start < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 2048) throw new RangeError("Invalid index range");
+      const maximum = query.kind === "page_register" ? PAGE_REGISTER_RANGE : 2048;
+      if (!Number.isSafeInteger(query.start) || query.start < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > maximum) throw new RangeError("Invalid index range");
       const needle = foldFilterText(query.text.trim());
       if (query.kind === "page_register") {
         const base = `FROM resources AS r INDEXED BY resources_register WHERE kind='page' AND visible=1 AND local_date IS NULL`;
         const selected = `${base}${needle ? " AND EXISTS(SELECT 1 FROM literal_fields f WHERE f.ref=r.ref AND instr(f.title,?3)>0)" : ""}`;
         return {sql: `WITH slice AS (SELECT ref,${PAGE_TITLE_SQL} AS name ${selected} ORDER BY name COLLATE NOCASE,ref LIMIT ?1 OFFSET ?2)
           SELECT (SELECT count(*) ${selected}) AS total, (SELECT count(*) ${base}) AS source_total,
-            json_group_array(json_array(ref,upper(substr(name,1,1)),CASE WHEN length(CAST(name AS BLOB))<=512 THEN name END)) AS items FROM slice`,
+            json_group_array(json_array(ref,upper(substr(name,1,1)),CASE WHEN length(CAST(json_quote(name) AS BLOB))<=512 THEN name END)) AS items FROM slice`,
           params: [query.limit,query.start,...needle ? [needle] : []]};
       }
       const incident = (["a","b"] as const).map(side => {

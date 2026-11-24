@@ -3,6 +3,9 @@
 import type { FrozenExcerpt, ExcerptView } from "./excerpt.ts";
 export const FORMAT_REVISION = 6;
 export const MAX_COMMAND_BYTES = 2 * 1024 * 1024;
+// A range of UUID refs, group glyphs and 512 encoded label bytes per item fits
+// below 4 MiB, including the result envelope and a full 5,000-page register.
+export const PAGE_REGISTER_RANGE = 6_144;
 export class CommandTooLargeError extends TypeError {
   constructor() { super("this selection is too large to save. select a shorter passage."); this.name = "CommandTooLargeError"; }
 }
