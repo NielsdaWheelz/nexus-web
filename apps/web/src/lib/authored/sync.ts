@@ -40,7 +40,7 @@ export class Sync {
   last_error: string | null = null;
   readonly facts: SyncFacts = { local_error: false, saving: false, ready: false, admission: "ready", failure: null, online: true, pending: false, scope_pending: true, scope_progress: null, cursor: "0", head: null };
   get detail(): string | null { return syncDetail(this.facts, this.last_error); }
-  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning" | "scopeProgress" | "scopeRefs" | "scopeRepairRefs" | "scopeNeedsRepair" | "scopeReset" | "scopeRevoke" | "scopeMetadata" | "scopeText" | "scopeReuse" | "scopeNormalizationNext" | "scopeNormalizationRead" | "scopeNormalizationObservation" | "scopeNormalizationReset" | "scopeNormalized" | "scopeTextComplete" | "scopePublish">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean, dailyIndexChanged?: boolean, resourceRefs?: readonly string[] | null) => void, readonly evidenceChanged: () => void) {}
+  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning" | "scopeProgress" | "scopeRefs" | "scopeRepairRefs" | "scopeNeedsRepair" | "scopeReset" | "scopeRevoke" | "scopeMetadata" | "scopeText" | "scopeReuse" | "scopeNormalizationNext" | "scopeNormalizationRead" | "scopeNormalizationObservation" | "scopeNormalizationReset" | "scopeNormalized" | "scopeTextComplete" | "scopePublish">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean, dailyIndexChanged?: boolean, resourceRefs?: readonly string[] | null, onlyTitles?: boolean) => void, readonly evidenceChanged: () => void) {}
   step({ refresh }: { refresh: boolean }): Promise<SyncStep> {
     if (refresh) {
       this.refreshRequested = true;
@@ -157,9 +157,9 @@ export class Sync {
     await this.local(async () => {
       const before = await this.persistence.replica();
       const applied = data.changes.filter(entry => BigInt(entry.server_seq) > BigInt(before.server_cursor)).map(entry => entry.change);
-      const current = await this.persistence.applyRemote(data.changes, data.next_cursor);
+      const { replica: current, only_titles } = await this.persistence.applyRemote(data.changes, data.next_cursor);
       this.facts.cursor = current.server_cursor;
-      this.changed(applied.length > 0, applied.some(changesDailyIndex), changedResourceRefs(applied));
+      this.changed(applied.length > 0, applied.some(changesDailyIndex), changedResourceRefs(applied), only_titles);
     });
     if (BigInt(this.facts.cursor) >= BigInt(this.pullTarget)) { this.pullNeeded = false; this.pullTarget = null; }
     else if (!data.changes.length) throw new Error("authored feed did not advance");

@@ -4,9 +4,9 @@
  * return separate literal evidence without rewriting canonical resource content.
  * Adjacency uses the exact (position,link_id) tuple, including prefix/equal keys. */
 import { excerptTextParts, excerptView, scopeExcerpt, type ExcerptScope, type ExcerptNode } from "./excerpt.ts";
-import type { AuthoredQuery, Change, OutlineRange, PassageState, QueryResult, QueryRow, ResourceProjection, SelectionCapture, ResourceState, PassageCapture } from "./types.ts";
+import type { AuthoredQuery, Change, Corpus, MergeResult, OutlineRange, PassageState, QueryResult, QueryRow, ResourceProjection, SelectionCapture, ResourceState, PassageCapture } from "./types.ts";
 import { normalizeQuote } from "./identity.ts";
-import { counter } from "./merge.ts";
+import { counter, isVisible } from "./merge.ts";
 import { validateLocalDate } from "./work.ts";
 import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, SEARCH_FAMILIES, type ScopeInterval, type ScopeReading } from "./scope.ts";
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
@@ -383,9 +383,26 @@ export function changedResourceRefs(changes: readonly Change[]): string[] {
   return [...refs];
 }
 
-export function invalidatesQuery(query: AuthoredQuery, corpusChanged: boolean, dailyIndexChanged: boolean, resourceRefs: readonly string[] | null): boolean {
-  if (query.kind === "daily_index") return dailyIndexChanged;
-  return corpusChanged && (query.kind !== "resource" || resourceRefs === null || resourceRefs.includes(query.ref));
+/** A title can change without affecting outline membership or child proofs only
+ * when the local store already had the page and it stays visible in this commit. */
+export function titleOnlyChanges(changes: readonly Change[], before: Corpus, after: MergeResult): boolean {
+  if (!changes.length || changes.some(change => !change.resources.length || change.links.length || change.source_stubs.length || change.passages.length)) return false;
+  const prior = new Map(before.resources.map(resource => [resource.ref, resource]));
+  const next = new Map(after.projections.map(resource => [resource.ref, resource]));
+  return changes.every(change => change.resources.every(patch => {
+    const resource = prior.get(patch.ref);
+    return patch.kind === "page" && patch.title_update !== null && resource?.kind === "page" &&
+      isVisible(resource.touch_vv, resource.delete_vv) && next.get(patch.ref)?.visible === true;
+  }));
+}
+
+export function invalidatesQuery(query: AuthoredQuery, corpusChanged: boolean, dailyIndexChanged: boolean, resourceRefs: readonly string[] | null, onlyTitles: boolean, observed: QueryResult | null): boolean {
+  if (query.kind === "daily_index") return dailyIndexChanged && !onlyTitles;
+  if (!corpusChanged || resourceRefs === null) return corpusChanged;
+  if (query.kind === "resource") return resourceRefs.includes(query.ref);
+  if (query.kind === "outline_windows" && onlyTitles && observed?.outline_windows)
+    return resourceRefs.includes(query.ref) || observed.outline_windows.some(slice => slice.rows.some(row => resourceRefs.includes(row.resource.ref)));
+  return true;
 }
 
 /** Every compiled slice is executed in one host store turn, under one revision. */

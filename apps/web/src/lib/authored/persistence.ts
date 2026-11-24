@@ -14,7 +14,7 @@ import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
 import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_TO_6_SQL } from "@nexus/authored/schema";
-import { bindingQueries, compileQuery, compileOutlineWindows, excerptQuery, searchQuery, sourceAliasQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
+import { bindingQueries, compileQuery, compileOutlineWindows, excerptQuery, searchQuery, sourceAliasQuery, titleOnlyChanges, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
 import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange, type LinkState, type OutlineWindowProof, type OutlineWindowSlice, type ResourceProjection } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
 import { SCOPE_SQL, type ScopeInputsPage, type ScopeProgress, type ScopeTextPage, type ScopeNormalizationInterval, type ScopeRawChunk, type ScopeNormalizationObservation, type NormalizedScopeChunk } from "@nexus/authored/scope";
@@ -169,38 +169,43 @@ export class Persistence {
       await this.db.run(SEARCH_INDEX_SQL, [ref]);
     }
   }
-  async commit(frame: CommitFrame): Promise<CommitResult> {
+  async commit(frame: CommitFrame): Promise<CommitResult & { only_titles: boolean }> {
     const bytes = JSON.stringify(frame.change);
     if (new TextEncoder().encode(bytes).byteLength > MAX_COMMAND_BYTES) throw new Error("authored command exceeds 2 mib");
     return this.db.transaction(async () => {
       const current = await this.replica();
       if (frame.replica_id !== current.replica_id) throw new Error("wrong authored replica");
-      if (BigInt(frame.change.command_seq) <= BigInt(current.command_seq)) return { kind: "committed", command_seq: frame.change.command_seq, store_revision: current.store_revision };
+      if (BigInt(frame.change.command_seq) <= BigInt(current.command_seq)) return { kind: "committed", command_seq: frame.change.command_seq, store_revision: current.store_revision, only_titles: false };
       if (BigInt(frame.change.command_seq) !== BigInt(current.command_seq) + BigInt(1)) throw new Error("authored command sequence gap");
-      if (frame.expected_store_revision !== current.store_revision) return { kind: "stale", store_revision: current.store_revision, states: await this.changeStates(frame.change) };
+      if (frame.expected_store_revision !== current.store_revision) return { kind: "stale", store_revision: current.store_revision, states: await this.changeStates(frame.change), only_titles: false };
       const states = await this.changeStates(frame.change);
       await validateBindings(current.account_id, states, [frame.change]);
-      await this.write(mergeChanges(states, [frame.change]));
+      const merged = mergeChanges(states, [frame.change]);
+      await this.write(merged);
       await this.db.run("INSERT INTO pending_changes VALUES(?,?,?)", [BigInt(frame.change.command_seq), bytes, new TextEncoder().encode(bytes).byteLength]);
       const revision = (BigInt(current.store_revision) + BigInt(1)).toString();
       await this.db.run("UPDATE replica_state SET command_seq=?,store_revision=?,lamport=MAX(lamport,?) WHERE singleton=1", [BigInt(frame.change.command_seq), BigInt(revision), BigInt(frame.change.lamport)]);
-      return { kind: "committed", command_seq: frame.change.command_seq, store_revision: revision };
+      return { kind: "committed", command_seq: frame.change.command_seq, store_revision: revision, only_titles: titleOnlyChanges([frame.change], states, merged) };
     });
   }
-  async applyRemote(entries: FeedChange[], nextCursor: string): Promise<ReplicaState> {
+  async applyRemote(entries: FeedChange[], nextCursor: string): Promise<{ replica: ReplicaState; only_titles: boolean }> {
     return this.db.transaction(async () => {
       let current = await this.replica();
+      const previousCursor = current.server_cursor;
+      let onlyTitles = true;
       for (const entry of entries) {
         if (BigInt(entry.server_seq) <= BigInt(current.server_cursor)) continue;
         if (BigInt(entry.server_seq) !== BigInt(current.server_cursor) + BigInt(1)) throw new Error("authored feed sequence gap");
         const states = await this.changeStates(entry.change);
         await validateBindings(current.account_id, states, [entry.change]);
-        await this.write(mergeChanges(states, [entry.change]));
+        const merged = mergeChanges(states, [entry.change]);
+        onlyTitles &&= titleOnlyChanges([entry.change], states, merged);
+        await this.write(merged);
         await this.db.run("UPDATE replica_state SET server_cursor=?,store_revision=store_revision+1,lamport=MAX(lamport,?) WHERE singleton=1", [BigInt(entry.server_seq), BigInt(entry.change.lamport)]);
         current = await this.replica();
       }
       if (current.server_cursor !== nextCursor) throw new Error("authored feed cursor disagrees with applied commands");
-      return current;
+      return { replica: current, only_titles: current.server_cursor !== previousCursor && onlyTitles };
     });
   }
   async resetProvisioning() {

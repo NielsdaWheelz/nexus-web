@@ -31,9 +31,10 @@ function serialize<T>(operation: () => Promise<T>): Promise<T> {
   queue = next.catch(() => undefined);
   return next;
 }
-function changed(corpusChanged = false, dailyIndexChanged = false, resourceRefs: readonly string[] | null = null) {
+function changed(corpusChanged = false, dailyIndexChanged = false, resourceRefs: readonly string[] | null = null, onlyTitles = false) {
   for (const port of ports) port.postMessage({ kind: "changed", corpus_changed: corpusChanged, daily_index_changed: dailyIndexChanged,
-    resource_refs: resourceRefs, status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.detail ?? null, failure: sync?.facts.failure ?? null });
+    resource_refs: resourceRefs, only_titles: onlyTitles,
+    status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.detail ?? null, failure: sync?.facts.failure ?? null });
 }
 /** `readResponse` takes any abort for its caller's, and here the caller may not have aborted:
  * Firefox rejects `text()` with AbortError when `response`'s deadline passes mid-body. That is
@@ -133,8 +134,8 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
       sync!.facts.saving = true; changed();
       try {
         const frame = input.frame as unknown as CommitFrame;
-        const result = await persistence.commit(frame);
-        if (result.kind === "committed") changed(true, changesDailyIndex(frame.change), changedResourceRefs([frame.change]));
+        const { only_titles: onlyTitles, ...result } = await persistence.commit(frame);
+        if (result.kind === "committed") changed(true, changesDailyIndex(frame.change), changedResourceRefs([frame.change]), onlyTitles);
         sync!.facts.pending = (await persistence.pending()).length > 0;
         return result;
       } finally { sync!.facts.saving = false; changed(); }

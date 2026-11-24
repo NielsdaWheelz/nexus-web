@@ -1019,7 +1019,11 @@ export class OutlineController {
       const missingRefs = new Set([...this.refs(next)].filter(ref => !this.documents.has(ref)));
       const store = await this.runtime.store;
       const snapshot = await store.readSnapshot({refs: [...missingRefs], link_ids: [], anchor_ids: [], source_refs: []});
-      if (!valid() || snapshot.replica.store_revision !== window.data.store_revision) return;
+      if (!valid()) return;
+      if (snapshot.replica.store_revision !== window.data.store_revision) {
+        this.reads.get(parent_id)?.value.retry();
+        return;
+      }
       const keep = this.refs(next), retired = [...this.documents].filter(([ref]) => !keep.has(ref));
       const activeRow = this.selectionRow ? this.rows.get(this.selectionRow) : null;
       if (this.view?.hasFocus() && activeRow?.ref && retired.some(([ref]) => ref === activeRow.ref)) return;
