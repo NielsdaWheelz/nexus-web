@@ -283,6 +283,8 @@ one local sql transaction commits touched merge bytes, projections, indexes,
 source sequence, store revision and immutable pending change. only durable commit
 acknowledges saved writing. uncertain replies reconcile the same source sequence;
 stale revisions remerge the frozen intent without allocating another touch.
+while a command is unresolved, a write-prefix read reports its first failure.
+after recovery commits it, a new prefix read includes the recovered write.
 local acceptance, server acceptance and availability to server tools are distinct
 facts; a local save alone promises neither of the latter two.
 
