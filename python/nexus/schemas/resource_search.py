@@ -1,4 +1,4 @@
-"""Wire for link target search. Candidate refs are reloaded at link confirmation."""
+"""Wire for link target search. Passage captures bind quote and location to the selected reading."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from nexus.schemas.resource_items import ResourceItemOut
 
 class ResourceTargetSearchRequest(BaseModel):
     q: str
+    reading_media_id: UUID | None = None
     source_ref: str | None = None
     exclude_refs: list[str] = Field(default_factory=list, max_length=200)
     cursor: str | None = None

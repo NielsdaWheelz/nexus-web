@@ -129,8 +129,11 @@ attachments belong to an immutable user message; citations belong to its answer.
 both write source-owned citation edges after current visibility is checked.
 opening resolves current source availability and place, using the saved quote for
 a unique match when text coordinates fail. quotes remain on the message or cited
-retrieval, never the edge. turn deletion removes both messages and their edges. ordinary authored
-message links use the shared graph and open `/librarian?message=<id>`.
+retrieval, never the edge. a citation backlink names its source message and
+edge. the librarian opens the figure only when that visible edge belongs to one
+of the message's published retrievals. ordinary authored message links open
+`/librarian?message=<id>`. deleting the turn retires its citations. a user's
+authored links survive and display the missing message.
 
 message attachment membership does not gate model reads. the librarian uses current
 account authorization and its run's message-sequence horizon. source context is

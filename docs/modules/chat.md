@@ -14,7 +14,7 @@ opening an earlier message changes the visible window, never the append destinat
 | `schemas/chat.py`, `api/routes/chat.py` | typed turn, timeline and command boundaries |
 | `chat/admit.py`, `chat/deletion.py` | client run uuid, exact generation choice, account sequence and deletion fence |
 | `chat/timeline.py` | bounded pair windows, terminal-turn deletion, individual message read and run horizon |
-| `chat/context.py`, `chat/references.py` | execution-time brief, mandatory saved attachments and receipts, shared orientation and bounded settled history |
+| `chat/context.py`, `chat/references.py` | execution-time brief, mandatory saved attachments and receipts, bounded source context, shared orientation and settled history |
 | `services/live_references.py` | current structural coordinates, quote availability, private annotation authority |
 | `chat/retrievals.py`, `chat/citations.py` | bounded saved evidence, resource targets, message-owned citation ordinals |
 | `chat/events.py`, `chat/worker.py` | fifo head admission, durable frames, sole terminal fold and generation |
@@ -26,10 +26,12 @@ opening an earlier message changes the visible window, never the append destinat
 allocates consecutive message positions; `deletion_revision` prevents an uncertain
 send from recreating a deleted turn. it is not a selectable conversation.
 
-`messages` owns literal authored text and ordered saved references. a reference
-contains source identity, a nullable place and a nullable frozen quote. unsaved
-selections are proven against the reading before admission; whole resources and
-messages carry no quote. an existing highlight remains a live highlight reference.
+`messages` owns literal authored text and ordered question attachments. each
+attachment holds a saved reference and private capture scope. admission proves
+selections in the reader's exact reading and stores that reading and its available
+source identity. whole references have null scope. public projections, citations
+and memory exports consume only the saved reference. the reference holds identity,
+a nullable place and a nullable frozen quote. saved highlights remain live references.
 `chat_runs` owns the pair, frozen generation choice, queue status, cancellation
 and optional weak
 `retry_of_run_id`. context is assembled when execution starts. no frozen
@@ -109,14 +111,21 @@ source when its original place fails. ambiguity or absence preserves whole-sourc
 navigation and reports location unavailable; it writes nothing. pdf and time
 places retain their existing checks. captured pdf words come from the reader.
 
-current attached quotes enter model context as saved exact words while the source
-is readable, even when their place moved. earlier turns serialize references
-without quotes and budget that actual serialization. oversized mandatory context
-settles `context_too_large`; source access loss never grants model access to saved
-words. new whole-reference inputs require current resource and private-field authority;
-selection inputs additionally prove their captured words. both checks run before
-the account lock and serializable admission. saved quotes retain their original
-words across retries and availability changes.
+the first provider request carries the authorized subject and its exact words.
+bibliography, attributed annotations and source text follow from independent
+current proofs. text context stays inside one permitted reading unit, up to 512
+codepoints on each side. pdf text requires a proved page and a unique normalized
+match on it. if no exact match exists, a proved page can contribute up to 1,024
+codepoints of whole page text. otherwise the reference names the proved page or
+the captured page, as supported. retries preserve the stored scope and recheck
+execution authority. a readable highlight can outlive access to its source.
+
+a settled assistant attachment joins complete markers within its attached range
+to its own published retrievals. reader citations join native occurrences within
+the proved reading and span. each readable cited excerpt contributes up to 2,000
+codepoints. url-only evidence contributes the url. evidence travels one hop and
+keeps its original numbering local. the subject alone supplies saved citation
+identity and snippet. earlier turns serialize their references without quotes.
 
 source text in tool input is transient. persisted tool receipts retain identity,
 status/error, refs, created-effect refs and undo state. intentional authored outputs
@@ -162,8 +171,10 @@ an additional request nor a reason to revive cancelled work. source attribution,
 corrections, exact operational receipts and existing owner/processor grants still
 govern interpretation and action.
 
-budget exact current input, the manual reading brief, required authorized
-attachments and completed-action receipts before optional transcript prose.
+reserve exact current input, the manual reading brief, required authorized
+attachments and completed-action receipts first. optional source context takes
+remaining space in attachment and source order before transcript prose. clipped
+or omitted evidence is identified in the prompt.
 receipts cover the retry parent and the same latest hundred settled candidates
 considered for history, even when their prose cannot fit. the complete view and its
 shared guidance are also required when available. all use the admitted model token
@@ -300,9 +311,11 @@ margin, subsequent views retain the explicit margin/all choice. covering hosts
 show chronological message groups. user figures appear inline except beside an
 open column. citations anchor to their first rendered marker, attachments to their
 message content onset. occurrences use message+attachment index or
-message+retrieval uuid; repeated markers share one figure. ordinary links create
-none. `references · n` reveals the message group; `show message` returns to the
-canonical anchor. search withdraws this publication.
+message+retrieval uuid. repeated markers share one figure. `cited in` renders each
+distinct containing paragraph, heading, list-item paragraph or table cell in
+full, with the invoking use first. `show message` returns to that marker. a proved
+source backlink opens the same figure in document order. ordinary links create
+no figure. `references · n` reveals the message group. search withdraws this publication.
 
 `lib/margin` owns shared packing, measured baselines and held controls. chat owns
 membership and the source adapter; packing never changes transcript height or

@@ -163,6 +163,7 @@ class ReaderDirectFactOut(_ReaderMapOut):
     edge_id: UUID
     origin: EdgeOrigin
     ordinal: int | None
+    rationale: str | None
 
 
 class Position(_ReaderMapOut):

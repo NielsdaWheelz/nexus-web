@@ -3990,6 +3990,8 @@ export interface components {
         /** ChatCitationOut */
         ChatCitationOut: {
             annotation: components["schemas"]["HighlightAnnotationOut"] | null;
+            /** Cited Edge Id */
+            cited_edge_id: string | null;
             /**
              * Id
              * Format: uuid
@@ -10157,6 +10159,8 @@ export interface components {
              * @enum {string}
              */
             kind: "passage";
+            /** Link Revision */
+            link_revision: string | null;
             /** Reading Ref */
             reading_ref: string | null;
         };
@@ -11149,6 +11153,8 @@ export interface components {
              * @enum {string}
              */
             origin: "user" | "citation" | "note_body" | "discovery" | "document_embed" | "assistant";
+            /** Rationale */
+            rationale: string | null;
         };
         /** ReaderDocumentMapDiagnosticsOut */
         ReaderDocumentMapDiagnosticsOut: {
@@ -12536,6 +12542,8 @@ export interface components {
             exclude_refs?: string[];
             /** Q */
             q: string;
+            /** Reading Media Id */
+            reading_media_id?: string | null;
             /** Source Ref */
             source_ref?: string | null;
         };

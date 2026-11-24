@@ -1205,12 +1205,20 @@ def location_reads(
         if fragment_ids or timed_ids
         else []
     )
+    relocation_ids = [
+        owner.id
+        for owner, target in zip(owners, targets, strict=True)
+        if isinstance(target.locator, (PdfPageGeometryLocator, PdfPageLocator))
+        and (target.source_identity is None or target.source_identity != before.get(owner.id))
+    ]
     pdfs = (
         {
             row.id: row
             for row in db.execute(
-                text("SELECT id, page_count, plain_text FROM media WHERE id = ANY(:ids)"),
-                {"ids": pdf_ids},
+                text(
+                    "SELECT id, page_count, CASE WHEN id=ANY(:relocate) THEN plain_text END AS plain_text FROM media WHERE id = ANY(:ids)"
+                ),
+                {"ids": pdf_ids, "relocate": relocation_ids},
             )
         }
         if pdf_ids

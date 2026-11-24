@@ -14,9 +14,8 @@ import type { ReferenceInput } from "@/lib/resourceGraph/useReferenceInput";
 import { cx } from "@/lib/ui/cx";
 import collection from "@/components/ui/Collection.module.css";
 import styles from "./ReferencePicker.module.css";
-export default function ReferencePicker({ input, onReviewPosition, returnFocus }: { input: ReferenceInput; onReviewPosition(): void; returnFocus: () => HTMLElement | null }) {
+export default function ReferencePicker({ input, onReviewPosition, returnFocus }: { input: Pick<ReferenceInput, "search" | "selected" | "bindings"> & {state?: ReferenceInput["state"]}; onReviewPosition?(): void; returnFocus: () => HTMLElement | null }) {
   const { state, search, bindings } = input;
-  if (!state) return null;
   return <div className={cx(collection.surface, styles.picker)}>
     {search.minimum ? <Fact line={{ fact: "type 2 or more characters." }} speak />
       : search.items.length ? null
@@ -35,7 +34,7 @@ export default function ReferencePicker({ input, onReviewPosition, returnFocus }
     {search.error ? <Failed error={search.error} noun="library matches" retry={{ run: search.retry, busy: search.list.running !== null }} /> : null}
     <AuthoredReadFailure error={search.localError} pending={search.localPending} retry={search.retryLocal} noun="notes"/>
     {!search.localComplete ? <Button aria-busy={search.localPending} onClick={search.moreLocal}>show more notes</Button> : null}
-    {state.message ? <Fact line={{ fact: state.message, reason: "your search is kept." }} speak
-      verbs={state.context.replacement === null ? [{ label: "use new destination", commandKey: "Reference.reviewDestination", run: onReviewPosition }] : undefined} /> : null}
+    {state?.message ? <Fact line={{ fact: state.message, reason: "your search is kept." }} speak
+      verbs={state.context.replacement === null && onReviewPosition ? [{ label: "use new destination", commandKey: "Reference.reviewDestination", run: onReviewPosition }] : undefined} /> : null}
   </div>;
 }

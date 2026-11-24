@@ -92,8 +92,16 @@ HOST_INPUTS = (
     ("docker-compose.inspect.yml", "/etc/nexus/docker-compose.inspect.yml", "0444"),
     ("runtime-role.sql", RUNTIME_ROLE_FILE, "0444"),
     (RESOURCE_SLICE, f"/etc/systemd/system/{RESOURCE_SLICE}", "0644"),
-    ("codex-state-boot-guard.sh", "/usr/local/sbin/nexus-codex-state-boot-guard", "0755"),
-    ("nexus-codex-state-boot-guard.service", f"/etc/systemd/system/{BOOT_GUARD_SERVICE}", "0644"),
+    (
+        "codex-state-boot-guard.sh",
+        "/usr/local/sbin/nexus-codex-state-boot-guard",
+        "0755",
+    ),
+    (
+        "nexus-codex-state-boot-guard.service",
+        f"/etc/systemd/system/{BOOT_GUARD_SERVICE}",
+        "0644",
+    ),
     (
         "docker-codex-state-guard.conf",
         "/etc/systemd/system/docker.service.d/20-nexus-codex-state-guard.conf",
@@ -187,14 +195,18 @@ def note(message: str) -> None:
     print(f"== {message}", flush=True)
 
 
-def run(argv: tuple[str, ...], *, stdin: bytes | None = None, timeout: int = 120) -> str:
+def run(
+    argv: tuple[str, ...], *, stdin: bytes | None = None, timeout: int = 120
+) -> str:
     """Run one local command, naming it and its output when it fails.
 
     A failing command must say which command failed and why without anyone
     going digging in Docker events afterwards, so both streams are reported.
     """
 
-    completed = subprocess.run(argv, input=stdin, capture_output=True, timeout=timeout, check=False)
+    completed = subprocess.run(
+        argv, input=stdin, capture_output=True, timeout=timeout, check=False
+    )
     if completed.returncode != 0:
         label = argv[-1] if argv[0] == "ssh" else shlex.join(argv[:3])
         streams = (("stderr", completed.stderr), ("stdout", completed.stdout))
@@ -248,8 +260,12 @@ def container(service: str) -> str:
     return identifier
 
 
-def inside(service: str, command: str, *, stdin: bytes | None = None, timeout: int = 120) -> str:
-    return host(f"{DOCKER} exec -i {container(service)} {command}", stdin=stdin, timeout=timeout)
+def inside(
+    service: str, command: str, *, stdin: bytes | None = None, timeout: int = 120
+) -> str:
+    return host(
+        f"{DOCKER} exec -i {container(service)} {command}", stdin=stdin, timeout=timeout
+    )
 
 
 def inspect(identifier: str) -> dict[str, Any]:
@@ -266,7 +282,9 @@ def health_status(service: str) -> str:
 
 
 def psql(statement: str) -> str:
-    inner = f'psql -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c {shlex.quote(statement)}'
+    inner = (
+        f'psql -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c {shlex.quote(statement)}'
+    )
     return inside("postgres", f"sh -c {shlex.quote(inner)}").strip()
 
 
@@ -297,11 +315,17 @@ def resolve_candidate(source_sha: str, workspace: Path) -> CandidateManifest:
         if artifact["name"] == name and artifact["expired"] is False
     ]
     if len(artifacts) != 1:
-        raise Failure(f"expected exactly one unexpired {name} artifact, found {len(artifacts)}")
+        raise Failure(
+            f"expected exactly one unexpired {name} artifact, found {len(artifacts)}"
+        )
     run_id = str(artifacts[0]["workflow_run"]["id"])
-    detail = json.loads(run(("gh", "api", f"repos/{REPOSITORY}/actions/runs/{run_id}"), timeout=60))
+    detail = json.loads(
+        run(("gh", "api", f"repos/{REPOSITORY}/actions/runs/{run_id}"), timeout=60)
+    )
     branch = detail["head_branch"]
-    if branch != "main" and not (isinstance(branch, str) and branch.startswith("release/")):
+    if branch != "main" and not (
+        isinstance(branch, str) and branch.startswith("release/")
+    ):
         raise Failure(f"candidate workflow branch must be main or release/: {branch!r}")
     fields = ("path", "event", "head_sha", "conclusion", "run_attempt")
     provenance = {field: detail[field] for field in fields}
@@ -317,7 +341,17 @@ def resolve_candidate(source_sha: str, workspace: Path) -> CandidateManifest:
             "candidate images are not from attempt 1 of a push for this exact SHA: "
             f"{provenance} differs from {expected}"
         )
-    download = ("gh", "run", "download", run_id, "--repo", REPOSITORY, "--name", name, "--dir")
+    download = (
+        "gh",
+        "run",
+        "download",
+        run_id,
+        "--repo",
+        REPOSITORY,
+        "--name",
+        name,
+        "--dir",
+    )
     run((*download, str(workspace)), timeout=300)
     candidate = load_candidate_manifest(workspace / "candidate-manifest.json")
     if candidate.source_sha != source_sha or candidate.repository != REPOSITORY:
@@ -331,7 +365,10 @@ def pull_image(candidate: CandidateManifest, image: str) -> None:
 
     host(f"{DOCKER} pull {image}", timeout=900)
     inspected = json.loads(host(f"{DOCKER} image inspect {image}"))[0]
-    if inspected["Config"]["Labels"]["org.opencontainers.image.revision"] != candidate.source_sha:
+    if (
+        inspected["Config"]["Labels"]["org.opencontainers.image.revision"]
+        != candidate.source_sha
+    ):
         raise Failure(f"{image} OCI revision label differs from the candidate")
     identity = json.loads(
         host(
@@ -390,7 +427,9 @@ for key in runtime:
     host(f"sudo python3 -c {shlex.quote(script)}")
 
 
-def preflight(source_sha: str, workspace: Path, *, deploying: bool) -> CandidateManifest:
+def preflight(
+    source_sha: str, workspace: Path, *, deploying: bool
+) -> CandidateManifest:
     note("preflight")
     host("true", timeout=30)
     if deploying:
@@ -403,7 +442,9 @@ def preflight(source_sha: str, workspace: Path, *, deploying: bool) -> Candidate
         run((*git, "merge-base", "--is-ancestor", source_sha, "origin/main"))
     candidate = resolve_candidate(source_sha, workspace)
 
-    major = int(host(f"{DOCKER} version --format '{{{{.Server.Version}}}}'").split(".")[0])
+    major = int(
+        host(f"{DOCKER} version --format '{{{{.Server.Version}}}}'").split(".")[0]
+    )
     if major < MIN_DOCKER_MAJOR:
         raise Failure(f"Docker Engine {major} cannot isolate the Codex bridge gateway")
     memory = meminfo()
@@ -419,26 +460,36 @@ def preflight(source_sha: str, workspace: Path, *, deploying: bool) -> Candidate
     assert_config()
     connector = config_value("CLOUDFLARED_IMAGE")
     if re.fullmatch(r"cloudflare/cloudflared@sha256:[0-9a-f]{64}", connector) is None:
-        raise Failure("CLOUDFLARED_IMAGE must pin the official connector by sha256 digest")
+        raise Failure(
+            "CLOUDFLARED_IMAGE must pin the official connector by sha256 digest"
+        )
     token = config_value("NEXUS_CLOUDFLARED_TOKEN_FILE")
     if re.fullmatch(r"/etc/nexus/tunnel-config/[0-9a-f]{64}\.token", token) is None:
-        raise Failure("the tunnel token path must name its private content-addressed file")
+        raise Failure(
+            "the tunnel token path must name its private content-addressed file"
+        )
     token_mode = host(
         f"sudo test -f {token} && sudo test -s {token} && sudo stat -Lc '%u:%g:%a' {token}"
     ).strip()
     if token_mode != "0:65532:440":
-        raise Failure("the tunnel token must be a root-owned regular file, group 65532, mode 0440")
+        raise Failure(
+            "the tunnel token must be a root-owned regular file, group 65532, mode 0440"
+        )
     # Docker cannot create the Codex host without its credential bind source;
     # after a reboot the operator unlocks that LUKS volume before releasing.
     host(f"sudo findmnt --noheadings --mountpoint {CODEX_STATE}")
-    note(f"{memory['MemAvailable'] >> 20} MiB memory available, {free >> 30} GiB disk free")
+    note(
+        f"{memory['MemAvailable'] >> 20} MiB memory available, {free >> 30} GiB disk free"
+    )
     return candidate
 
 
 def assert_tunnel_token_readable(candidate: CandidateManifest) -> None:
     note("proving the connector uid can read its captured private token")
     token = config_value("NEXUS_CLOUDFLARED_TOKEN_FILE")
-    mount = shlex.quote(f"type=bind,src={token},dst=/run/secrets/cloudflared-token,readonly")
+    mount = shlex.quote(
+        f"type=bind,src={token},dst=/run/secrets/cloudflared-token,readonly"
+    )
     probe = shlex.quote(
         "from pathlib import Path; assert Path('/run/secrets/cloudflared-token').read_bytes().strip()"
     )
@@ -456,7 +507,9 @@ def install_host_inputs() -> None:
     staged = host("mktemp -d /tmp/nexus-release.XXXXXXXX").strip()
     if re.fullmatch(r"/tmp/nexus-release\.[A-Za-z0-9]{8}", staged) is None:
         raise Failure("the host returned an invalid staging directory")
-    sources = tuple(str(REPO_ROOT / "deploy/hetzner" / name) for name, _, _ in HOST_INPUTS)
+    sources = tuple(
+        str(REPO_ROOT / "deploy/hetzner" / name) for name, _, _ in HOST_INPUTS
+    )
     run(("scp", *SSH_OPTIONS, *sources, f"{SSH_TARGET}:{staged}/"), timeout=120)
     for name, destination, mode in HOST_INPUTS:
         host(f"sudo install -D -o root -g root -m {mode} {staged}/{name} {destination}")
@@ -508,7 +561,9 @@ def backup(candidate: CandidateManifest, starting_revision: str) -> BackupEviden
     if receipt:
         recorded_revision = json.loads(receipt)["evidence"]["starting_revision"]
         if REVISION.fullmatch(recorded_revision) is None:
-            raise Failure(f"the backup receipt records a malformed revision: {receipt[:200]}")
+            raise Failure(
+                f"the backup receipt records a malformed revision: {receipt[:200]}"
+            )
         starting_revision = recorded_revision
         note(f"replaying the backup receipt taken at revision {starting_revision}")
     # `create` streams pg_dump straight into a multipart upload, reads the
@@ -536,8 +591,12 @@ def backup(candidate: CandidateManifest, starting_revision: str) -> BackupEviden
         or SHA256.fullmatch(evidence["sha256"]) is None
         or evidence["byte_count"] < 1
     ):
-        raise Failure(f"the verified backup evidence differs from this release: {evidence}")
-    note(f"backup {evidence['bucket']}/{evidence['key']}, {evidence['byte_count']} bytes verified")
+        raise Failure(
+            f"the verified backup evidence differs from this release: {evidence}"
+        )
+    note(
+        f"backup {evidence['bucket']}/{evidence['key']}, {evidence['byte_count']} bytes verified"
+    )
     return BackupEvidence.model_validate(evidence)
 
 
@@ -570,7 +629,10 @@ def assert_backup_fresh(candidate: CandidateManifest) -> None:
             environment=f"NEXUS_BACKUP_CONFIG_FILE={BACKUP_CONFIG_FILE}",
         )
     )
-    if not isinstance(newest, dict) or newest.keys() != {"newest_archive", "last_modified"}:
+    if not isinstance(newest, dict) or newest.keys() != {
+        "newest_archive",
+        "last_modified",
+    }:
         raise Failure(f"the backup check reported {newest}, not the newest archive")
     timer = host(f"systemctl is-enabled {NIGHTLY_TIMER} || true").strip()
     if newest["newest_archive"] is None:
@@ -585,7 +647,9 @@ def assert_backup_fresh(candidate: CandidateManifest) -> None:
         )
         fresh = hours <= BACKUP_MAX_AGE_HOURS
     if timer == "enabled" and not fresh:
-        raise Failure(f"no database archive is younger than {BACKUP_MAX_AGE_HOURS} hours")
+        raise Failure(
+            f"no database archive is younger than {BACKUP_MAX_AGE_HOURS} hours"
+        )
 
 
 def migrate(candidate: CandidateManifest) -> None:
@@ -599,21 +663,9 @@ def migrate(candidate: CandidateManifest) -> None:
     print(output, end="", flush=True)
     reached = database_revision(psql)
     if reached != candidate.expected_database_revision:
-        raise Failure(f"the database is at {reached}, not {candidate.expected_database_revision}")
-    # Remove this one-time conversion with its command after production verification.
-    note("freezing saved reference quotes with writers stopped")
-    for attempt in range(2):
-        output = compose(
-            candidate,
-            "run --rm --no-deps --no-TTY"
-            " -e NEXUS_CODEX_CONTROL_ENDPOINT=unix:///tmp/codex-daemon-10001/control.sock"
-            " migration python -m nexus.services.chat.convert_reference_quotes",
-            profile="release",
-            timeout=1800,
+        raise Failure(
+            f"the database is at {reached}, not {candidate.expected_database_revision}"
         )
-        print(output, end="", flush=True)
-        if attempt == 1 and any(json.loads(output).values()):
-            raise Failure("saved reference quote conversion changed rows on its second pass")
     database_access(apply=True)
 
 
@@ -661,10 +713,13 @@ print(hashlib.sha256(os.environ['DATABASE_URL'].encode()).hexdigest())
     if running:
         for service in WRITERS:
             environment = dict(
-                entry.split("=", 1) for entry in inspect(container(service))["Config"]["Env"]
+                entry.split("=", 1)
+                for entry in inspect(container(service))["Config"]["Env"]
             )
             if any(
-                key.startswith(("POSTGRES_", "R2_BACKUP_", "CLOUDFLARE", "TAILSCALE_", "TS_"))
+                key.startswith(
+                    ("POSTGRES_", "R2_BACKUP_", "CLOUDFLARE", "TAILSCALE_", "TS_")
+                )
                 or key
                 in {
                     "MIGRATION_DATABASE_URL",
@@ -687,15 +742,23 @@ print(hashlib.sha256(os.environ['DATABASE_URL'].encode()).hexdigest())
                 "nexus",
                 "nexus_runtime",
             ):
-                raise Failure(f"{service} must use the compose-local restricted database login")
+                raise Failure(
+                    f"{service} must use the compose-local restricted database login"
+                )
             running_fingerprints.add(
                 hashlib.sha256(environment["DATABASE_URL"].encode()).hexdigest()
             )
     # A separate capped process avoids spending the serving workers' tight memory headroom.
-    authenticated = compose(candidate, f"run --rm --no-deps --no-TTY api {command}").strip()
+    authenticated = compose(
+        candidate, f"run --rm --no-deps --no-TTY api {command}"
+    ).strip()
     if running and running_fingerprints != {authenticated}:
-        raise Failure("running workers do not share the authenticated published database login")
-    note("ordinary runtime uses its restricted database login without administrative inputs")
+        raise Failure(
+            "running workers do not share the authenticated published database login"
+        )
+    note(
+        "ordinary runtime uses its restricted database login without administrative inputs"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -717,7 +780,10 @@ def assert_resource_limits(candidate: CandidateManifest) -> None:
 
     note("asserting owned memory caps and inherited no-swap")
     unit_path = f"/etc/systemd/system/{RESOURCE_SLICE}"
-    for name, destination in (("docker-compose.yml", COMPOSE_FILE), (RESOURCE_SLICE, unit_path)):
+    for name, destination in (
+        ("docker-compose.yml", COMPOSE_FILE),
+        (RESOURCE_SLICE, unit_path),
+    ):
         expected = run(
             (
                 "git",
@@ -728,7 +794,9 @@ def assert_resource_limits(candidate: CandidateManifest) -> None:
             )
         )
         if host(f"sudo cat {destination}") != expected:
-            raise Failure(f"installed {name} differs from candidate {candidate.source_sha}")
+            raise Failure(
+                f"installed {name} differs from candidate {candidate.source_sha}"
+            )
     # Filter on the host: Compose's expanded environment contains secrets.
     projection = (
         "import json,sys; print(json.dumps({name: {key: service.get(key) "
@@ -749,7 +817,9 @@ def assert_resource_limits(candidate: CandidateManifest) -> None:
             or int(declared["mem_limit"]) != 512 * 1024**2
             or int(declared["memswap_limit"]) != 512 * 1024**2
         ):
-            raise Failure(f"{service} must retain its owned slice and 512 MiB/no-swap limit")
+            raise Failure(
+                f"{service} must retain its owned slice and 512 MiB/no-swap limit"
+            )
     parent = f"/system.slice/{RESOURCE_SLICE}"
     properties = dict(
         line.split("=", 1)
@@ -770,7 +840,9 @@ def assert_resource_limits(candidate: CandidateManifest) -> None:
         f" /sys/fs/cgroup{parent}/memory.swap.current"
     ).splitlines()
     if parent_swap != ["0", "0"]:
-        raise Failure(f"{RESOURCE_SLICE} swap max/current is {parent_swap}, expected 0/0")
+        raise Failure(
+            f"{RESOURCE_SLICE} swap max/current is {parent_swap}, expected 0/0"
+        )
     for service in SERVICES:
         declared = declarations[service]
         inspected = inspect(container(service))
@@ -787,7 +859,9 @@ def assert_resource_limits(candidate: CandidateManifest) -> None:
             or not state["Running"]
             or state["Pid"] <= 0
         ):
-            raise Failure(f"{service} differs from its declared parent or memory/swap cap")
+            raise Failure(
+                f"{service} differs from its declared parent or memory/swap cap"
+            )
         membership = host(f"sudo cat /proc/{state['Pid']}/cgroup").splitlines()
         path = f"{parent}/docker-{inspected['Id']}.scope"
         if membership != [f"0::{path}"]:
@@ -798,7 +872,9 @@ def assert_resource_limits(candidate: CandidateManifest) -> None:
         ).splitlines()
         if len(limits) != 3 or limits[0] != str(cap) or limits[2] != "0":
             raise Failure(f"{service} memory max/swap max/current differs: {limits}")
-        note(f"{service}: memory max {cap}; leaf swap max {limits[1]}, effective max/current 0/0")
+        note(
+            f"{service}: memory max {cap}; leaf swap max {limits[1]}, effective max/current 0/0"
+        )
 
 
 def install_caddy() -> None:
@@ -824,7 +900,9 @@ def install_caddy() -> None:
 def reload_caddy() -> None:
     note("activating the candidate Caddy configuration")
     desired = (REPO_ROOT / "deploy/hetzner/Caddyfile").read_bytes()
-    adapted = inside("caddy", "caddy adapt --config /dev/stdin --adapter caddyfile", stdin=desired)
+    adapted = inside(
+        "caddy", "caddy adapt --config /dev/stdin --adapter caddyfile", stdin=desired
+    )
     inside("caddy", "caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile")
     loaded = inside("caddy", "wget -q -O - http://127.0.0.1:2019/config/")
     if json.loads(loaded) != json.loads(adapted):
@@ -832,7 +910,12 @@ def reload_caddy() -> None:
 
 
 def config_value(key: str) -> str:
-    return host(f"sudo grep -m1 '^{key}=' {CONFIG_FILE}").strip().partition("=")[2].strip("\"'")
+    return (
+        host(f"sudo grep -m1 '^{key}=' {CONFIG_FILE}")
+        .strip()
+        .partition("=")[2]
+        .strip("\"'")
+    )
 
 
 def health(candidate: CandidateManifest) -> None:
@@ -882,23 +965,36 @@ def health(candidate: CandidateManifest) -> None:
 def assert_isolation() -> None:
     note("asserting Codex agent host isolation")
     if host(f"systemctl is-enabled {BOOT_GUARD_SERVICE}").strip() != "enabled":
-        raise Failure("the Codex state boot guard is not enabled; Docker may start unguarded")
-    findmnt = f"sudo findmnt --noheadings --output SOURCE,OPTIONS --mountpoint {CODEX_STATE}"
+        raise Failure(
+            "the Codex state boot guard is not enabled; Docker may start unguarded"
+        )
+    findmnt = (
+        f"sudo findmnt --noheadings --output SOURCE,OPTIONS --mountpoint {CODEX_STATE}"
+    )
     mount = host(findmnt).split()
     options = set(mount[1].split(",")) if len(mount) == 2 else set()
-    if mount[:1] != [CODEX_STATE_DEVICE] or not {"rw", "nosuid", "nodev", "noexec"} <= options:
+    if (
+        mount[:1] != [CODEX_STATE_DEVICE]
+        or not {"rw", "nosuid", "nodev", "noexec"} <= options
+    ):
         raise Failure(f"the Codex credential state is not the encrypted mount: {mount}")
 
     network = json.loads(host(f"{DOCKER} network inspect {CODEX_PRIVATE_NETWORK}"))[0]
     gatewayed = any(entry.get("Gateway") for entry in network["IPAM"]["Config"])
-    if network["Internal"] is not True or network["EnableIPv6"] is not False or gatewayed:
+    if (
+        network["Internal"] is not True
+        or network["EnableIPv6"] is not False
+        or gatewayed
+    ):
         raise Failure("the Codex private network is not an isolated internal bridge")
     members = {value["Name"] for value in network["Containers"].values()}
     if members != {
         f"nexus-{CODEX_AGENT_HOST}-1",
         "nexus-codex-egress-policy-1",
     }:
-        raise Failure(f"the Codex private network has unexpected members: {sorted(members)}")
+        raise Failure(
+            f"the Codex private network has unexpected members: {sorted(members)}"
+        )
     inspected = inspect(container(CODEX_AGENT_HOST))
     configuration = inspected["HostConfig"]
     if (
@@ -910,8 +1006,12 @@ def assert_isolation() -> None:
         or configuration["PortBindings"]
         or list(inspected["NetworkSettings"]["Networks"]) != [CODEX_PRIVATE_NETWORK]
     ):
-        raise Failure("the Codex agent host runtime differs from its declared confinement")
-    host_paths = [mount["Source"] for mount in inspected["Mounts"] if mount["Type"] == "bind"]
+        raise Failure(
+            "the Codex agent host runtime differs from its declared confinement"
+        )
+    host_paths = [
+        mount["Source"] for mount in inspected["Mounts"] if mount["Type"] == "bind"
+    ]
     if host_paths != [CODEX_ACCOUNT_ROOT]:
         raise Failure(f"the Codex agent host has unexpected host mounts: {host_paths}")
     note("agent host confined: internal network, its egress proxy the only peer")
@@ -941,7 +1041,9 @@ def file_hashes(paths: tuple[str, ...]) -> dict[str, str | None]:
         "print(json.dumps({p: hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() "
         "if pathlib.Path(p).is_file() else None for p in sys.argv[1:]}))"
     )
-    return json.loads(host(f"sudo python3 -c {shlex.quote(script)} {shlex.join(paths)}"))
+    return json.loads(
+        host(f"sudo python3 -c {shlex.quote(script)} {shlex.join(paths)}")
+    )
 
 
 def save_original(cohort: OriginalCohort) -> None:
@@ -982,7 +1084,9 @@ def assert_original_unchanged(cohort: OriginalCohort) -> None:
             for service, identifier in cohort.containers.items()
         )
     ):
-        raise Failure("original containers, database or host inputs changed; restoration refused")
+        raise Failure(
+            "original containers, database or host inputs changed; restoration refused"
+        )
 
 
 def original_cohort() -> OriginalCohort | None:
@@ -1013,14 +1117,19 @@ def assert_no_writers(writers: dict[str, str], *, clean_exit: bool) -> None:
             state["Status"] != "exited"
             or state["Running"]
             or state["Pid"] != 0
-            or (clean_exit and (state["OOMKilled"] or state["Error"] or state["ExitCode"] != 0))
+            or (
+                clean_exit
+                and (state["OOMKilled"] or state["Error"] or state["ExitCode"] != 0)
+            )
         ):
             raise Failure(
                 f"{service} did not stop: status={state['Status']} exit_code={state['ExitCode']}"
                 f" running={state['Running']} pid={state['Pid']} oom_killed={state['OOMKilled']}"
                 f" runtime_error={bool(state['Error'])}"
             )
-    running = host(f"{DOCKER} ps --quiet --filter label=com.docker.compose.project=nexus").split()
+    running = host(
+        f"{DOCKER} ps --quiet --filter label=com.docker.compose.project=nexus"
+    ).split()
     for identifier in running:
         labels = inspect(identifier)["Config"]["Labels"]
         service = labels.get("com.docker.compose.service")
@@ -1030,7 +1139,9 @@ def assert_no_writers(writers: dict[str, str], *, clean_exit: bool) -> None:
             "cloudflared",
             "codex-egress-policy",
         }:
-            raise Failure(f"active application/one-off container {identifier} service={service}")
+            raise Failure(
+                f"active application/one-off container {identifier} service={service}"
+            )
     sessions = psql(
         "SELECT coalesce(json_agg(s), '[]') FROM (SELECT pid, application_name, state"
         " FROM pg_stat_activity WHERE datname = current_database()"
@@ -1069,7 +1180,9 @@ def restore_original() -> None:
         or cohort.state != "recoverable"
         or cohort.containers.keys() != {*WRITERS, CODEX_AGENT_HOST}
     ):
-        raise Failure("no recoverable original cohort; use normal forward-only recovery")
+        raise Failure(
+            "no recoverable original cohort; use normal forward-only recovery"
+        )
     note("restoring the captured original containers, without candidate compose/config")
     stop_writers(cohort.containers)
     assert_no_writers(cohort.containers, clean_exit=False)
@@ -1087,7 +1200,9 @@ def restore_original() -> None:
             pending = [
                 service
                 for service in services
-                if inspect(cohort.containers[service])["State"].get("Health", {}).get("Status")
+                if inspect(cohort.containers[service])["State"]
+                .get("Health", {})
+                .get("Status")
                 != "healthy"
             ]
             if not pending:
@@ -1098,7 +1213,9 @@ def restore_original() -> None:
                 )
             time.sleep(2)
         if services == ("api",):
-            version = json.loads(inside("api", "curl -fsS http://127.0.0.1:8000/version"))["data"]
+            version = json.loads(
+                inside("api", "curl -fsS http://127.0.0.1:8000/version")
+            )["data"]
             if (
                 version.get("source_sha") != cohort.source_sha
                 or version.get("expected_database_revision") != cohort.database_revision
@@ -1131,10 +1248,13 @@ def quiesce(candidate: CandidateManifest, starting_revision: str) -> None:
             state="recoverable",
             containers=writers,
             images={
-                service: inspect(identifier)["Image"] for service, identifier in writers.items()
+                service: inspect(identifier)["Image"]
+                for service, identifier in writers.items()
             },
             source_sha=(
-                inspect(writers["api"])["Config"]["Labels"].get("org.opencontainers.image.revision")
+                inspect(writers["api"])["Config"]["Labels"].get(
+                    "org.opencontainers.image.revision"
+                )
                 if "api" in writers
                 else None
             ),
@@ -1147,7 +1267,9 @@ def quiesce(candidate: CandidateManifest, starting_revision: str) -> None:
             candidate=candidate,
             application_config_sha256=application_config_sha256,
         )
-        if complete and (cohort.source_sha is None or SHA.fullmatch(cohort.source_sha) is None):
+        if complete and (
+            cohort.source_sha is None or SHA.fullmatch(cohort.source_sha) is None
+        ):
             raise Failure(
                 "the original API has no immutable source identity; restoration unavailable"
             )
@@ -1163,13 +1285,19 @@ def quiesce(candidate: CandidateManifest, starting_revision: str) -> None:
     if continuation:
         current_revision = database_revision(psql)
         if current_revision:
-            prove_ancestry(candidate, current_revision, original_revision=cohort.database_revision)
+            prove_ancestry(
+                candidate, current_revision, original_revision=cohort.database_revision
+            )
         elif (
             cohort.database_revision
             or psql("SELECT count(*) FROM pg_tables WHERE schemaname = 'public'") != "0"
         ):
-            raise Failure("candidate continuation lost its revision or the database is not empty")
-        note("continuing the same immutable candidate/config; retaining its compatible queued work")
+            raise Failure(
+                "candidate continuation lost its revision or the database is not empty"
+            )
+        note(
+            "continuing the same immutable candidate/config; retaining its compatible queued work"
+        )
     elif starting_revision:
         assert_generation_quiescence()
         # Remove after verification of the installed 0347 capture cut.
@@ -1208,7 +1336,9 @@ def release(source_sha: str, workspace: Path, *, initialize_native_host: bool) -
     host(f"{DOCKER} pull {shlex.quote(config_value('CADDY_IMAGE'))}", timeout=900)
     postgres_image = config_value("POSTGRES_IMAGE")
     if re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", postgres_image) is None:
-        raise Failure("POSTGRES_IMAGE must be an immutable image reference by sha256 digest")
+        raise Failure(
+            "POSTGRES_IMAGE must be an immutable image reference by sha256 digest"
+        )
     host(f"{DOCKER} pull {shlex.quote(postgres_image)}", timeout=900)
     # Prove the configured upstream package before stopping writers.
     host(
@@ -1218,7 +1348,9 @@ def release(source_sha: str, workspace: Path, *, initialize_native_host: bool) -
     )
     free = int(host("df --output=avail -B1 /").splitlines()[1])
     if free < MIN_ROOT_FREE:
-        raise Failure(f"host root filesystem has only {free} bytes free after image pulls")
+        raise Failure(
+            f"host root filesystem has only {free} bytes free after image pulls"
+        )
 
     assert_tunnel_token_readable(candidate)
     starting_revision = database_revision(psql)
@@ -1260,10 +1392,13 @@ else:
         timeout=900,
     )
     postgres = inspect(container("postgres"))
-    expected_image = json.loads(host(f"{DOCKER} image inspect {shlex.quote(postgres_image)}"))[0][
-        "Id"
-    ]
-    if postgres["Config"]["Image"] != postgres_image or postgres["Image"] != expected_image:
+    expected_image = json.loads(
+        host(f"{DOCKER} image inspect {shlex.quote(postgres_image)}")
+    )[0]["Id"]
+    if (
+        postgres["Config"]["Image"] != postgres_image
+        or postgres["Image"] != expected_image
+    ):
         raise Failure("postgres does not run the configured immutable image")
     limits = postgres["HostConfig"]
     if (
@@ -1272,7 +1407,9 @@ else:
         or limits["ShmSize"] != 128 * 1024**2
         or psql("SHOW shared_buffers") != "64MB"
     ):
-        raise Failure("postgres requires 2 GiB/no swap, 128 MiB shm and 64 MiB shared buffers")
+        raise Failure(
+            "postgres requires 2 GiB/no swap, 128 MiB shm and 64 MiB shared buffers"
+        )
     if database_identity(psql) != identity or database_revision(psql) != revision:
         raise Failure("postgres recreation changed the database identity or revision")
     version = int(psql("SHOW server_version_num"))
@@ -1286,7 +1423,9 @@ else:
         or "pg_search" not in {name.strip() for name in preloaded.split(",")}
         or available != "t"
     ):
-        raise Failure("postgres requires pg15 with preloaded pg_search 0.26.2 available")
+        raise Failure(
+            "postgres requires pg15 with preloaded pg_search 0.26.2 available"
+        )
     migrate(candidate)
     runtime_access(candidate, running=False)
 
@@ -1530,7 +1669,9 @@ def profile_lectern(viewer: UUID) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Release the Nexus backend to Hetzner.")
+    parser = argparse.ArgumentParser(
+        description="Release the Nexus backend to Hetzner."
+    )
     parser.add_argument("source_sha", nargs="?")
     parser.add_argument(
         "--initialize-native-host",
@@ -1564,7 +1705,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("source SHA must be 40 lowercase hex characters")
     if arguments.restore_original and source_sha is not None:
         parser.error("original-cohort restoration takes no candidate SHA")
-    if arguments.initialize_native_host and (arguments.check or arguments.restore_original):
+    if arguments.initialize_native_host and (
+        arguments.check or arguments.restore_original
+    ):
         parser.error("--initialize-native-host applies only to a release")
     if not arguments.check and not arguments.restore_original and source_sha is None:
         parser.error("a release requires its source SHA")

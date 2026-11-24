@@ -15,10 +15,12 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_read_media
 from nexus.db.session import open_async_session
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.authored import PassageCapture, XCapturePublication
 from nexus.schemas.resource_evidence import CapturedPassageTarget, LocationQuote
+from nexus.schemas.resource_items import PassageResourceBodyOut
 from nexus.schemas.resource_search import (
     ResourceTargetOut,
     ResourceTargetPassageOut,
@@ -37,7 +39,11 @@ from nexus.services.resource_graph.refs import (
 )
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.evidence import capture_evidence
-from nexus.services.resource_items.items import resource_items_out, visible_refs
+from nexus.services.resource_items.items import (
+    passage_link_revision,
+    resource_items_out,
+    visible_refs,
+)
 from nexus.services.resource_items.locations import current_passages, media_passages
 from nexus.services.search.admission import search_session_async
 from nexus.services.search.project import SCHEMES
@@ -132,7 +138,15 @@ def _targets(
     if embedding_failure is not None:
         raise embedding_failure
     reading_owners: dict[str, UUID | None] = {}
+    if request.reading_media_id is not None:
+        if exact is None or capability(exact.scheme).link_mode != "materialize_passage":
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Reading context requires an exact passage"
+            )
+        if not can_read_media(db, viewer_id, request.reading_media_id):
+            return ResourceTargetSearchResponse(targets=[], next_cursor=None)
     if exact is not None:
+        reading_owners[exact.uri] = request.reading_media_id
         candidates = [exact]
         needed = 1
     elif len(q) < MIN_QUERY_LENGTH:
@@ -158,6 +172,13 @@ def _targets(
     admitted: dict[str, ResourceTargetOut] = {}
     for ref in candidates:
         passage = capability(ref.scheme).link_mode == "materialize_passage"
+        item = items.get(ref.uri)
+        if request.reading_media_id is not None and (
+            item is None
+            or not isinstance(item.preview.body, PassageResourceBodyOut)
+            or item.preview.body.reading_ref != f"media:{request.reading_media_id}"
+        ):
+            continue
         try:
             captured = (
                 capture_evidence(
@@ -181,6 +202,17 @@ def _targets(
             target = ResourceTargetResourceOut(item=items[ref.uri], existing_link_id=link)
         elif quote is not None:
             assert captured is not None and isinstance(captured.target, CapturedPassageTarget)
+            # Verify the actual target as well as the displayed proof. A source
+            # whose citation captures a different subrange cannot stand in for it.
+            if exact is not None and (
+                item is None
+                or not isinstance(item.preview.body, PassageResourceBodyOut)
+                or item.preview.body.link_revision
+                != passage_link_revision(
+                    quote[0], quote[1], captured.target.locator.model_dump(mode="json")
+                )
+            ):
+                continue
             owner = resource_items_out(db, viewer_id=viewer_id, refs=[quote[0]])[0]
             identity = None if owner.missing else _passage_identity(db, viewer_id, *quote)
             if identity is None:

@@ -7,6 +7,8 @@ import { MarkdownPreview, TextPreview } from "./MarkdownMessage";
 import { useCompanionPresentation } from "@/components/workspace/companionPresentation";
 import type { Schema } from "@/lib/api/wire";
 import type { Message, Turn } from "@/lib/chat/wire";
+import { citedPassages, type CitationPassages, type CitedPassage } from "@/lib/chat/markdownPassages";
+import type { SourceArrivalContext } from "@/lib/reader/sourceArrival";
 import { useMarginLayout, type MarginSource, type MarginMeasurement } from "@/lib/margin/useMarginLayout";
 import { usePaneCompanion } from "@/lib/panes/paneChrome";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -20,6 +22,7 @@ type ReferenceOccurrence = {
   key: string;
   message: Message;
   value: Schema<"AttachmentOut"> | Schema<"ChatCitationOut">;
+  passages: readonly CitedPassage[];
 };
 type ReferenceControl = { kind: "named"; id: string } | { kind: "link"; href: string };
 type Memory = {
@@ -28,7 +31,12 @@ type Memory = {
   anchor: { occurrenceKey: string; offsetPx: number } | null;
   focus: { occurrenceKey: string; control: ReferenceControl | null } | null;
 };
-type RevealRequest = { key: string; keyboard: boolean; control: ReferenceControl | null; reveal: boolean };
+type RevealRequest = {
+  key: string; keyboard: boolean; control: ReferenceControl | null; reveal: boolean;
+  arrival?: SourceArrivalContext;
+};
+type InvokedUse = { key: string; marker: number };
+export const EMPTY_CITATION_PASSAGES: CitationPassages = new Map();
 const REFERENCES = definePaneVisitDataKey<Memory>("Librarian.References");
 
 const rowFor = (key: string, root: HTMLElement | null) => root?.querySelector<HTMLElement>(`[data-reference-key="${CSS.escape(key)}"]`) ?? null;
@@ -50,16 +58,21 @@ export function useLibrarianReferences(input: {
   const presentation = useCompanionPresentation();
   const column = presentation === "Column";
   const open = runtime.secondaryPane?.group_id === "librarian-inspector" && runtime.secondaryPane.visibility === "visible";
-  // An occurrence belongs to a message; repeated markers share their published
-  // retrieval identity, never a source-wide card.
+  const passagesByMessage = useMemo(() => new Map(input.turns.flatMap(({ assistant_message: answer }) =>
+    answer.citations.length ? [[answer.id, citedPassages(answer.content)] as const] : []
+  )), [input.turns]);
+  // One figure per published citation; individual uses still take their order
+  // and return position from the rendered marker.
   const occurrences = useMemo<ReferenceOccurrence[]>(() => input.turns.flatMap(turn => [
     ...turn.user_message.attachments.map((value, index) => ({
-      key: `${turn.user_message.id}:attachment:${index}`, message: turn.user_message, value,
+      key: `${turn.user_message.id}:attachment:${index}`, message: turn.user_message, value, passages: [],
     })),
-    ...turn.assistant_message.citations.map(value => ({
-      key: `${turn.assistant_message.id}:citation:${value.id}`, message: turn.assistant_message, value,
-    })),
-  ]), [input.turns]);
+    ...turn.assistant_message.citations.flatMap(value => {
+      const message = turn.assistant_message;
+      const passages = passagesByMessage.get(message.id)?.get(String(value.ordinal));
+      return passages ? [{key: `${message.id}:citation:${value.id}`, message, value, passages}] : [];
+    }),
+  ]), [input.turns, passagesByMessage]);
   const current = useRef(input); current.current = input;
   const values = useRef(occurrences); values.current = occurrences;
   const pane = useRef<HTMLDivElement>(null);
@@ -69,6 +82,13 @@ export function useLibrarianReferences(input: {
   const save = usePaneVisitDataWriter(REFERENCES);
   const [mode, setMode] = useState<Memory["mode"]>(() => retained?.queryKey === input.queryKey ? retained.mode : "margin");
   const [request, setRequest] = useState<RevealRequest | null>(null);
+  const [invokedUse, setInvokedUse] = useState<InvokedUse | null>(null);
+  const rememberUse = useCallback((element: Element, key: string | null) => {
+    const start = element.closest<HTMLElement>("[data-citation-marker-start]")?.dataset.citationMarkerStart;
+    if (key === null || start === undefined) return;
+    const marker = Number(start);
+    setInvokedUse(prior => prior?.key === key && prior.marker === marker ? prior : {key, marker});
+  }, []);
   const restore = useRef(retained?.queryKey === input.queryKey ? retained : null);
   memory.current = { ...memory.current, mode };
   const active = useRef<string | null>(null);
@@ -102,20 +122,26 @@ export function useLibrarianReferences(input: {
   const onFocusCapture = useCallback((event: FocusEvent<HTMLElement>) => {
     const key = keyOf(event.target);
     paint(key);
+    rememberUse(event.target, key);
     if (!key || !event.target.matches(":focus-visible")) { memory.current = { ...memory.current, focus: null }; save(memory.current); return; }
     current.current.scroll.releaseFollowing();
     const named = event.target.closest<HTMLElement>("[data-reference-control]")?.dataset.referenceControl;
     const href = event.target.closest<HTMLAnchorElement>("a[href]")?.getAttribute("href");
     memory.current = { ...memory.current, focus: { occurrenceKey: key, control: named ? { kind: "named", id: named } : href ? { kind: "link", href } : null } };
     save(memory.current);
-  }, [paint, save]);
+  }, [paint, rememberUse, save]);
   const onPointerDownCapture = useCallback(() => {
     memory.current = { ...memory.current, focus: null }; save(memory.current);
   }, [save]);
   const interactions = useMemo(() => ({ onFocusCapture, onPointerDownCapture,
-    onMouseOver: (event: MouseEvent<HTMLElement>) => { if (event.target instanceof Element) paint(keyOf(event.target)); },
+    onMouseOver: (event: MouseEvent<HTMLElement>) => {
+      if (!(event.target instanceof Element)) return;
+      const key = keyOf(event.target);
+      paint(key);
+      rememberUse(event.target, key);
+    },
     onMouseLeave: () => paint(document.activeElement instanceof Element ? keyOf(document.activeElement) : null),
-  }), [onFocusCapture, onPointerDownCapture, paint]);
+  }), [onFocusCapture, onPointerDownCapture, paint, rememberUse]);
   const source = useMemo<MarginSource>(() => ({
     subscribeGeometry: input.scroll.subscribeGeometry,
     measure(held) {
@@ -145,8 +171,22 @@ export function useLibrarianReferences(input: {
     if (!occurrence) return;
     input.scroll.releaseFollowing();
     demanded.current = { messageId, scrollTop: null };
+    setInvokedUse(null);
     setRequest({ key: occurrence.key, keyboard, control: null, reveal: true });
     runtime.requestSecondarySurface("librarian-references", { returnFocusTo: trigger });
+  };
+  const revealEdge = (messageId: string, edgeId: string, arrival: SourceArrivalContext) => {
+    const occurrence = occurrences.find(value => value.message.id === messageId &&
+      "cited_edge_id" in value.value && value.value.cited_edge_id === edgeId);
+    if (!occurrence || !("target" in occurrence.value)) return false;
+    const anchor = input.transcript.current?.querySelector<HTMLElement>(
+      `[data-message-id="${CSS.escape(messageId)}"] [data-citation-id="${CSS.escape(occurrence.value.id)}"] a`
+    );
+    demanded.current = { messageId, scrollTop: null };
+    setInvokedUse(null);
+    setRequest({ key: occurrence.key, keyboard: true, control: null, reveal: true, arrival });
+    runtime.requestSecondarySurface("librarian-references", { returnFocusTo: anchor });
+    return true;
   };
   useLayoutEffect(() => { paint(active.current); });
   const afterPaneLayout = useCallback(() => {
@@ -189,22 +229,26 @@ export function useLibrarianReferences(input: {
     groupId: "librarian-inspector" as const, defaultSurfaceId: "librarian-references" as const,
     surfaces: [{ id: "librarian-references" as const, body: <LibrarianReferences
       occurrences={occurrences} ready={input.ready} source={source} mode={mode} setMode={setMode}
-      pane={pane} list={list} interactions={interactions} onScroll={rememberList} onLayout={afterPaneLayout} request={request}
+      pane={pane} list={list} invokedUse={invokedUse} interactions={interactions} onScroll={rememberList} onLayout={afterPaneLayout} request={request}
       completeRequest={() => setRequest(null)} heldFocus={memory.current.focus?.occurrenceKey ?? restore.current?.focus?.occurrenceKey ?? null}
-      inspect={() => input.scroll.releaseFollowing()} showMessage={occurrence => {
-        const target = input.scroll.inspectReference(occurrence.message.id, "target" in occurrence.value ? occurrence.value.id : null);
-        if (target) { target.tabIndex = -1; runtime.revealPrimary({ focusTarget: target }); }
+      inspect={() => input.scroll.releaseFollowing()} showMessage={(occurrence, marker) => {
+        const target = input.scroll.inspectReference(occurrence.message.id, "target" in occurrence.value ? occurrence.value.id : null, marker);
+        if (target) {
+          if (!target.matches("a[href]")) target.tabIndex = -1;
+          runtime.revealPrimary({ focusTarget: target });
+        }
       }} /> }],
-  }), [occurrences, input.ready, input.scroll, source, mode, request, runtime, interactions, rememberList, afterPaneLayout]));
-  return { inlineAttachments: !(open && column), reveal, interactions };
+  }), [occurrences, input.ready, input.scroll, source, mode, request, invokedUse, runtime, interactions, rememberList, afterPaneLayout]));
+  return { inlineAttachments: !(open && column), reveal, revealEdge, passagesByMessage, interactions };
 }
 
-function LibrarianReferences({ occurrences, ready, source, mode, setMode, pane, list, interactions, onScroll, onLayout, request, completeRequest, heldFocus, inspect, showMessage }: {
+function LibrarianReferences({ occurrences, ready, source, mode, setMode, pane, list, invokedUse, interactions, onScroll, onLayout, request, completeRequest, heldFocus, inspect, showMessage }: {
   occurrences: readonly ReferenceOccurrence[]; ready: boolean; source: MarginSource; mode: Memory["mode"]; setMode(value: Memory["mode"]): void;
   pane: RefObject<HTMLDivElement | null>; list: RefObject<HTMLDivElement | null>;
   interactions: { onFocusCapture(event: FocusEvent<HTMLElement>): void; onPointerDownCapture(): void; onMouseOver(event: MouseEvent<HTMLElement>): void; onMouseLeave(): void };
   onScroll(): void; onLayout(): void; request: RevealRequest | null; completeRequest(): void; heldFocus: string | null;
-  inspect(): void; showMessage(occurrence: ReferenceOccurrence): void;
+  invokedUse: InvokedUse | null;
+  inspect(): void; showMessage(occurrence: ReferenceOccurrence, marker: number | null): void;
 }) {
   const presentation = useCompanionPresentation();
   const aligned = presentation === "Column" && mode === "margin";
@@ -231,6 +275,7 @@ function LibrarianReferences({ occurrences, ready, source, mode, setMode, pane, 
   useLayoutEffect(onLayout);
   useLayoutEffect(() => {
     if (!request || !list.current) return;
+    if (request.arrival?.signal.aborted) { completeRequest(); return; }
     const row = list.current.querySelector<HTMLElement>(`[data-reference-key="${CSS.escape(request.key)}"]`);
     if (!row) { if (ready && !byKey.has(request.key)) completeRequest(); return; }
     if (aligned && !placements.some(placement => placement.key === request.key && placement.kind === "placed")) return;
@@ -239,7 +284,7 @@ function LibrarianReferences({ occurrences, ready, source, mode, setMode, pane, 
       if (aligned) { if (!reveal(request.key)) return; }
       else port.scrollTop += row.getBoundingClientRect().top - port.getBoundingClientRect().top;
     }
-    if (request.keyboard) {
+    if (request.keyboard && (!request.arrival || request.arrival.mayFocus(row))) {
       const control = request.control === null ? null : request.control.kind === "named"
         ? row.querySelector<HTMLElement>(`[data-reference-control="${CSS.escape(request.control.id)}"]`)
         : row.querySelector<HTMLElement>(`a[href="${CSS.escape(request.control.href)}"]`);
@@ -263,8 +308,10 @@ function LibrarianReferences({ occurrences, ready, source, mode, setMode, pane, 
             <span>{occurrence.message.role === "user" ? "you" : "librarian"}</span>
             {occurrence.message.content.trim() ? occurrence.message.role === "user" ? <TextPreview content={occurrence.message.content} /> : <MarkdownPreview content={occurrence.message.content} /> : null}
           </div> : null}
-          <ReferenceFigure value={occurrence.value} />
-          <Button data-reference-control="message" className={styles.showMessage} onClick={() => showMessage(occurrence)}>show message</Button>
+          <ReferenceFigure value={occurrence.value} passages={occurrence.passages}
+            marker={invokedUse?.key === occurrence.key ? invokedUse.marker : null} />
+          <Button data-reference-control="message" className={styles.showMessage}
+            onClick={() => showMessage(occurrence, invokedUse?.key === occurrence.key ? invokedUse.marker : null)}>show message</Button>
         </div>)}
       </div></div>
     </div>

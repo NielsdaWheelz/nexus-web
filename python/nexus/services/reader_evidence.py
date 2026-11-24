@@ -318,6 +318,10 @@ def build_reader_evidence(
                     edge_id=connection.edge_id,
                     origin=connection.origin,
                     ordinal=connection.ordinal,
+                    rationale=connection.snapshot.rationale
+                    if connection.origin in ("assistant", "discovery")
+                    and connection.snapshot is not None
+                    else None,
                 )
             )
 

@@ -71,7 +71,7 @@ export default defineConfig({
           pages: [null, cursor].map(cursor => ({ kind: "pages", cursor, limit: 100 })),
           annotations: [{ kind: "annotations", source_ref: "", cursor: null, limit: 100 }],
           backlinks: [{ kind: "backlinks", ref: "", cursor: null, limit: 100 }],
-          search: [{ kind: "search", text: "", cursor: null, limit: 100, scopes: [{kind: "all", id: null}], families: null }],
+          search: [{ kind: "search", text: "", link_from: null, cursor: null, limit: 100, scopes: [{kind: "all", id: null}], families: null }],
           adjacency: [null, cursor].map(cursor => ({ kind: "adjacency", ref: "", cursor, limit: 100 })),
           positions: [{ kind: "positions", ref: "", exclude_link_id: null, at: { kind: "tail" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "neighbors", link_id: "", side: "before" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "neighbors", link_id: "", side: "after" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "bounds", position: "a0" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "tie", position: "a0", cursor: null, limit: 100 } }],
           resolve: Array.from({ length: 101 }, (_, count) => ({ kind: "resolve", refs: Array(count).fill("") })),

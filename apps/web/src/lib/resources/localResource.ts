@@ -12,6 +12,7 @@ const ROUTES: Partial<Record<string, string>> = {
 };
 const routeFor = (ref: string): string | null => {
   const parsed = parseResourceRef(ref);
+  if (parsed?.scheme === "message") return `/librarian?message=${parsed.id}`;
   const prefix = parsed ? ROUTES[parsed.scheme] : undefined;
   return parsed && prefix ? `${prefix}/${parsed.id}` : null;
 };

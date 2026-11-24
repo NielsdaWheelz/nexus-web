@@ -13,7 +13,7 @@ type ContextualMenuProps = Pick<ActionMenuProps,
 
 export default function ContextualActionMenu(props: ContextualMenuProps) {
   const pane = usePaneRuntime();
-  const subjectKey = `${pane?.visitId ?? "workspace"}:${props.subjectKey}:${props.resourceRef ?? "local"}:${props.navigation?.key ?? "resource-only"}`;
+  const subjectKey = `${pane?.visitId ?? "workspace"}:${props.subjectKey}:${props.resourceRef ?? "local"}:${props.navigation?.key ?? "resource-only"}:${props.linkSource?.ref ?? ""}:${props.linkSource?.passage?.revision ?? ""}:${props.linkSource?.passage?.readingMediaId ?? ""}`;
   return <ActionMenuHost {...props} title={props.title} subjectKey={subjectKey}>{session =>
     <ContextualMenuInvocation {...props} subjectKey={subjectKey} session={session} />
   }</ActionMenuHost>;

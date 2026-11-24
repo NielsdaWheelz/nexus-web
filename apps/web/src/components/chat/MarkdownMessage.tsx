@@ -19,7 +19,7 @@ import ReactMarkdown, { type ExtraProps } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { remarkCitations } from "@/lib/chat/markdownCitations";
-import { rehypeMessagePassages, remarkMessagePassages, type MarkdownPassage } from "@/lib/chat/markdownPassages";
+import { markdownReadingText, rehypeMessagePassages, remarkMessagePassages, type CitationPassages, type CitedPassage, type MarkdownPassage } from "@/lib/chat/markdownPassages";
 import type { Schema } from "@/lib/api/wire";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { useHoverPreview } from "@/components/ui/HoverPreview";
@@ -47,6 +47,7 @@ type MdNode = {
 const CitationContext = createContext<{
   byIndex: Map<string, Schema<"ChatCitationOut">>;
   preview: boolean;
+  passages: CitationPassages;
 } | null>(null);
 
 function subscribePreviewInput(changed: () => void) {
@@ -55,16 +56,18 @@ function subscribePreviewInput(changed: () => void) {
   return () => query.removeEventListener("change", changed);
 }
 
-function Citation({ citation, adjacent, preview }: { citation: Schema<"ChatCitationOut">; adjacent: boolean; preview: boolean }) {
+function Citation({ citation, adjacent, preview, marker, passages }: {
+  citation: Schema<"ChatCitationOut">; adjacent: boolean; preview: boolean; marker: number; passages: readonly CitedPassage[];
+}) {
   const runtime = usePaneRuntime();
   const hover = useHoverPreview(preview, `citation ${citation.ordinal} preview`);
   const close = hover.close;
   useLayoutEffect(() => close({ restoreFocus: false }), [close, runtime?.href, runtime?.visitId, runtime?.paneEntryDelivery?.activationId]);
   const body = hover.render(<div className={styles.previewReference} data-type-role="margin">
-    <ReferenceFigure value={citation} className={styles.previewFigure} data-reference-corresponding="" />
+    <ReferenceFigure value={citation} passages={passages} marker={marker} className={styles.previewFigure} data-reference-corresponding="" />
   </div>);
   return <>
-    <sup className={cx(numeral.citation, styles.citation)} data-citation-id={citation.id} data-pane-find-exclude="true"
+    <sup className={cx(numeral.citation, styles.citation)} data-citation-id={citation.id} data-citation-marker-start={marker} data-pane-find-exclude="true"
       data-citation-adjacent={adjacent || undefined} data-preview-open={body !== null || undefined}>
       <RetrievalReference retrieval={citation} label={String(citation.ordinal)} trigger={{
         ...hover.trigger,
@@ -87,9 +90,11 @@ function Link({
   const ordinal = node?.properties["data-nexus-citation"];
   if (citations && typeof ordinal === "string") {
     const citation = citations.byIndex.get(ordinal);
-    // justify-defect: publication and rendering share the parser; every settled marker has its published row.
-    if (!citation) throw new Error("published citation has no target");
-    return <Citation citation={citation} adjacent={node?.properties["data-citation-adjacent"] === true} preview={citations.preview} />;
+    const marker = node?.properties["data-citation-marker-start"];
+    const passages = citations.passages.get(ordinal);
+    if (!citation || typeof marker !== "number" || !passages) return <>{children}</>;
+    return <Citation citation={citation} adjacent={node?.properties["data-citation-adjacent"] === true} preview={citations.preview}
+      marker={marker} passages={passages} />;
   }
   if (!href) return <>{children}</>;
   return (
@@ -278,12 +283,14 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   citations,
   live,
   citationPreview,
+  citationPassages,
   passage,
 }: {
   content: string;
   citations: Schema<"ChatCitationOut">[];
   live: boolean;
   citationPreview: boolean;
+  citationPassages: CitationPassages;
   passage: MarkdownPassage | null;
 }) {
   const active = usePaneIsActive();
@@ -295,9 +302,10 @@ export const MarkdownMessage = memo(function MarkdownMessage({
         ? {
             byIndex,
             preview: citationPreview && active && fine,
+            passages: citationPassages,
           }
         : null,
-    [live, citations.length, byIndex, citationPreview, active, fine],
+    [live, citations.length, byIndex, citationPreview, citationPassages, active, fine],
   );
   return (
     <div className={styles.prose}>
@@ -335,16 +343,7 @@ export function TextPreview({ content }: { content: string }) {
 
 function remarkPreview() {
   return (tree: MdNode) => {
-    const text = (node: MdNode & { alt?: string }): string => {
-      if (node.type === "html" || node.type.endsWith("Definition") || node.type === "definition") return "";
-      if (node.type === "image" || node.type === "imageReference") return node.alt ?? "";
-      if (node.type === "code") return `${node.value ?? ""} `;
-      if (node.value !== undefined) return node.value;
-      if (node.type === "break" || node.type === "thematicBreak") return " ";
-      const value = (node.children ?? []).map(text).join("");
-      return /^(paragraph|heading|blockquote|listItem|code|tableCell|tableRow)$/.test(node.type) ? `${value} ` : value;
-    };
-    const preview = previewText(text(tree));
+    const preview = previewText(markdownReadingText(tree));
     tree.children = [{ type: "paragraph", children: [{ type: "text", value: preview }] }];
   };
 }

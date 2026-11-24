@@ -25,7 +25,7 @@ export function authoredPreview(resource: ResourceProjection, readingRef: string
   if (resource.kind === "highlight" && resource.excerpt === null) throw new TypeError("Highlight has no excerpt projection");
   if (resource.excerpt !== null) {
     const label = resource.excerpt.kind === "content" ? excerptTextParts(resource.excerpt.body).exact || "selected region" : "table excerpt";
-    return { label, body: { kind: "passage", excerpt: resource.excerpt, capture_revision: resource.capture_revision, reading_ref: readingRef, color: resource.color } };
+    return { label, body: { kind: "passage", excerpt: resource.excerpt, capture_revision: resource.capture_revision, link_revision: null, reading_ref: readingRef, color: resource.color } };
   }
   if (resource.kind === "page" || resource.kind === "source") {
     const title = resource.kind === "page" ? pageTitle(resource.title ?? "", resource.local_date) : localResourceLabel(resource);

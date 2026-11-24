@@ -54,6 +54,7 @@ export function useLinkTargets(
         signal,
         body: JSON.stringify({
           q: settledQuery,
+          reading_media_id: null,
           source_ref: sourceRef,
           exclude_refs: excludeRef ? [excludeRef] : [],
           cursor,
@@ -62,8 +63,8 @@ export function useLinkTargets(
       return { items: data.targets, next_cursor: data.next_cursor };
     },
   });
-  const local = useAuthoredPages(admitted && settledQuery.length >= 2 ? { kind: "search", text: settledQuery, cursor: null, limit: 100, scopes: [{ kind: "all", id: null }], families: null } : null);
-  const localTargets: LinkTargetResult[] = (local.data?.rows ?? []).filter(row => row.resource.ref !== excludeRef && row.resource.kind !== "highlight").map(row => ({ kind: "resource", item: authoredItem(row.resource, row.activation_ref, localResourceHref(row.resource, { activationRef: row.activation_ref })), existing_link_id: null }));
+  const local = useAuthoredPages(admitted && settledQuery.length >= 2 ? { kind: "search", text: settledQuery, link_from: sourceRef, cursor: null, limit: 100, scopes: [{ kind: "all", id: null }], families: null } : null);
+  const localTargets: LinkTargetResult[] = (local.data?.rows ?? []).filter(row => row.resource.ref !== excludeRef && row.resource.kind !== "highlight").map(row => ({ kind: "resource", item: authoredItem(row.resource, row.activation_ref, localResourceHref(row.resource, { activationRef: row.activation_ref })), existing_link_id: row.link?.link_id ?? null }));
   const current = admitted && raw === settled && local.data !== null;
   const remoteTargets = list.current ? list.items.filter(target => !/^(note_block|page|highlight):/u.test(target.item.ref)) : [];
   const seen = new Set<string>();

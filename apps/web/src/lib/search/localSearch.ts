@@ -175,7 +175,7 @@ export function useLocalSearch(text: string | null, kinds: SearchQuery["requeste
   const scopes = localSearchScopes(scope);
   const families: SearchFamily[] | null = kinds === null ? null : [...kinds].sort();
   const query: Extract<AuthoredQuery, {kind: "search"}> | null = text === null || scopes === null ? null
-    : { kind: "search", text, cursor: null, limit: PAGE, scopes, families };
+    : { kind: "search", text, link_from: null, cursor: null, limit: PAGE, scopes, families };
   const prefix = useAuthoredPrefix(query, pages);
   const matches = useMemo(() => prefix.data === null ? null : prefix.data.rows.flatMap(({ resource, match_text, activation_ref, matched_field, activation_field }) => {
     const kind = kindOf(resource);
