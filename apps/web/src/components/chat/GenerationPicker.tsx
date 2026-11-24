@@ -7,8 +7,10 @@ import { Section } from "react-stately/Section";
 import { useListState, type ListState } from "react-stately/useListState";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
+import { sentence } from "@/components/feedback/stage";
 import PickerSurface from "@/components/ui/PickerSurface";
 import { ControlContents } from "@/components/ui/control";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import type { ServerValue } from "@/lib/api/serverState";
 import {
   choiceUnavailable,
@@ -56,7 +58,7 @@ export default function GenerationPicker({ catalogRead, choice, refused, recallP
   const skipReturn = useRef(false);
   const touch = useRef(false);
   const id = useId();
-  const reasonId = useId();
+  const descriptionId = useId();
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
   const { value, route, model, modelKey, effort, variant, reason } = choice;
   const currentKey = value.kind === "Selected" ? value.selection.reasoning : null;
@@ -99,8 +101,10 @@ export default function GenerationPicker({ catalogRead, choice, refused, recallP
   const ladder = JSON.stringify(choices.map(choice => choice.key));
   const waiting = value.kind === "Uninitialized";
   const busy = (waiting && recallPending) || catalogRead.status === "loading" || (catalogRead.status === "failed" && catalogRead.retrying);
-  const cold = waiting || catalog === null;
+  const modelLabel = current?.label ?? modelKey ?? "model unavailable";
   const effortLabel = effort?.effort_label ?? currentKey ?? "effort unavailable";
+  const description = reason ?? (catalogRead.status === "loading" ? "models are loading."
+    : catalogRead.status === "failed" ? sentence(TRANSPORT_LINES[transportOf(catalogRead.error)].read("models")) : null);
   const native = catalog?.routes.find(row => row.route.kind === "CodexPersonal");
   const state = useListState<ModelOption>({
     children: sections.map(section => <Section key={section.id} title={section.label}>
@@ -160,8 +164,8 @@ export default function GenerationPicker({ catalogRead, choice, refused, recallP
   return <>
     <button ref={trigger} type="button" className={styles.trigger}
       style={pressSize ? { minInlineSize: pressSize.width, minBlockSize: pressSize.height } : undefined}
-      aria-label={cold ? "model" : `model and effort: ${current?.label ?? "model unavailable"}, ${effortLabel}`}
-      aria-describedby={reason ? reasonId : undefined} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} aria-busy={busy || undefined}
+      aria-label={waiting ? "model" : `model and effort: ${modelLabel}, ${effortLabel}`}
+      aria-describedby={description ? descriptionId : undefined} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} aria-busy={busy || undefined}
       onPointerDown={event => {
         if (event.button !== 0 || !event.isPrimary) return;
         // A focus-triggered recall may shorten the label before this press clicks.
@@ -179,18 +183,18 @@ export default function GenerationPicker({ catalogRead, choice, refused, recallP
         }
       }}>
       <span className={styles.model}>
-        {!cold && reason !== null ? <Icon.Warning size={16} aria-hidden="true" className={styles.warning} /> : null}
-        {cold ? "model" : current?.label ?? "model unavailable"}
+        {reason !== null || catalogRead.status === "failed" ? <Icon.Warning size={16} aria-hidden="true" className={styles.warning} /> : null}
+        {waiting ? "model" : modelLabel}
       </span>
       <span className={styles.effortValue}>
-        {!cold ? <>
+        {!waiting ? <>
           {!fixed && index >= 0 && choices.length > 1 ? <Icon.Effort size={16} aria-hidden="true" position={index / (choices.length - 1)} /> : null}
           {effortLabel}
         </> : null}
         <span className={styles.chevron}><ControlContents busy={busy} icon={<Icon.Choose size={12} aria-hidden="true" />} /></span>
       </span>
     </button>
-    {reason ? <span id={reasonId} className="sr-only">{reason}</span> : null}
+    {description ? <span id={descriptionId} className="sr-only">{description}</span> : null}
     <PickerSurface active={open} onClose={() => setOpen(false)} anchor={() => trigger.current}
       skipReturnFocus={() => skipReturn.current} title="model and effort" panelId={id} placement="above" className={styles.surface}
       slipContent={list}
