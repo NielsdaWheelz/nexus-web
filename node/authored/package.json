@@ -14,6 +14,7 @@
     "./merge": "./src/merge.ts",
     "./commands": "./src/commands.ts",
     "./queries": "./src/queries.ts",
+    "./paneFilterText": "./src/paneFilterText.ts",
     "./scope": "./src/scope.ts",
     "./schema": "./src/schema.ts",
     "./markdown": "./src/markdown.ts"

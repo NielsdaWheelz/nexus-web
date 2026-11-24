@@ -5,6 +5,7 @@ import { isResourceRef, normalizeQuote } from "./identity.ts";
 import { canonicalQuads } from "./geometry.ts";
 import { counter } from "./merge.ts";
 import type { Change, Locator, NoteWork, Publication, Register, SelectionCapture, Stamp, Vector } from "./types.ts";
+import { MAX_PAGE_WORK_AT_MS } from "./types.ts";
 import { validateLocalDate } from "./work.ts";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 export function uuid(value: string): void {
@@ -22,6 +23,11 @@ function stamp(value: Stamp): void {
 function register<T>(value: Register<T>): void {
   if (!value || typeof value !== "object") throw new TypeError("Expected stamped register");
   stamp(value.stamp);
+}
+export function validatePageWorkTime(value: number | null, local_date: string | null): void {
+  if (value !== null && (local_date !== null || !Number.isSafeInteger(value) || value < 1 || value > MAX_PAGE_WORK_AT_MS)) {
+    throw new TypeError("Page work time requires positive UTC epoch milliseconds on an undated page");
+  }
 }
 function work(value: NoteWork | null): void {
   if (value === null) return;
@@ -151,6 +157,7 @@ export function validateChange(change: Change): void {
       if (!["yellow", "green", "blue", "pink", "purple"].includes(resource.color.value)) throw new TypeError("Unknown highlight color");
     } else if (resource.kind === "page") {
       if (resource.local_date !== null && (!/^\d{4}-\d{2}-\d{2}$/u.test(resource.local_date) || new Date(`${resource.local_date}T00:00:00Z`).toISOString().slice(0, 10) !== resource.local_date)) throw new TypeError("Invalid daily date");
+      validatePageWorkTime(resource.last_work_at_ms, resource.local_date);
     } else if (resource.kind === "note") work(resource.work);
     else throw new TypeError("Unknown resource kind");
   }

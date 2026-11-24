@@ -5,7 +5,7 @@ import * as Y from "yjs";
 import {readBody} from "@nexus/authored/documents";
 import {bodyText, emptyBody, type NoteBody} from "@nexus/authored/body";
 import {isVisible} from "@nexus/authored/merge";
-import type {LinkState, ResourceProjection} from "@nexus/authored/types";
+import type {LinkState, PageCredit, ResourceProjection} from "@nexus/authored/types";
 import type {DisplayedSplit, NoteEdit, FocusSelection} from "./editorTypes";
 import type {AdmittedLink, AdmittedNote, AdmittedStructure, DisplayedWriting, OccurrenceBookmark, OutlineBirthChange, OutlineHistory, OutlinePlacement, RangePublication} from "./structure";
 import {advanceRelationship} from "./structure";
@@ -225,13 +225,13 @@ export class OutlinePendingInput {
     }).catch(error => this.fail(error));
   }
   /** A birth binds its canonical document immediately; only the graph placement may await a preceding arrangement. */
-  create(row: PendingOutlineField, options: {before?: InputBookmark; stays?: boolean; beside?: string} = {}): void {
+  create(row: PendingOutlineField, options: {before?: InputBookmark; stays?: boolean; beside?: string} = {}, credit?: PageCredit): void {
     const owner = this.current();
     const before = options.before ?? null, location = this.birthLocation(row, options.beside);
     const placement = this.placement(row.parent_id, row.parent_ref, row.after_id, row.before_id);
     const admitted = owner.history.create({placement, body: row.body, change: {before, after: document => options.stays ? before : this.bookmark({...row, ref: document.ref}, "end"),
       placements_after: document => [this.placementBookmark({...row, ref: document.ref})!],
-      resolvePlacement: location ? this.resolveBirth(row, {...this.row(options.beside!)}, location, false) : undefined}});
+      resolvePlacement: location ? this.resolveBirth(row, {...this.row(options.beside!)}, location, false) : undefined}}, credit);
     const field = {...row, ref: admitted.document.ref, pending: true};
     this.fields.set(row.row_id, field);
     this.place(row.row_id, row.after_id, row.before_id ?? null);
@@ -260,18 +260,18 @@ export class OutlinePendingInput {
     owner.prepared(field, admitted.document); owner.publish([bound.document], admitted.committed);
     this.watch([row_id, successor], admitted, new Map([[successor, admitted.link]])); return successor;
   }
-  splitChild(args: {source: WritingDocument; displayed: DisplayedSplit; row: PendingOutlineField; placement: OutlinePlacement; before: InputBookmark}): {row_id: string; committed: Promise<LocalCommit>} {
+  splitChild(args: {source: WritingDocument; displayed: DisplayedSplit; row: PendingOutlineField; placement: OutlinePlacement; before: InputBookmark}, credit: PageCredit): {row_id: string; committed: Promise<LocalCommit>} {
     const owner = this.current(), row = args.row;
     const original = args.before?.kind === "text" ? owner.occurrence(args.before.row_id) : null;
     const placement = original ? this.placementBookmark(original) : null;
     const admitted = owner.history.split({source: args.source, displayed: args.displayed, placement: args.placement,
       change: {before: args.before, after: document => this.bookmark({...row, ref: document.ref}, {anchor: 1, head: 1}),
         placements_before: placement ? [placement] : [],
-        placements_after: document => [this.placementBookmark({...row, ref: document.ref}, true)!]}});
+        placements_after: document => [this.placementBookmark({...row, ref: document.ref}, true)!]}}, credit);
     this.installNewborn({row, admitted, sources: [args.source], retired: []});
     return {row_id: row.row_id, committed: admitted.committed};
   }
-  replaceWithNote(row_id: string, before: InputBookmark): {row_id: string; committed: Promise<LocalCommit>} {
+  replaceWithNote(row_id: string, before: InputBookmark, credit: PageCredit): {row_id: string; committed: Promise<LocalCommit>} {
     const owner = this.current(), original = this.row(row_id);
     if (!original.link || !original.ref) throw new Error("reference conversion needs its frozen relationship");
     const row: PendingOutlineField = {...original, row_id: crypto.randomUUID(), after_id: null, before_id: row_id, ref: null, link: null, kind: "body", resource: null,
@@ -279,7 +279,7 @@ export class OutlinePendingInput {
     const retiring = {...this.placementBookmark(original)!, link: original.link};
     const admitted = owner.history.replaceWithNote({placement: this.placement(row.parent_id, row.parent_ref, null, row_id), retiring,
       change: {before, placements_before: [retiring], after: document => this.bookmark({...row, ref: document.ref}, {anchor: 1, head: 1}),
-        placements_after: document => [this.placementBookmark({...row, ref: document.ref}, true)!]}});
+        placements_after: document => [this.placementBookmark({...row, ref: document.ref}, true)!]}}, credit);
     this.fields.set(row_id, {...original, hidden: true});
     this.installNewborn({row, admitted, sources: [], retired: [row_id]});
     return {row_id: row.row_id, committed: admitted.committed};
@@ -318,7 +318,7 @@ export class OutlinePendingInput {
   rangeHeld(row_id: string): boolean {return (this.bound.get(row_id)?.reservations ?? 0) > 0;}
   /** A range gesture is still held or unsettled: the shown order may trail it. */
   busy(): boolean {return [...this.bound.values()].some(bound => (bound.reservations ?? 0) > 0 || bound.next !== undefined);}
-  range(plan: RangePlan, callbacks: {refused(reason: RangeReason): void}): void {
+  range(plan: RangePlan, callbacks: {refused(reason: RangeReason): void}, credit = this.current().history.origin.credit()): void {
     const owner = this.current(), snapshot = owner.rangeSnapshot();
     // The selection charges the gesture; every row the plan changes (an adopted sibling too) is captured and bound.
     const selected = [...new Set([...(plan.selection_before?.kind === "blocks" ? plan.selection_before.row_ids : plan.selection_before ? [plan.selection_before.row_id] : []),
@@ -514,7 +514,7 @@ export class OutlinePendingInput {
     };
     const documents = selected.flatMap(id => {const row = captured.get(id); const document = row?.ref ? owner.document(row.ref) : null; return document ? [document] : [];});
     owner.history.range({plan, documents, snapshot, metadata: () => [...captured.values()], canRetain: () => this.owner?.canRetain() ?? false, prepare, publication, reserve: action => reserve(pin(false), this.owner?.rangeSnapshot() ?? snapshot, action), active: () => this.owner === owner,
-      refused: callbacks.refused});
+      refused: callbacks.refused}, credit);
   }
   resume(): void {
     if (this.finishing) {this.resumeAgain = true; return;}

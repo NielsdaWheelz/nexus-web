@@ -9,7 +9,7 @@ import {canonicalSerialization} from "@nexus/authored/canonical";
 import {readBody} from "@nexus/authored/documents";
 import {isVisible} from "@nexus/authored/merge";
 import type {Intent} from "@nexus/authored/commands";
-import type {LinkState, OutlineChildrenOccurrence, OutlineRange, ResourceProjection} from "@nexus/authored/types";
+import type {LinkState, OutlineChildrenOccurrence, OutlineRange, PageCredit, ResourceProjection} from "@nexus/authored/types";
 import {classifyOutlineOccurrence, enterOutlineOccurrence, type OutlineBranch, type OutlineTarget} from "@/lib/resources/outlineProjection";
 import {localResourceHref, localResourceLabel} from "@/lib/resources/localResource";
 import {pageTitle} from "@nexus/authored/queries";
@@ -128,7 +128,7 @@ export class OutlineController {
   /** Visible links per resource across the windows and the pending fields, counted once per rebuild for the mirror pill. */
   private incidence = new Map<string, Set<string>>();
   /** A drop into a parent that opened for it; it lands as the first child once that window is shown, unless the projection moved first. */
-  private placing: {rows: readonly string[]; destination: Destination; epoch: number} | null = null;
+  private placing: {rows: readonly string[]; destination: Destination; epoch: number; credit: PageCredit} | null = null;
   private readonly workOwners = new Map<string, readonly string[]>();
   private blockRange: BlockRange | null = null;
   /** The shallowest selected depth: where the selection's one wash starts. Read only on selected rows. */
@@ -328,7 +328,7 @@ export class OutlineController {
   }
   private async splitAnnotation(row_id: string, source: WritingDocument, displayed: DisplayedSplit): Promise<boolean> {
     if (this.preparing || !this.active || this.filter.trim() || this.annotations.get(row_id)?.document !== source || !this.annotations.get(row_id)?.attachment) return false;
-    const lease = this.lease(), preparation = {row_id, ref: source.ref}, before = this.annotationBookmark(row_id);
+    const lease = this.lease(), preparation = {row_id, ref: source.ref}, before = this.annotationBookmark(row_id), credit = this.history.origin.credit();
     this.preparing = preparation;
     try {
       await this.runtime.committedPrefix();
@@ -348,7 +348,7 @@ export class OutlineController {
         const target: PendingOutlineField = {row_id: crypto.randomUUID(), parent_id: row_id, parent_ref: source.ref, after_id: null, before_id: first_id,
           ref: null, link: null, kind: "body", body: emptyBody(), resource: null, hidden: false, pending: true, origin: this.history.typingOrigin()};
         return this.pending.splitChild({source, displayed, row: target,
-          placement, before});
+          placement, before}, credit);
       });
       if (!admitted) return false;
       if (row_id !== this.pending.root_id) this.opened.add(row_id);
@@ -1174,7 +1174,7 @@ export class OutlineController {
   }
   private async convertReference(row: OutlineRow): Promise<void> {
     if (this.preparing || !this.canEditReference(row) || !row.link || !row.ref || this.removalBlocked(new Set([row.row_id]))) return;
-    const lease = this.lease(), original = structuredClone(row.link), preparation = {row_id: row.row_id, ref: row.ref}, before = this.capture();
+    const lease = this.lease(), original = structuredClone(row.link), preparation = {row_id: row.row_id, ref: row.ref}, before = this.capture(), credit = this.history.origin.credit();
     this.preparing = preparation;
     try {
       await this.runtime.committedPrefix();
@@ -1185,7 +1185,7 @@ export class OutlineController {
         const charge = await this.history.replaceWithNoteCharge({placement: {parent_ref: row.parent_ref, parent: this.writing(row.parent_ref), after_ref: null, before_ref: row.ref}, retiring: original});
         if (charge === null) {this.refuse("this replacement exceeds the local writing limit"); return null;}
         if (!lease() || this.runtime.snapshot().saving || !this.admitNew(1, charge)) return null;
-        return this.pending.replaceWithNote(row.row_id, before);
+        return this.pending.replaceWithNote(row.row_id, before, credit);
       });
       if (!admitted) {this.project("semantic"); return;}
       this.referenceRow = null; this.changed("semantic");
@@ -1204,7 +1204,7 @@ export class OutlineController {
   private childQuery(row: OutlineRow, ref: string, link: LinkState): OutlineChildrenOccurrence {
     return {refs: [ref], excluded_link_ids: [...enterOutlineOccurrence({branch: row.branch, ref, target: {kind: "occurrence", key: row.row_id}, edgeIds: [link.link_id]}).traversedEdgeIds]};
   }
-  private async replaceReference(row: OutlineRow, target: LinkTarget, label: string): Promise<boolean> {
+  private async replaceReference(row: OutlineRow, target: LinkTarget, label: string, credit = this.history.origin.credit()): Promise<boolean> {
     if (!(this.canEditReference(row) || this.consumable(row)) || !row.link || !row.ref) return false;
     const original = this.retained(row.row_id);
     if (!original || original.ref !== row.ref || original.link?.link_id !== row.link.link_id) {this.refuse(rangeReasonMessage("changed")); return false;}
@@ -1245,7 +1245,7 @@ export class OutlineController {
           } else if (this.referenceRow === row.row_id) this.referenceRow = null;
           this.changed("semantic");
           if (here && writing) void this.focus(replacement_id, "end", lease);
-        }});
+        }}, credit);
     } catch (error) {this.error = error instanceof LinkInputRefusal ? new OutlineActionRefusal(error.line) : error; this.notify(); return false;}
     finally {release?.();}
   }
@@ -1448,7 +1448,7 @@ export class OutlineController {
       this.placing = null;
       const first = [...this.rows.values()].find(row => row.parent_id === placing.destination.parent_id && !row.seed && !row.gap);
       const plan = this.plan("place", {kind: "blocks", anchor_id: placing.rows[0]!, head_id: placing.rows[placing.rows.length - 1]!, row_ids: placing.rows}, {...placing.destination, before_id: first?.row_id ?? null});
-      if (plan) this.submitRange(plan);
+      if (plan) this.submitRange(plan, placing.credit);
     } else if (placing && (this.epoch !== placing.epoch || !this.rows.get(placing.destination.parent_id)?.open)) this.placing = null;
   }
   private bodyMatches(row: OutlineRow): boolean {return [row.resource?.title, row.resource?.body_text, row.resource?.selection?.quote_exact].some(text => text?.toLocaleLowerCase().includes(this.filter.trim().toLocaleLowerCase()));}
@@ -1569,10 +1569,10 @@ export class OutlineController {
     },
       emptyDelete: direction => {this.removeEmpty(row_id, direction);}, join: direction => {this.join(row_id, direction);}};
   };
-  private born(parent_id: string, parent_ref: string, after_id: string | null, options: {before?: string; stays?: boolean; beside?: string} = {}): string {
+  private born(parent_id: string, parent_ref: string, after_id: string | null, options: {before?: string; stays?: boolean; beside?: string} = {}, credit = this.history.origin.credit()): string {
     const id = crypto.randomUUID();
     this.pending.create({row_id: id, parent_id, parent_ref, after_id, before_id: options.before, ref: null, link: null, kind: "body", body: emptyBody(), hidden: false, pending: true, origin: this.origin(id)},
-      {before: this.capture(), stays: options.stays, beside: options.beside});
+      {before: this.capture(), stays: options.stays, beside: options.beside}, credit);
     this.changed("semantic");
     return id;
   }
@@ -1746,9 +1746,9 @@ export class OutlineController {
     this.removalKey = this.removalPress;
     this.submitRange({...result.plan, selection_after});
   }
-  private submitRange(plan: RangePlan): void {
+  private submitRange(plan: RangePlan, credit = this.history.origin.credit()): void {
     if (plan.command === "remove" && this.removalBlocked(new Set(plan.changes.map(change => change.before.row_id)))) return;
-    this.pending.range(plan, {refused: this.refused});
+    this.pending.range(plan, {refused: this.refused}, credit);
   }
   private refused = (reason: RangeReason): void => {if (this.active) this.refuse(rangeReasonMessage(reason));};
   private unlink(row_id: string): void {
@@ -1788,15 +1788,15 @@ export class OutlineController {
    * window is shown (`placing`, settled in `rebuild`). An open the window cannot hold refuses and places nothing. */
   place(rows: readonly string[], destination: Destination): void {
     if (!rows.length || !this.canArrange()) return;
-    const parent = this.rows.get(destination.parent_id);
+    const parent = this.rows.get(destination.parent_id), credit = this.history.origin.credit();
     this.placing = null;
     if (parent?.ref && !parent.root && !(parent.open && this.windows.has(parent.row_id))) {
       this.toggle(parent.row_id, true);
       if (!this.opened.has(parent.row_id)) return;
-      if (parent.children?.available !== false) {this.placing = {rows, destination, epoch: this.epoch}; return;}
+      if (parent.children?.available !== false) {this.placing = {rows, destination, epoch: this.epoch, credit}; return;}
     }
     const plan = this.plan("place", {kind: "blocks", anchor_id: rows[0]!, head_id: rows[rows.length - 1]!, row_ids: rows}, destination);
-    if (plan) this.submitRange(plan);
+    if (plan) this.submitRange(plan, credit);
   }
   toggle(row_id: string, force?: boolean): void {
     const row = this.rows.get(row_id); if (!row?.ref || row.terminal) return;
@@ -1974,7 +1974,7 @@ export class OutlineController {
   }
   async append(parent_id = this.pending.root_id): Promise<void> {
     let window = this.windows.get(parent_id);
-    const request = this.requests.get(parent_id), lease = this.lease();
+    const request = this.requests.get(parent_id), lease = this.lease(), credit = this.history.origin.credit();
     if (!request || !window || this.preparing || this.filter.trim()) return;
     try {
       if (window.afterEdge) {
@@ -1990,7 +1990,7 @@ export class OutlineController {
       }
       if (window.afterEdge || !window.data.scope_available || !this.admitNew()) return;
       const last = [...this.rows.values()].filter(row => row.parent_id === parent_id && !row.seed && !row.gap).at(-1);
-      const id = this.born(parent_id, request.ref, last?.row_id ?? null, last ? {beside: last.row_id} : {});
+      const id = this.born(parent_id, request.ref, last?.row_id ?? null, last ? {beside: last.row_id} : {}, credit);
       await this.focus(id, {anchor: 1, head: 1}, lease);
     } catch (error) {this.error = error; this.notify();}
   }
@@ -2421,12 +2421,12 @@ export class OutlineController {
         const frozen = {...row, link: structuredClone(row.link)};
         return {source_ref: parent_ref, label: this.label(row), replacement: {occurrence_key: row.row_id, link_id: row.link.link_id}, onSelected: (target, item) => this.replaceReference(frozen, target, item.label)};
       }
-      const insert = (target: LinkTarget, item: ResourceItem) => {
+      const insert = (target: LinkTarget, item: ResourceItem, credit = this.history.origin.credit()) => {
         const bookmark = this.capture(), child_id = crypto.randomUUID(), parent_id = row.root ? this.pending.root_id : row.parent_id!;
         const admitted = this.history.insertReference({placement: {parent_ref, parent: this.writing(parent_ref),
           after_ref: row.root || row.seed ? null : row.ref, before_ref: null}, target, label: item.label,
           occurrence: {row_id: child_id, parent_id, after_id: row.root || row.seed ? null : row.row_id, before_id: null},
-          change: {before: bookmark, after: bookmark}});
+          change: {before: bookmark, after: bookmark}}, credit);
         void admitted.link.then(link => {if (this.active && link) {this.transfer(child_id, parent_id, link.link_id, this.origin(child_id)); this.changed();}}, () => {});
         void admitted.result.catch(error => {this.error = error; this.notify();});
         if (row.seed) this.consumeSeed(admitted.committed);
@@ -2437,11 +2437,11 @@ export class OutlineController {
       return {source_ref: parent_ref, label: parent_ref, replacement: null, onSelected: insert, consume: (target, item) => {
         const observed = this.consumable(row) ? this.pending.observedLink(row_id) ?? row.link : null;
         if (observed === null) return null;
-        const lease = this.lease(), birth = this.pending.birthAttempt(row_id);
+        const lease = this.lease(), birth = this.pending.birthAttempt(row_id), credit = this.history.origin.credit();
         // the item stays, and the reference lands after it as an insertion would; one that is gone says so.
         const beside = () => {
           if (!lease()) return false;
-          if (this.rows.get(row_id)?.ref === row.ref) insert(target, item); else this.refuse(rangeReasonMessage("changed"));
+          if (this.rows.get(row_id)?.ref === row.ref) insert(target, item, credit); else this.refuse(rangeReasonMessage("changed"));
           return true;
         };
         // an item still being born waits for its link, and is read again after the wait. a birth whose first attempt
@@ -2450,7 +2450,7 @@ export class OutlineController {
           const current = this.rows.get(row_id);
           if (!lease() || !current?.ref || current.ref !== row.ref || !this.consumable(current) || birth?.failed) return beside();
           const children = (await (await this.runtime.store).query({kind: "outline_children", occurrences: [this.childQuery(current, current.ref, link)]})).children[0];
-          return children === false && lease() ? this.replaceReference({...current, link}, target, item.label) : beside();
+          return children === false && lease() ? this.replaceReference({...current, link}, target, item.label, credit) : beside();
         }, beside).catch(error => {this.error = error; this.notify(); return false;});
       }};
     },
@@ -2495,7 +2495,7 @@ export class OutlineController {
    * command, after the last selected, above an empty item or at the write row's place. Pairs already here are skipped;
    * when every pair is, nothing changes. */
   private async pasteLinks(items: readonly ClipItem[], at: OutlineRow, block: boolean, before: InputBookmark): Promise<void> {
-    const parent_ref = at.parent_ref, roots = items.flatMap(item => item.parent === null ? [item.ref!] : []);
+    const parent_ref = at.parent_ref, roots = items.flatMap(item => item.parent === null ? [item.ref!] : []), credit = this.history.origin.credit();
     // the planner's rule: no root lands beneath itself.
     const above = [parent_ref];
     for (let row = this.rows.get(at.parent_id!); row?.parent_id; row = this.rows.get(row.parent_id)) above.push(row.parent_ref);
@@ -2512,7 +2512,7 @@ export class OutlineController {
     const first = block ? {after: at.ref, before: null} : {after: null, before: at.seed ? null : at.ref}, rows = fresh.map(() => crypto.randomUUID());
     const admitted = this.history.createMany({births: fresh.map((ref, index) => index ? {ref, parent: parent_ref, after: index - 1, before: null} : {ref, parent: parent_ref, ...first}),
       parents: [this.writing(parent_ref)], change: {before, after: () => before, placements_after: (_documents, links) => fresh.map((ref, index) => ({row_id: rows[index]!, ref, link: links[index]!,
-        placement: {row_id: rows[index]!, ref, parent_id: at.parent_id!, parent_ref, after_id: index ? rows[index - 1]! : block ? at.row_id : null, before_id: !index && !block && !at.seed ? at.row_id : null}}))}});
+        placement: {row_id: rows[index]!, ref, parent_id: at.parent_id!, parent_ref, after_id: index ? rows[index - 1]! : block ? at.row_id : null, before_id: !index && !block && !at.seed ? at.row_id : null}}))}}, credit);
     if (at.seed) this.consumeSeed(admitted.committed);
     void Promise.all(admitted.links).then(links => {
       if (!this.active) return;

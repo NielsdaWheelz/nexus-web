@@ -3,6 +3,7 @@ package app.nexus.android
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
+import app.nexus.android.authored.AUTHORED_FORMAT_REVISION
 import app.nexus.android.offline.RESERVE_BYTES
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -202,7 +203,7 @@ internal class NexusOriginClient(
     suspend fun authoredPush(account: UUID, body: JSONObject): JSONObject = data(Request.Builder().url(api("authored", "changes")).header("X-Nexus-Account", account.toString()).post(body.toString().toRequestBody(JSON)))
     suspend fun authoredPull(account: UUID, after: String): JSONObject {
         require(after.toLong() >= 0)
-        return data(Request.Builder().url(api("authored", "changes").newBuilder().addQueryParameter("after", after).build()).header("X-Nexus-Account", account.toString()).get())
+        return data(Request.Builder().url(api("authored", "changes").newBuilder().addQueryParameter("after", after).addQueryParameter("format_revision", AUTHORED_FORMAT_REVISION.toString()).build()).header("X-Nexus-Account", account.toString()).get())
     }
     suspend fun authoredScopeInputs(account: UUID, body: JSONObject): JSONObject = data(Request.Builder().url(api("authored", "scope-inputs")).header("X-Nexus-Account", account.toString()).post(body.toString().toRequestBody(JSON)))
     suspend fun authoredScopeText(account: UUID, body: JSONObject): JSONObject = data(Request.Builder().url(api("authored", "scope-text")).header("X-Nexus-Account", account.toString()).post(body.toString().toRequestBody(JSON)))

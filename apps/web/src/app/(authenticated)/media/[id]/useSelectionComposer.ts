@@ -361,7 +361,7 @@ export function useSelectionComposer(input: {
               createdBody = encodeBytes(Y.encodeStateAsUpdate(clone));
             } finally {clone.destroy();}
             const document = await writing.openDocument(annotation.ref), origin = Symbol("selection annotation save");
-            await writing.admitWriting({existing: [{document, origin}], notes: [], mutate: () => {Y.applyUpdate(document.doc, delta, origin);},
+            await writing.admitWriting({credit: null, existing: [{document, origin}], notes: [], mutate: () => {Y.applyUpdate(document.doc, delta, origin);},
               prepare: async () => annotation.color === submitted.color ? [] : [colour]}).result;
           } else if (annotation.color !== submitted.color) await writing.run(colour);
         }

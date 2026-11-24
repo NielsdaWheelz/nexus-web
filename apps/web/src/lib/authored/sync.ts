@@ -148,7 +148,7 @@ export class Sync {
   }
   private async download() {
     const replica = await this.local(() => this.persistence.replica());
-    const { data } = await this.transport.json<{ data: { changes: FeedChange[]; next_cursor: string; head_cursor: string; evidence_revision: string } }>(`/api/authored/changes?after=${replica.server_cursor}`, null, this.abort.signal);
+    const { data } = await this.transport.json<{ data: { changes: FeedChange[]; next_cursor: string; head_cursor: string; evidence_revision: string } }>(`/api/authored/changes?after=${replica.server_cursor}&format_revision=${FORMAT_REVISION}`, null, this.abort.signal);
     if (this.retired) return;
     this.pullTarget ??= data.head_cursor;
     this.facts.head = max(this.facts.head, data.head_cursor);

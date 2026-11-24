@@ -262,13 +262,22 @@ a selection captures publication, geometry, quote and context together. endpoint
 order is fractional position then link id; equal-key insertion rekeys only the
 observed tie run. receiving and indexing never manufacture a touch.
 
-the register lists visible undated pages by display title under sqlite `NOCASE`,
-then ref. keyset pagination uses that same pair and the `resources_register`
-partial index. the uppercased first code point heads each run. only ascii letters fold.
-an empty title files as `untitled page`. `opened here` resolves device recents
-and shows the first eight visible undated pages in recent order. a filter hides
-that group and applies to the loaded register prefix. `New page` opens an empty
-focused title on the paper. authored devices store no edit timestamps.
+notes opens the continuous journal at the account's current day. the separate
+add action appends and focuses one tail bullet. the local register lists each
+visible undated page once, including untitled pages. title filtering covers the
+whole register with literal unicode-normalized substring matching. dates use the
+account's calendar. the default order is greatest writing time, then display
+title under sqlite `NOCASE`, then ref. unknown times sort last. title order uses
+the same title and ref keys. indexed keyset pages establish continuation with one
+lookahead. back retains still-matching row identities and focus against one
+current store revision. a fresh visit ranks again.
+
+each effective authored edit credits its outer undated writing page at the
+originating device's time. explicitly targeted tool appends use their call time.
+work bookkeeping alone earns no credit. the timestamp merges by maximum and is
+included in the same immutable source change. a marker carries no touch or title
+update and can credit a tombstone without recreating it. marker-only pages skip
+relational page, search and suggestion effects.
 
 one local sql transaction commits touched merge bytes, projections, indexes,
 source sequence, store revision and immutable pending change. only durable commit
@@ -794,21 +803,19 @@ reopen before the cached shell loads.
 the product does not add a second activation protocol to repair that platform
 boundary. local corpus ownership remains independent of shell asset delivery.
 
-both hosts transactionally upgrade a drained format-4 store to format 5: add null
-work to canonical notes and every resource/passage projection; preserve replica
-identity, body bytes, source sequence and cursor. a nonempty outbox refuses the
-upgrade without writes. both hosts carry `E_AUTHORED_UPGRADE_PENDING` into the
-existing setup refusal: drain the previous version on this device, then retry.
-that surface offers no sign-out or discard action. unknown formats remain errors.
-canonical migration 0339
-adds note metadata, advances format-4 admissions and fences prior feed bytes at the
-locked head. coordinated release requires drained, caught-up devices and stopped
-old writers; pending immutable commands are never rewritten.
+both hosts check account, format and empty outbox before rebasing drained local
+formats 4–6 onto a format-7 snapshot. the transaction retains replica identity
+and counters, and does not expose the incomplete rebuild. a nonempty old outbox
+refuses with `E_AUTHORED_UPGRADE_PENDING` and keeps its bytes. drain using the
+previous release. migration 0348 sets old page times to null, promotes format-6
+producers and fences old feed bytes at the locked head. see the
+[coordinated rollout](../issues/release-notes-home.md).
 
 ## replication
 
 `POST /authored/replicas` provisions a fresh account replica. immutable contiguous
-changes upload through `POST /authored/changes`; accepted prefixes are recognized
+changes upload through `POST /authored/changes`. feed reads and writes require the current authored
+format. accepted prefixes are recognized
 and compared before new commands merge. the account head lock commits canonical
 states, projections, consecutive feed sequences and source acceptance together.
 server tools use that same owner within their existing fenced transaction.

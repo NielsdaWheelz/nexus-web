@@ -1,6 +1,6 @@
 "use client";
 
-import { paneFilterText } from "./paneFilterText";
+import { paneFilterText } from "@nexus/authored/paneFilterText";
 import { useCallback, useMemo, useState } from "react";
 import { truncatePaneSearchQuery } from "@/lib/panes/paneChrome";
 import { definePaneVisitDataKey, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";

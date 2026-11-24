@@ -186,7 +186,7 @@ function AnnotationComposer({highlightRef, resource, rest = true, occurrenceKey,
     ownHistory.boundary();
     setBusy(true);
     let admitted;
-    try {admitted = writing.admitWriting({existing: [{document, origin}], notes: [], mutate: () => {Y.applyUpdate(document.doc, delta, origin);}, prepare: async () => {
+    try {admitted = writing.admitWriting({credit: null, existing: [{document, origin}], notes: [], mutate: () => {Y.applyUpdate(document.doc, delta, origin);}, prepare: async () => {
       const intents = [];
       for (const link of submitted.links) {const target = await prepareTarget(writing, link.target); const prepared = await prepareLink(writing, {source_ref: highlightRef, target_ref: target.ref, source_label: null, target_label: link.label, after: null}); intents.push(...target.intents, ...prepared.intents);}
       return intents;

@@ -1,13 +1,35 @@
-/* The register's heads stand in the list's head slot, whose `h3` wears the list-head font;
-   the role's class outranks it. */
-.register .recent {
-  font: var(--apparatus-font);
-  letter-spacing: var(--tracking-wider);
-  color: var(--ink-muted);
+.register {
+  max-inline-size: calc(var(--reader-column-width-ch, 72ch) + 2 * var(--space-4));
+  margin-inline: auto;
 }
 
-.register .letter {
-  font: inherit;
-  font-size: 1.3125em;
-  color: var(--ink-muted);
+.journal {
+  border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
+  padding-block-end: var(--space-3);
 }
+
+.band {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.band .journalLink {
+  min-inline-size: 0;
+  color: var(--ink);
+  font: inherit;
+  text-align: start;
+}
+
+.journalLabel { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--space-3); }
+.journalName { font-size: 1.3125em; }
+.journalDate { color: var(--ink-muted); font: var(--apparatus-font); }
+.add { flex: none; }
+.pages {
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-2);
+  color: var(--ink-muted);
+  font: var(--list-head-font);
+}
+.footer { display: flex; justify-content: center; margin-block-start: var(--space-3); }

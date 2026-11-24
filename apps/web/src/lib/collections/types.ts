@@ -70,5 +70,6 @@ export type CollectionRowView = CollectionRowBase & (
       /** omission reserves no column; a null source still presents an initials tile. */
       readonly artwork?: { readonly imageUrl: string | null };
     }
-  | { readonly kind: Exclude<CollectionItemKind, "podcast" | "feed">; readonly artwork?: never }
+  | { readonly kind: "note"; readonly workDateMark?: { date: string; label: string }; readonly artwork?: never }
+  | { readonly kind: Exclude<CollectionItemKind, "podcast" | "feed" | "note">; readonly artwork?: never }
 );
