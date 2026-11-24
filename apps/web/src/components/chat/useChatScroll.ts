@@ -59,6 +59,7 @@ type WindowGeometry = {
 function createScrollOwner(
   scrollport: RefObject<HTMLDivElement | null>,
   transcript: RefObject<HTMLDivElement | null>,
+  spacerElement: RefObject<HTMLDivElement | null>,
   setSpacer: (px: number) => void,
   setLatestBelow: (below: boolean) => void,
   onAttention: () => void,
@@ -190,15 +191,11 @@ function createScrollOwner(
       Math.max(0, top),
       Math.max(0, port.scrollHeight - port.clientHeight),
     );
+  const paintedSpacer = () => spacerElement.current?.getBoundingClientRect().height ?? 0;
   /** Would the newest content end below the fold with the transcript scrolled to `top`? */
   const overflows = (top: number) => {
-    const port = scrollport.current;
-    const content = transcript.current;
-    return (
-      !!port &&
-      !!content &&
-      content.scrollHeight - spacer > top + port.clientHeight + 1
-    );
+    const port = scrollport.current, content = transcript.current;
+    return !!port && !!content && content.getBoundingClientRect().height - paintedSpacer() > top + port.clientHeight + 1;
   };
   const jump = (top: number) => {
     const port = scrollport.current;
@@ -210,12 +207,10 @@ function createScrollOwner(
     geometry().readViewport();
   };
   const measure = () => {
-    const port = scrollport.current;
-    const content = transcript.current;
-    const anchor = message(anchorId);
+    const port = scrollport.current, content = transcript.current, anchor = message(anchorId);
     if (!port || !content || motion !== "still") return;
-    const below = anchor ? content.scrollHeight - anchor.offsetTop - spacer : 0;
-    const next = anchor ? Math.max(0, port.clientHeight - inset() - below) : 0;
+    const below = anchor ? content.getBoundingClientRect().bottom - anchor.getBoundingClientRect().top - paintedSpacer() : 0;
+    const next = anchor ? Math.max(0, Math.round(port.clientHeight - inset() - below)) : 0;
     if (next !== spacer) setSpacer((spacer = next));
   };
   /** Latest shows once the pin has had its say: never for growth the pin is about to follow. */
@@ -478,13 +473,14 @@ export function useChatScroll(
   onAttention: () => void,
   geometry: WindowGeometry,
 ) {
+  const spacerElement = useRef<HTMLDivElement>(null);
   const [spacer, setSpacer] = useState(0);
   const [latestBelow, setLatestBelow] = useState(false);
   const attention = useRef(onAttention);
   attention.current = onAttention;
   const layout = useRef(geometry); layout.current = geometry;
   const [owner] = useState(() =>
-    createScrollOwner(scrollport, transcript, setSpacer, setLatestBelow, () => attention.current(), () => layout.current),
+    createScrollOwner(scrollport, transcript, spacerElement, setSpacer, setLatestBelow, () => attention.current(), () => layout.current),
   );
   useLayoutEffect(
     () => owner.turn(lastUserId, initialId, latest, sent),
@@ -492,7 +488,7 @@ export function useChatScroll(
   );
   useLayoutEffect(() => { owner.afterLayout(); });
   useLayoutEffect(() => owner.observe(), [owner]);
-  return { ...owner, spacer, latestBelow };
+  return { ...owner, spacer, spacerElement, latestBelow };
 }
 
 /** The transcript owns scrolling; inspection never changes its message content. */

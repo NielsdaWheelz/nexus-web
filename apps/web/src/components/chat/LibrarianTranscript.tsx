@@ -77,20 +77,22 @@ export default function LibrarianTranscript({ history, adopted, messageId, query
   const restoreId = restoredPosition.current === readingPosition ? null : readingPosition?.point?.runId ?? null;
   const [passage, setPassage] = useState<{ messageId: string; start: number; end: number; activationId: string } | null>(null);
   const [keyboard, setKeyboard] = useState<{ id: string; reverse: boolean; origin: HTMLElement } | null>(null);
-  const pinned = [
-    ...(keyboard === null ? [] : [keyboard.id]),
+  const keyboardId = keyboard?.id ?? null;
+  const pinned = useMemo(() => [
+    ...(keyboardId === null ? [] : [keyboardId]),
     ...(entry === null ? [] : [entry]),
     ...(restoreId === null ? [] : [restoreId]),
     ...(timeline?.items ?? []).filter(turn => turn.assistant_message.status === "pending").map(turn => turn.run_id),
     ...adopted.map(turn => turn.run_id),
-  ];
+  ], [keyboardId, entry, restoreId, timeline, adopted]);
   const view = useTranscriptWindow(scrollport, transcript, order, restoreId ?? entry, pinned);
   const bodies = useTranscriptBodies(timeline, adopted, view.demand, history.revalidate);
   const last = view.shown.at(-1);
-  const turns = view.rows.flatMap(row => {
-    const body = bodies.get(row.key.run_id);
+  const getBody = bodies.get;
+  const turns = useMemo(() => view.rows.flatMap(row => {
+    const body = getBody(row.key.run_id);
     return body ? [body] : [];
-  });
+  }), [view.rows, getBody]);
   const arrivalRef = useRef<ReturnType<typeof useSourceArrival> | null>(null);
   const scroll = useChatScroll(scrollport, transcript, last?.user_message_id ?? null, entry, messageId === null,
     adopted.at(-1)?.run_id ?? null, () => arrivalRef.current?.supersede({ preserveSignal: null, retireFailure: false }), view);
@@ -193,13 +195,13 @@ export default function LibrarianTranscript({ history, adopted, messageId, query
                   day={newDay ? { label: newYear ? `${label} ${year}` : label, full: formats.full.format(date) } : null}
                   time={formats.time.format(date)} refresh={history.revalidate} onInspect={scroll.handle.inspectDisclosure}
                   onRetry={() => onRetry(turn.run_id)} retryBlocked={retryBlocked} inlineAttachments={references.inlineAttachments}
-                  onReadTurn={bodies.adopt} onContentLayout={scroll.afterLayout} onRevealReferences={references.reveal} />
+                  onReadTurn={bodies.adopt} onRevealReferences={references.reveal} />
               : error ? <Failed error={error} noun="messages" retry={{ run: bodies.retry, busy: false }} />
               : key.run_id === firstFailure && bodies.unavailable(key.run_id) ? <Fact line={{ fact: "this turn is unavailable." }} /> : null}
           </div>
         </div>;
       })}
-      <div className={styles.spacer} aria-hidden="true" style={{ height: scroll.spacer }} />
+      <div ref={scroll.spacerElement} className={styles.spacer} aria-hidden="true" style={{ height: scroll.spacer }} />
     </div>
     {scroll.latestBelow || messageId ? <div className={styles.latest}><Button icon={<Icon.Down />} onClick={() => messageId ? router.push("/librarian") : scroll.toLatest()}>latest</Button></div> : null}
   </div>;

@@ -93,12 +93,13 @@ export function useTranscriptBodies(timeline: Timeline | null, adopted: readonly
       return { ...previous, rows };
     });
   }, []);
+  const get = useCallback((id: string) => {
+    if (!active.has(id)) return accepted.get(id) ?? null;
+    return state.rows.get(id)?.turn ?? (state.rows.has(id) ? null : seeds.get(id) ?? null);
+  }, [active, accepted, state.rows, seeds]);
   if (defect) throw defect.error;
   return {
-    get(id: string) {
-      if (!active.has(id)) return accepted.get(id) ?? null;
-      return state.rows.get(id)?.turn ?? (state.rows.has(id) ? null : seeds.get(id) ?? null);
-    },
+    get,
     unavailable: (id: string) => state.rows.get(id)?.turn === null && state.rows.get(id)?.observation === timeline,
     error: (id: string) => failed?.observation === timeline && failed.ids.includes(id) ? failed.error : null,
     retry: () => setFailed(null),

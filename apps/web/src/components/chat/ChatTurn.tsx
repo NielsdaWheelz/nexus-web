@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { Line } from "@/components/feedback/stage";
 import { Announcement } from "@/components/feedback/Announcement";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
@@ -37,7 +37,7 @@ const FAILURE_REASON = {
 
 /** Tailing paints one pending turn. A terminal read alone adopts its final text,
  * citations, trust trail and capabilities; stream loss never implies failure. */
-export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, retryBlocked, day, time, inlineAttachments, onReadTurn, onRevealReferences, onContentLayout }: {
+export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, retryBlocked, day, time, inlineAttachments, onReadTurn, onRevealReferences }: {
   turn: Turn;
   passage: { messageId: string; start: number; end: number } | null;
   day: { label: string; full: string } | null;
@@ -49,7 +49,6 @@ export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, r
   onReadTurn(turn: Turn): void;
   onInspect(trigger: HTMLElement): void;
   onRevealReferences(messageId: string, trigger: HTMLElement, keyboard: boolean): void;
-  onContentLayout(): void;
 }) {
   const saved = turn;
   const [live, setLive] = useState<Live | null>(null);
@@ -98,7 +97,6 @@ export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, r
   const phase = live?.execution?.phase ?? saved.execution?.phase;
   const status = !pending ? null : phase === "Suspended" ? "this turn needs a repair." : stopped ? "stopping this turn." : phase === "Queued" ? "queued" : phase === "Recovering" ? "recovering this turn." : "answering";
   const text = pending ? live?.text || message.content : message.content;
-  useLayoutEffect(onContentLayout, [text, message, onContentLayout]);
   const run = message.trust_trail?.run;
   const reason = run?.failure ? FAILURE_REASON[run.failure.code] : null;
   const failedLine: Line = { fact: text.trim() ? "this answer is incomplete." : message.status === "cancelled" ? "cancelled." : "couldn’t answer.",

@@ -55,17 +55,22 @@ export function useTranscriptWindow(
     setFrame(previous => previous.top === top && previous.height === height && previous.positioned === current.current.nonempty
       ? previous : { top, height, positioned: current.current.nonempty });
   }, [port, root]);
-  const topOf = (rank: number) => layout.ends[rank - 1] ?? 0;
+  const topOf = useCallback((rank: number) => layout.ends[rank - 1] ?? 0, [layout.ends]);
   const targetRank = target === null ? undefined : layout.ranks.get(target);
   const top = frame.positioned ? frame.top
     : targetRank === undefined ? Math.max(0, layout.height - frame.height) : topOf(targetRank);
   const start = firstAfter(layout.ends, top - frame.height);
   const end = Math.min(shown.length, firstAfter(layout.ends, top + 2 * frame.height) + 1);
-  const pinnedRanks = [...pins, ...focused].flatMap(id => {
+  const pinnedRanks = useMemo(() => [...pins, ...focused].flatMap(id => {
     const rank = layout.ranks.get(id);
     return rank === undefined ? [] : [rank];
-  });
-  const plan = windowRanks({ start, end, pinnedRanks, count: shown.length });
+  }), [pins, focused, layout.ranks]);
+  const plan = useMemo(() => windowRanks({ start, end, pinnedRanks, count: shown.length }), [start, end, pinnedRanks, shown.length]);
+  const rows = useMemo(() => plan.rows.map(({ index, gap }) => ({
+    rank: index, key: shown[index],
+    height: layout.ends[index] - topOf(index),
+    gap: topOf(index) - topOf(index - gap),
+  })), [plan.rows, shown, layout.ends, topOf]);
   const demand = useRef<readonly string[]>([]);
   // A distant seek reserves intervening slots without reading their bodies.
   // In-flight bodies for the old viewport can still paint inside held slots.
@@ -135,11 +140,7 @@ export function useTranscriptWindow(
   return {
     shown, motion, setMotion, readViewport, observe,
     demand: demand.current,
-    rows: plan.rows.map(({ index, gap }) => ({
-      rank: index, key: shown[index],
-      height: layout.ends[index] - topOf(index),
-      gap: topOf(index) - topOf(index - gap),
-    })),
+    rows,
     offset(id: string) {
       const rank = layout.ranks.get(id);
       if (rank === undefined || !root.current) return null;
