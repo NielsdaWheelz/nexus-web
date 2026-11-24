@@ -183,7 +183,7 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
           const proof: NonNullable<CompanionLanding["proof"]> = {revision: live};
           saved.proof = proof;
           const current = () => landing.current === saved && saved.proof === proof && saved.input === position.current.input;
-          void saved.order.land(saved.rank, live).then(id => {
+          void saved.order.land(saved.rank, live, () => true).then(id => {
             if (!current() || id === undefined) return;
             if (id === null) {forgetLanding(); return;}
             proof.id = id;
