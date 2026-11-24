@@ -473,7 +473,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             .put("next_cursor", JSONObject.NULL).put("previous_cursor", JSONObject.NULL)
             .put("binding_id", JSONObject.NULL).put("canonical_source_ref", JSONObject.NULL)
             .put("scope_available", true).put("daily_index", JSONObject.NULL).put("outline_windows", JSONObject.NULL)
-            .put("page_register", JSONObject.NULL).put("page_label", JSONObject.NULL).put("outline_filter", JSONObject.NULL)
+            .put("page_register", JSONObject.NULL).put("register_label", JSONObject.NULL).put("outline_filter", JSONObject.NULL)
             .put("work_index", JSONObject.NULL).put("habits", JSONObject.NULL).put("mentions", JSONObject.NULL).put("habit_days", JSONObject.NULL).put("latest_habit_date", JSONObject.NULL)
         if (kind in listOf("page_register", "outline_filter", "work_pending", "work_completed", "habits", "mentions")) {
             val field = if (kind in listOf("work_pending", "work_completed")) "work_index" else kind
@@ -500,9 +500,9 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             return result.put(kind, JSONArray().apply { for (index in 0 until dates.length()) put(dates.getJSONObject(index).getString("local_date")) })
         }
         if (kind == "latest_habit_date") return result.put(kind, read(0).getJSONObject(0).get("local_date"))
-        if (kind == "page_label") {
-            val row = read(0).optJSONObject(0)
-            return result.put(kind, JSONObject().put("label", row?.opt("label") ?: JSONObject.NULL).put("oversized", row?.getInt("oversized") == 1))
+        if (kind == "register_label") {
+            val row = read(0).optJSONObject(0) ?: return result
+            return result.put(kind, JSONObject().put("label", row.get("label")).put("oversized", row.getInt("oversized") == 1))
         }
         val records = read(0)
         if (kind == "daily_index") {

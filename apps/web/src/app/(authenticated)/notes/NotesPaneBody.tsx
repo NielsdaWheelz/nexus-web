@@ -29,8 +29,8 @@ const UNIT = {singular: "page", plural: "pages"};
 /** Only mounted oversized titles need a read. Their identity, header and link already exist. */
 function LongTitleRow(props: CollectionViewRowRenderProps) {
   const ref = props.row.resourceRef!;
-  const read = useAuthoredQuery({kind: "page_label", ref});
-  const result = read.data?.page_label;
+  const read = useAuthoredQuery({kind: "register_label", ref});
+  const result = read.data?.register_label;
   const title = result?.label ?? (result?.oversized ? "title too large to display" : read.error ? "couldn’t read title" : "page");
   return <CollectionRow {...props} row={{...presentNote({id: ref.slice(5), title}), id: props.row.id}}
     primaryControl={read.error ? <AuthoredReadFailure {...read} noun="this title"/> : props.primaryControl}/>;

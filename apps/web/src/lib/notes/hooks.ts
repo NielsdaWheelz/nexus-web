@@ -64,6 +64,15 @@ export function useAuthoredQuery(query: AuthoredQuery | null) {
   const current = state.key === key && state.accountId === accountId;
   return { data: current ? state.data : null, error: current ? state.error : null, occurrence: current ? state.occurrence : null, pending: query !== null && (!current || state.pending), retry };
 }
+export function useWorkLabel({ref, label}: {ref: string; label: string | null}) {
+  const read = useAuthoredQuery(label === null ? {kind: "register_label", ref} : null);
+  const resolved = read.data?.register_label;
+  return {
+    label: (label ?? resolved?.label ?? (resolved?.oversized ? "name too large to display" : "note")) || "empty note",
+    read,
+  };
+}
+
 export function useWritingDocument(ref: string | null, prelude: readonly Intent[] = []) {
   const runtime = useWritingRuntime();
   const preludeKey = JSON.stringify(prelude);

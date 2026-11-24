@@ -58,7 +58,7 @@ export default defineConfig({
             {kind: "page_register", text, at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
             {kind: "page_register", text, at: {kind: "locate", refs: []}, expected_revision: "0"},
           ]),
-          page_label: [{kind: "page_label", ref: ""}],
+          register_label: [{kind: "register_label", ref: ""}],
           outline_filter: ["","words"].map(text => ({kind: "outline_filter", parent_ref: "", text, start: 0, limit: 1, expected_revision: null})),
           daily_index: [{kind: "daily_index"}],
           work_pending: [{kind: "work_pending", local_date: "2026-11-11", ...index}],
