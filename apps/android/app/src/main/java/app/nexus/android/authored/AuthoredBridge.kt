@@ -156,7 +156,8 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                         }
                         val query = if (operation == "query") request.optJSONObject("query") else null
                         val indexKind = query?.optString("kind")
-                        val order = if (indexKind == "page_register" || indexKind == "habits") query.optJSONObject("at") else null
+                        val order = if (indexKind in listOf("page_register", "habits", "work_pending", "work_completed")) query?.optJSONObject("at") else null
+                        val indexField = if (indexKind == "work_pending" || indexKind == "work_completed") "work_index" else indexKind
                         val token = order?.takeIf { it.has("token") }?.getString("token")
                         val orderOperation = order?.optString("kind")
                         if (token != null) when (orderOperation) {
@@ -204,7 +205,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                         }
                         require(current(message, account))
                         if (token != null && (orderOperation == "release" || orderOperation == "retain" &&
-                                result.optJSONObject(indexKind)?.optString("kind") == "changed")) indexOrders.remove(token)
+                                result.optJSONObject(indexField)?.optString("kind") == "changed")) indexOrders.remove(token)
                         if (operation == "hello") { boundAccount = account; documentOwner = message to account; result.put("wire_revision", BuildConfig.NEXUS_WIRE).put("foreground", foreground).put("foreground_revision", foregroundRevision.toString()) }
                         val bytes = result.toString().toByteArray(Charsets.UTF_8)
                         require(bytes.size <= AUTHORED_TRANSFER_BYTES && outputs.size < 8)

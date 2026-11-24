@@ -436,11 +436,11 @@ function compileCapturedIndex(at: CapturedIndexDemand["at"], {
         throw new RangeError("Invalid held index range");
       return {sql: `WITH slice AS (
         SELECT o.group_name,r.ref,${details} FROM captured_index_orders o LEFT JOIN resources r
-          ON r.ref=o.ref AND ${visible}
-          WHERE o.token=?1 AND o.rank>=?2 AND o.rank<?2+?3 ORDER BY o.rank)
-        SELECT json_object('kind','held','start',?2,'items',json_group_array(
+          ON r.ref=o.ref AND ${visible}${matches}
+          WHERE o.token=?${first} AND o.rank>=?${first+1} AND o.rank<?${first+1}+?${first+2} ORDER BY o.rank)
+        SELECT json_object('kind','held','start',?${first+1},'items',json_group_array(
           CASE WHEN ref IS NULL THEN NULL ELSE json_object(${item}) END)) AS register FROM slice`,
-        params: [token,start,limit]};
+        params: [...params,token,start,limit]};
     }
     case "successor":
     case "landing": {
@@ -640,20 +640,32 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       validateLocalDate(query.local_date);
       const completed = query.kind === "work_completed";
       const sameDay = "EXISTS(SELECT 1 FROM json_each(state_json,'$.work.habit_checks') day WHERE day.key=?1 AND json_extract(day.value,'$.value')=1)";
+      const taskMatch = completed ? `${WORK_TASK_HISTORY} AND ${WORK_TASK_DAY}=?1` : WORK_OPEN_TASK;
+      const habitMatch = completed ? `${WORK_HABIT_HISTORY} AND ${WORK_TASK_DAY} IS NOT ?1 AND ${sameDay}` : `${WORK_ACTIVE_HABIT} AND NOT ${sameDay}`;
       const tasks = completed
-        ? `FROM resources INDEXED BY resources_task_days WHERE ${WORK_TASK_HISTORY} AND ${WORK_TASK_DAY}=?1`
-        : `FROM resources INDEXED BY resources_open_tasks WHERE ${WORK_OPEN_TASK}`;
+        ? `FROM resources INDEXED BY resources_task_days WHERE ${taskMatch}`
+        : `FROM resources INDEXED BY resources_open_tasks WHERE ${taskMatch}`;
       const habits = completed
-        ? `FROM resources INDEXED BY resources_habit_history WHERE ${WORK_HABIT_HISTORY} AND ${WORK_TASK_DAY} IS NOT ?1 AND ${sameDay}`
-        : `FROM resources INDEXED BY resources_active_habits WHERE ${WORK_ACTIVE_HABIT} AND NOT ${sameDay}`;
+        ? `FROM resources INDEXED BY resources_habit_history WHERE ${habitMatch}`
+        : `FROM resources INDEXED BY resources_active_habits WHERE ${habitMatch}`;
       const rankKeys = `SELECT ref,${WORK_CAPTURE_LAMPORT} AS lamport,${WORK_CAPTURE_REPLICA} AS replica`;
-      const eligible = `eligible AS NOT MATERIALIZED (${rankKeys} ${tasks} UNION ALL ${rankKeys} ${habits})`;
+      const members = `${rankKeys} ${tasks} UNION ALL ${rankKeys} ${habits}`;
+      const eligible = `eligible AS NOT MATERIALIZED (${members})`;
       const order = "lamport,replica,ref";
       // Visit the slice first. A reordered join scans bodies to find their keys.
-      const detail = `detail AS (SELECT slice.*,${WORK_LABEL_SQL} AS label,json_extract(projection_json,'$.work') AS work
+      const fields = `${WORK_LABEL_SQL} AS label,json_extract(projection_json,'$.work') AS work`;
+      const detail = `detail AS (SELECT slice.*,${fields}
         FROM slice CROSS JOIN resources ON resources.ref=slice.ref)`;
       const item = workIndexItem("json_set(work,'$.habit_dates',json('[]'))");
       switch (query.at.kind) {
+        case "retain":
+        case "held":
+        case "successor":
+        case "landing":
+        case "release":
+          return compileCapturedIndex(query.at, {members: `FROM (${members})`, order, group: "''",
+            visible: "r.kind='note' AND r.visible=1", details: fields, item,
+            matches: ` AND ((${taskMatch}) OR (${habitMatch}))`, params: [query.local_date]});
         case "describe":
           return {sql: `WITH ${eligible},extent AS (SELECT (SELECT count(*) ${tasks})+(SELECT count(*) ${habits}) AS total),
             slice AS (SELECT * FROM eligible ORDER BY ${order}

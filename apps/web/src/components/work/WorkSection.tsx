@@ -28,8 +28,8 @@ import { canonicalResourceRef } from "@/lib/sharing/targets";
 import * as Icon from "@/lib/ui/icons";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import { useWorkGuard } from "@/lib/unsavedWork";
-import { PaneRefreshAnchor } from "@/lib/workspace/paneReturnMemento";
-import { amendWorkOrder, compareWork, useWorkRegister } from "./workRegister";
+import { PaneRefreshAnchor, usePaneIndexRevision } from "@/lib/workspace/paneReturnMemento";
+import { compareWork, useWorkOrder, useWorkRegister } from "./workRegister";
 import styles from "./dailyWork.module.css";
 
 /** The row stands drawn done this long after the press, measured from the press's own input timestamp. Holds are
@@ -37,6 +37,7 @@ import styles from "./dailyWork.module.css";
 const DWELL_MS = 600;
 /** The receipt stands this long from its display, then leaves. A pressed undo keeps it until the undo settles. */
 const RECEIPT_MS = 5000;
+const NO_WORK = new Map<string, WorkIndexItem>();
 
 /** An agenda completion. This section owns its durable `write`, so a refusal or a defect is not lost with the row or
  * the receipt. `press` names the gesture: a late promise or timer for an older press of the same row changes
@@ -125,24 +126,27 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
     }
     return add.current;
   }, []);
-  const layout = useMemo(() => ({rows: read.data?.work_index ?? null, held, completions, open, adding}), [read.data, held, completions, open, adding]);
-  const admitted = !work.sparse || retained.size === 0 || placements !== null;
-  const proposed = {
-    account, today, pending: work.rows,
-    ranked: work.sparse ? amendWorkOrder(work.ranked, placements ?? [], retained, expired) : undefined,
-  };
+  const presented = work.presentation;
+  const current = presented !== null && presented.revision === work.revision;
+  const admitted = current && (!work.sparse || retained.size === 0 || placements !== null);
+  const ranked = useWorkOrder(presented?.ranked, current ? placements : null, retained, expired);
+  const proposed = {account, today, revision: presented?.revision ?? null, ranked};
   const published = useRef<typeof proposed | null>(null);
   const view = !admitted && published.current?.account === account && published.current.today === today ? published.current : proposed;
   useLayoutEffect(() => {if (admitted) published.current = proposed;});
+  const pending = presented === null ? NO_WORK : work.rows;
   const visible = useMemo(() => {
-    const rows = new Map([...retained, ...view.pending]);
+    const rows = new Map([...retained, ...pending]);
     for (const ref of expired) rows.delete(ref);
     return rows;
-  }, [retained, view.pending, expired]);
+  }, [retained, pending, expired]);
   const refs = useMemo(() => [...visible.values()].sort(compareWork).map(row => row.ref), [visible]);
   const pins = useMemo(() => new Set(retained.keys()), [retained]);
   const index = useVariableIndex({scope: "work", ids: refs, ranked: view.ranked, list, estimate: 48, pinned: pins,
     windowed: view.ranked !== undefined || refs.length > INDEX_WINDOW_THRESHOLD});
+  usePaneIndexRevision("work", view.revision, today === null || view.revision !== null);
+  const layout = useMemo(() => ({rows: read.data?.work_index ?? null, held, completions, open, adding, windowed: index.windowed}),
+    [read.data, held, completions, open, adding, index.windowed]);
   if (failure) throw failure.error;
   const reply = read.error !== null ? read : place.error !== null ? place : {error: work.error, retry: work.retry};
   // A rank demand may be sparse. Focus recovery only needs the attached signs.
@@ -182,7 +186,7 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
           return completion?.phase === "receipt"
             ? <Receipt key={resource.ref} slot={slot} completion={completion} history={history} step={step} fail={fail}
               recover={() => signOf([resource.ref, ...around(position)])} />
-            : <WorkRow key={resource.ref} slot={slot} resource={resource} retained={!view.pending.has(resource.ref)} today={today} history={history} hold={hold}
+            : <WorkRow key={resource.ref} slot={slot} resource={resource} retained={!pending.has(resource.ref)} today={today} history={history} hold={hold}
               completion={completion} step={step} onComplete={(snapshot, press) => complete(snapshot, position, press)}
               recover={() => list.current?.querySelector<HTMLElement>(`[data-work-ref="${CSS.escape(resource.ref)}"] [data-receipt-undo]`) ?? signOf(around(position))} />;
         })}

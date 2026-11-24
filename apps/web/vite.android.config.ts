@@ -11,7 +11,7 @@ import { Features } from "lightningcss";
 import { compileQuery, compileOutlineWindows, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, SEARCH_READ_SQL, SEARCH_MATCH_SQL, LITERAL_SOURCE_SQL, LITERAL_MISSING_SQL, LITERAL_WRITE_SQL } from "../../node/authored/src/queries";
 import { SCOPE_SQL } from "../../node/authored/src/scope";
 import { nativeQueryPlans } from "./src/lib/authored/nativeQuery";
-import type { AuthoredQuery, CapturedIndexSource, WorkRegisterSource } from "../../node/authored/src/types";
+import type { AuthoredQuery, CapturedIndexSource } from "../../node/authored/src/types";
 import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_TO_6_SQL } from "../../node/authored/src/schema";
 import { appCsp } from "./src/lib/security/csp";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
@@ -53,11 +53,6 @@ export default defineConfig({
         const index = {start: 0, limit: 100, expected_revision: null};
         type PackagedQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;
         const workDate = "2026-11-11";
-        const workSamples = (source: WorkRegisterSource): PackagedQuery[] => [
-          {...source, at: {kind: "describe"}, expected_revision: null},
-          {...source, at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
-          {...source, at: {kind: "locate", refs: []}, expected_revision: "0"},
-        ];
         const capturedSamples = (source: CapturedIndexSource): PackagedQuery[] => [
           {...source, at: {kind: "describe"}, expected_revision: null},
           {...source, at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
@@ -77,9 +72,9 @@ export default defineConfig({
             {kind: "daily_index", arrival: "2026-11-11", retained: [], at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
             {kind: "daily_index", arrival: "2026-11-11", retained: [], at: {kind: "locate", dates: []}, expected_revision: "0"},
           ],
-          work_pending: [...workSamples({kind:"work_pending", local_date:workDate}),
+          work_pending: [...capturedSamples({kind:"work_pending", local_date:workDate}),
             {kind: "work_pending", local_date: workDate, at: {kind: "place", rows: []}, expected_revision: "0"}],
-          work_completed: workSamples({kind:"work_completed", local_date:workDate}),
+          work_completed: capturedSamples({kind:"work_completed", local_date:workDate}),
           work_row: [{kind: "work_row", ref: "", local_date: workDate}],
           habits: capturedSamples({kind: "habits"}),
           habit_days: [{kind: "habit_days", ref: "", year: 2026}],

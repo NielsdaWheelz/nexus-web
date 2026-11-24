@@ -12,7 +12,7 @@ type CapturedOrder<Row> = Omit<ReturnOrder, "prefix"> & {
 
 type IndexRead<Row> = (result: QueryResult) => RankedIndexResult<Row> | CapturedIndexResult<Row> | null;
 
-function useCapturedOrder<Row>(source: CapturedIndexSource, revision: string | null, select: IndexRead<Row>) {
+export function useCapturedOrder<Row>(source: CapturedIndexSource, revision: string | null, select: IndexRead<Row>) {
   const store = useAuthoredStore();
   const key = JSON.stringify([useAuthoredAccountId(), source, revision]);
   const [state, setState] = useState<{key: string; data: CapturedOrder<Row> | null; error: unknown | null} | null>(null);

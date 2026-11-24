@@ -33,9 +33,10 @@ export type AnchorPosition =
 
 export interface ReturnOrder {
   readonly prefix: readonly string[];
+  readonly scopedRevision?: true;
   retain(): () => void;
-  successor(id: string | null, revision: string): Promise<string | null | undefined>;
-  land(rank: number, revision: string): Promise<string | null | undefined>;
+  successor(id: string | null, revision: string, present: (id: string) => boolean): Promise<string | null | undefined>;
+  land(rank: number, revision: string, present: (id: string) => boolean): Promise<string | null | undefined>;
 }
 
 /** A committed frame keeps the old eye line readable after its DOM has changed. */
@@ -97,9 +98,10 @@ interface RefreshSnapshot {
   readonly mounted: Map<string, () => void>;
 }
 interface Readiness {
-  kind: "Body" | "Descendant";
+  kind: "Body" | "Descendant" | "Index";
   ready: boolean;
   root: HTMLElement | null;
+  scope?: string;
   revision?: string | null;
 }
 interface PendingRestore {
@@ -110,7 +112,7 @@ interface PendingRestore {
   readonly mounted: Map<string, () => void>;
   readonly neighbors: Map<string, { id: string | null } | null>;
   readonly captured: Pick<Memento, "eyeLine" | "focus"> | null;
-  revision: string | null;
+  revision: string | null | undefined;
 }
 
 /** The store's half: remember a pane's visit before it leaves; forget dead visits. */
@@ -194,9 +196,13 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     entry.frame = frame;
   }
 
-  function describedRevision(port: Scrollport) {
-    return [...readiness.get(`${port.visitId}|${port.routeKey}`) ?? []]
-      .find(entry => entry.kind === "Body" && entry.ready && entry.revision != null)?.revision ?? null;
+  function describedRevision(port: Scrollport, scope: string, order: ReturnOrder) {
+    const entries = [...readiness.get(`${port.visitId}|${port.routeKey}`) ?? []];
+    if (!order.scopedRevision)
+      return entries.find(entry => entry.kind === "Body" && entry.ready && entry.revision != null)?.revision ?? null;
+    const index = entries.find(entry => entry.kind === "Index" && entry.scope === scope);
+    // A removed descendant has no current order to query.
+    return index === undefined ? isReady(port) ? undefined : null : index.ready ? index.revision ?? undefined : null;
   }
 
   function frames(port: Scrollport): CollectionGeometry[] {
@@ -207,6 +213,11 @@ export function createPaneReturnMemento(guard: WorkGuard) {
   function geometryFor(port: Scrollport, anchor: Anchor): CollectionGeometry | undefined {
     return [...(collections.get(port.visitId) ?? [])].find(entry => entry.routeKey === port.routeKey && entry.scope === anchor.scope &&
       (entry.frame === null || entry.frame.scrollport === port.element && port.content.contains(entry.frame.root)));
+  }
+
+  function presented(port: Scrollport, scope: string, id: string): boolean {
+    const anchor = {scope, id};
+    return geometryFor(port, anchor)?.frame?.position(id).kind === "ready" || findAnchor(port.content, anchor) !== null;
   }
 
   function parentAnchors(port: Scrollport, element: HTMLElement | null): Anchor[] {
@@ -401,7 +412,9 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       writeScrollPosition(port.element, 0);
       return finish(paneId, false);
     }
-    const revision = restore.captured === null ? null : describedRevision(port);
+    const order = memento.order;
+    const currentRevision = () => order === undefined ? undefined : describedRevision(port, order.scope, order.value);
+    const revision = currentRevision();
     if (restore.captured !== null) {
       if (revision === null) return;
       if (restore.revision !== revision) {
@@ -434,7 +447,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     };
     const recover = (anchor: Anchor): Anchor | null | undefined => {
       const order = memento.order?.scope === anchor.scope ? memento.order.value : undefined;
-      if (order === undefined) return survivingAnchor(port, anchor, memento.anchors);
+      if (order === undefined || revision === undefined) return survivingAnchor(port, anchor, memento.anchors);
       if (revision === null) return undefined;
       const index = order.prefix.indexOf(anchor.id);
       if (index >= 0) {
@@ -446,8 +459,8 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       const result = restore.neighbors.get(key);
       if (result === undefined) {
         restore.neighbors.set(key, null);
-        void order.successor(index >= 0 ? null : anchor.id, revision).then(id => {
-          if (pending.get(paneId) !== restore || describedRevision(port) !== revision || id === undefined) return;
+        void order.successor(index >= 0 ? null : anchor.id, revision, id => presented(port, anchor.scope, id)).then(id => {
+          if (pending.get(paneId) !== restore || currentRevision() !== revision || id === undefined) return;
           restore.neighbors.set(key, {id});
           attempt(paneId);
         }, () => {if (pending.get(paneId) === restore) finish(paneId, false);});
@@ -479,7 +492,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       } else if (state === "pending" || geometryFor(port, focused.anchor)?.geometry.element(focused.anchor.id) === null) return;
     }
     const ready = () => pending.get(paneId) === restore && scrollports.get(paneId) === port &&
-      (restore.captured === null || describedRevision(port) === revision) &&
+      currentRevision() === revision &&
       (memento.eyeLine !== null || memento.focus?.anchor ? bodyReady(port) : isReady(port)) &&
       frames(port).every(entry => entry.geometry.layoutReady());
     // The scheduled frame owns placement; publications only advance admission.
@@ -581,31 +594,31 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         : geometryFor(port, {scope: landing.scope, id: landing.id})?.frame?.position(landing.id);
       if (landing !== null && (landing.id === undefined || landingPosition?.kind === "missing" ||
         landingPosition === undefined && findAnchor(port.content, {scope: landing.scope, id: landing.id}) === null)) {
-        const revision = describedRevision(port);
+        const {order, scope, rank} = landing;
+        const revision = describedRevision(port, scope, order);
         if (revision === null) return;
-        if (landing.proof?.revision !== revision) {
+        if (revision !== undefined && landing.proof?.revision !== revision) {
           const proof: NonNullable<typeof landing.proof> = {revision};
           landing.proof = proof;
-          const {order, scope, rank} = landing;
           const frame = geometryFor(port, {scope, id: ""})?.frame;
           const recent = rank < order.prefix.length
             ? order.prefix.slice(rank).find(id => frame?.position(id).kind === "ready")
             : undefined;
           if (recent !== undefined) proof.id = recent;
           else {
-            void order.land(Math.max(0, rank - order.prefix.length), revision).then(id => {
-              if (refreshes.get(snapshot.paneId) !== snapshot || describedRevision(port) !== revision || id === undefined) return;
+            void order.land(Math.max(0, rank - order.prefix.length), revision, id => presented(port, scope, id)).then(id => {
+              if (refreshes.get(snapshot.paneId) !== snapshot || describedRevision(port, scope, order) !== revision || id === undefined) return;
               proof.id = id ?? order.prefix.slice(0, Math.min(rank, order.prefix.length)).findLast(ref => frame?.position(ref).kind === "ready") ?? null;
               restoreRefresh(snapshot);
             }, () => {if (refreshes.get(snapshot.paneId) === snapshot) forgetRefresh(snapshot.paneId);});
           }
         }
-        const found = landing.proof.id;
+        const found = revision === undefined ? null : landing.proof?.id;
         if (found === undefined) return;
         if (found !== null) {
           const anchor = {scope: landing.scope, id: found};
           eyeLine = {...anchor, offset: landing.offset, parents: parentsFor(port, anchor)};
-        } else eyeLine = null;
+        } else if (revision !== undefined) eyeLine = null;
       }
       let anchor: Anchor | null = null;
       if (eyeLine !== null) {
@@ -1041,6 +1054,13 @@ export function usePaneReturnReady(ready: boolean, revision?: string | null): vo
     () => memory.ready(visitId, routeKey, { kind: "Body", ready, root: null, revision }),
     [memory, visitId, routeKey, ready, revision],
   );
+}
+
+/** A nested order publishes the store revision of its own accepted geometry. */
+export function usePaneIndexRevision(scope: string, revision: string | null, ready: boolean): void {
+  const { memory, visitId, routeKey } = useScope();
+  useLayoutEffect(() => memory.ready(visitId, routeKey, {kind: "Index", ready, root: null, scope, revision}),
+    [memory, visitId, routeKey, scope, revision, ready]);
 }
 
 /** Uniform windows supply full logical order to the existing pane position owner.

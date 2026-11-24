@@ -116,7 +116,7 @@ export type CapturedIndexResult<Row> =
   | {kind: "retained"}
   | {kind: "held"; start: number; items: (Row | null)[]}
   | {kind: "successor"; ref: ResourceRef | null};
-export type CapturedIndexSource = {kind: "page_register"; text: string} | {kind: "habits"};
+export type CapturedIndexSource = {kind: "page_register"; text: string} | {kind: "habits"} | WorkRegisterSource;
 export type PageRegisterRequest = Extract<CapturedIndexSource, {kind: "page_register"}> & (RankedIndexRequest | CapturedIndexDemand);
 /** Groups are consecutive run lengths in register order. Each slice owns its labels. */
 export type PageRegisterResult = RankedIndexResult<RegisterItem, {source_total: number}> | CapturedIndexResult<RegisterItem>;
@@ -132,11 +132,11 @@ export type DailyIndexResult = RankedIndexResult<DailyIndexEntry, {
 export type HabitIndexRequest = Extract<CapturedIndexSource, {kind: "habits"}> & (RankedIndexRequest | CapturedIndexDemand);
 export type MentionIndexRequest = {kind: "mentions"; ref: ResourceRef} & RankedIndexRequest;
 export type WorkRegisterSource = {local_date: LocalDate} & ({kind: "work_pending"} | {kind: "work_completed"});
-export type WorkRegisterRequest = (WorkRegisterSource & RankedIndexRequest) | {
+export type WorkRegisterRequest = (WorkRegisterSource & (RankedIndexRequest | CapturedIndexDemand)) | {
   kind: "work_pending"; local_date: LocalDate; expected_revision: Counter;
   at: {kind: "place"; rows: {ref: ResourceRef; captured: Stamp}[]};
 };
-export type WorkRegisterResult = RankedIndexResult<WorkIndexItem, {groups: number[]}> |
+export type WorkRegisterResult = RankedIndexResult<WorkIndexItem, {groups: number[]}> | CapturedIndexResult<WorkIndexItem> |
   {kind: "placements"; items: {ref: ResourceRef; rank: number; present: boolean}[]} |
   {kind: "row"; item: WorkIndexItem | null};
 export interface OutlineIndexItem { link_id: string; other_ref: ResourceRef; matched: boolean }

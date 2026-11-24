@@ -130,7 +130,8 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
     case "query": {
       if (!(await persistence.replica()).provisioning_complete) throw new Error("authored corpus is still preparing");
       const query = input.query as unknown as AuthoredQuery;
-      if ((query.kind !== "page_register" && query.kind !== "habits") || !("token" in query.at)) return persistence.query(query);
+      if ((query.kind !== "page_register" && query.kind !== "habits" && query.kind !== "work_pending" && query.kind !== "work_completed") ||
+        !("token" in query.at)) return persistence.query(query);
       const {kind, token} = query.at;
       const orders = indexOrders.get(port) ?? new Set<string>();
       if (kind === "retain") {
@@ -141,7 +142,8 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
         throw new Error("captured index order has retired");
       }
       const result = await persistence.query(query);
-      if (kind === "release" || kind === "retain" && result[query.kind]?.kind !== "retained") orders.delete(token);
+      const captured = query.kind === "work_pending" || query.kind === "work_completed" ? result.work_index : result[query.kind];
+      if (kind === "release" || kind === "retain" && captured?.kind !== "retained") orders.delete(token);
       return result;
     }
     case "commit": {

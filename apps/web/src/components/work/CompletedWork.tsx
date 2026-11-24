@@ -11,7 +11,7 @@ import { useWorkLabel } from "@/lib/notes/hooks";
 import type { OutlineHistory } from "@/lib/notes/structure";
 import { WorkHistoryContext, workCommand } from "@/lib/notes/work";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
-import {PaneRefreshAnchor} from "@/lib/workspace/paneReturnMemento";
+import {PaneRefreshAnchor, usePaneIndexRevision} from "@/lib/workspace/paneReturnMemento";
 import {useWorkRegister} from "./workRegister";
 import styles from "./dailyWork.module.css";
 
@@ -19,7 +19,9 @@ import styles from "./dailyWork.module.css";
 export default function CompletedWork({date}:{date:string}) {
   const work = useWorkRegister("work_completed", date);
   const history = useContext(WorkHistoryContext);
-  if (!history || work.count === 0 && work.read.error === null) return null;
+  const presentation = work.presentation;
+  usePaneIndexRevision(`completed:${date}`, presentation?.revision ?? null, presentation !== null);
+  if (!history || (presentation?.count ?? 0) === 0 && work.read.error === null && work.error === null) return null;
   return <CompletedLine date={date} work={work} history={history} />;
 }
 
@@ -36,15 +38,17 @@ function CompletedLine({date,work,history}:{date:string; work:ReturnType<typeof 
   const pins = useMemo(() => new Set(focused === null ? [] : [focused]), [focused]);
   const ids = useMemo(() => [...work.rows.keys()], [work.rows]);
   const scope = `completed:${date}`;
-  const index = useVariableIndex({scope, list, ids, ranked: work.sparse ? work.ranked : undefined, windowed: work.sparse,
+  const ranked = work.presentation?.ranked;
+  const index = useVariableIndex({scope, list, ids, ranked, windowed: ranked !== undefined,
     estimate: 32, pinned: pins});
+  const layout = useMemo(() => ({read: work.read.data, windowed: index.windowed}), [work.read.data, index.windowed]);
   if (failure) throw failure.error;
   const day = formatDay(date, today);
   const read = work.read.error !== null ? work.read : {error:work.error, retry:work.retry};
-  return <PaneRefreshAnchor identity={scope} value={work.read.data} ready={work.revision !== null}>
+  return <PaneRefreshAnchor identity={scope} value={layout} ready={work.revision !== null}>
     <section ref={root} className={styles.completed} aria-label={`completed on ${day}`} data-pane-return-scope={scope}>
       <AuthoredReadFailure {...read} noun="completed work" />
-      {work.count === 0 ? null : <div>
+      {(work.presentation?.count ?? 0) === 0 ? null : <div>
         <span className={styles.completedLabel}>completed</span>
         <ul ref={list} className={index.windowed ? styles.completedWindow : styles.completedList} aria-label={`completed work on ${day}`}
           style={index.windowed ? {height:index.height} : undefined}
