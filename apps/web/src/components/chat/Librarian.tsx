@@ -10,7 +10,7 @@ import { useServerValue } from "@/lib/api/serverState";
 import { assertNever } from "@/lib/assertNever";
 import { commandKey, getLibrarianCommands, IDLE_COMMAND, pendingReason, sayRefusal, unsureFact } from "@/lib/chat/commands";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
-import { unavailability } from "@/lib/chat/selection";
+import { resolveSelection, type SelectionEditor } from "@/lib/chat/selection";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { useChatDraft, type Draft } from "@/lib/chat/drafts";
@@ -52,8 +52,15 @@ export default function Librarian() {
   const catalog = useServerValue({ ...reads.catalog, visit: CATALOG_VISIT });
   const currentCatalog = catalog.status === "ready" ? catalog.data : null;
   const selection = draft.draft.selection.kind === "Uninitialized" ? memory.fresh(currentCatalog) ?? draft.draft.selection : draft.draft.selection;
-  const modelReason = currentCatalog && selection.kind !== "Uninitialized" ? unavailability(currentCatalog, selection) : null;
-  const retryBlocked = pendingReason(command) ?? (currentCatalog === null ? "models haven’t loaded." : selection.kind === "Uninitialized" ? "choose a model." : modelReason);
+  const resolve = (value: SelectionEditor) => resolveSelection(currentCatalog, value,
+    value.kind === "Selected" && catalog.status === "ready" && commandOwner.selectionRejected(value.selection, catalog.acceptedStale));
+  const choice = resolve(selection);
+  const currentSelection = () => {
+    if (!currentCatalog || draft.entry.getSnapshot().draft !== draft.draft) return null;
+    const current = draft.draft.selection.kind === "Uninitialized" ? memory.fresh(currentCatalog) : draft.draft.selection;
+    return current?.kind === "Selected" && resolve(current).reason === null ? current.selection : null;
+  };
+  const retryBlocked = pendingReason(command) ?? (currentCatalog === null ? "models haven’t loaded." : selection.kind === "Uninitialized" ? "choose a model." : choice.reason);
   const history = useServerValue({ ...reads.timeline, visit: TIMELINE_VISIT, enabled: !search.searching });
   const timeline = history.status === "ready" ? history.data : null;
   const turns = timeline?.items ?? NO_TURNS;
@@ -86,8 +93,9 @@ export default function Librarian() {
   const slips = useOutcome();
   const resend = useResendFeedback();
   const retryTurn = (runId: string) => {
-    if (retryBlocked !== null || selection.kind !== "Selected") return;
-    void commandOwner.execute({ kind: "RetryTurn", sourceRunId: runId, runId: createRandomId(), selection: selection.selection, viewId: runtime.paneId },
+    const selected = currentSelection();
+    if (retryBlocked !== null || !selected) return;
+    void commandOwner.execute({ kind: "RetryTurn", sourceRunId: runId, runId: createRandomId(), selection: selected, viewId: runtime.paneId },
       receipt => {
         const visit = workspace().state.panes.find(pane => pane.id === runtime.paneId)?.current_visit;
         draft.accept(receipt, null, visit?.id === runtime.visitId && new URL(visit.href, "https://nexus.invalid").pathname === "/librarian", runtime.visitId);
@@ -128,7 +136,7 @@ export default function Librarian() {
       <div className={styles.composerSlot} data-has-messages={search.searching || turns.length > 0 || adopted.length > 0 || undefined} onWheel={event => transcript.current?.onComposerWheel(event)}>
         {commandFeedback}
         {!search.searching && history.status === "ready" && history.error ? <Fact line={{ fact: "messages stopped updating." }} verbs={[{ label: "retry", commandKey: "refresh librarian", run: history.refetch }]} /> : null}
-        <ChatComposer selection={selection} reason={modelReason} autoSend={autoSend} catalog={catalog} command={command} owner={commandOwner} focusKey={focus} recall={recall} />
+        <ChatComposer choice={choice} currentSelection={currentSelection} autoSend={autoSend} catalog={catalog} command={command} owner={commandOwner} focusKey={focus} recall={recall} />
       </div>
     </div>;
 }

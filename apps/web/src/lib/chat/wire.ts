@@ -4,7 +4,7 @@ import { isApiError, isSameSystemApiDefect, outcomeUnknown, type ApiError } from
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { MODEL_UNAVAILABLE } from "./selection";
+import { CHOICE_UNAVAILABLE } from "./selection";
 
 // Chat's names for the generated FastAPI wire (docs/local-rules/typed-wire.md).
 export type Message = Schema<"MessageOut">;
@@ -56,8 +56,8 @@ const REASONS: Readonly<Partial<Record<RejectionCode | "E_GENERATION_RUNTIME_UNA
   E_READER_SELECTION_PARTIAL_TABLE: "select the whole table to quote it.",
   E_CHAT_CREATION_STALE: "this send can no longer be retried. review your question and send again.",
   E_MESSAGE_TOO_LONG: "this message is over 20,000 characters.",
-  E_INVALID_GENERATION_SELECTION: MODEL_UNAVAILABLE,
-  E_GENERATION_SELECTION_UNAVAILABLE: MODEL_UNAVAILABLE,
+  E_INVALID_GENERATION_SELECTION: CHOICE_UNAVAILABLE,
+  E_GENERATION_SELECTION_UNAVAILABLE: CHOICE_UNAVAILABLE,
   E_GENERATION_RUNTIME_UNAVAILABLE: "the model isn’t ready.",
   E_FORBIDDEN: "you don’t have access.",
   E_NOT_FOUND: "it doesn’t exist.",
