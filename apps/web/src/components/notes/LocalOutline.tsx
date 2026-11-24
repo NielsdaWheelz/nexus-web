@@ -168,7 +168,7 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
   const resources = useContext(ResourceOutlineContext);
   const motion = usePaneScrollMotion();
   useLayoutEffect(() => controller.setMotion(motion), [controller, motion]);
-  useLayoutEffect(() => controller.readLayout().geometry.refreshRange());
+  useLayoutEffect(() => controller.readLayout().geometry.refreshRange?.());
   controller.platform = useRenderEnvironment().platform;
   const guard = useWorkGuard();
   const {say} = useOutcome();
@@ -182,7 +182,7 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
     const geometry = controller.readLayout().geometry;
     const frame = geometry.read();
     if (!frame) return;
-    const update = () => geometry.refreshRange();
+    const update = () => geometry.refreshRange?.();
     frame.scrollport.addEventListener("scroll", update, {passive: true});
     const resize = new ResizeObserver(update); resize.observe(frame.scrollport);
     update();
