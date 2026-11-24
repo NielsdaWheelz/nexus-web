@@ -1,8 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { QueryResult, RankedIndexResult, WorkRegisterSource } from "@nexus/authored/types";
+import type { DailyIndexSource, QueryResult, RankedIndexResult, WorkRegisterSource } from "@nexus/authored/types";
 import { useAuthoredAccountId, useAuthoredStore } from "@/lib/authored/provider";
+
+type RankedRow = {ref: string} | {local_date: string};
+const identity = (row: RankedRow) => "local_date" in row ? row.local_date : row.ref;
 
 type Description<Row> = Extract<RankedIndexResult<Row>, {kind: "description"}>;
 type Locations<Row> = Extract<RankedIndexResult<Row>, {kind: "locations"}>["items"];
@@ -11,11 +14,12 @@ const EMPTY = new Map<never, never>();
 
 /** The admitted viewport and pins own this cache. The description's compact
  * head sample survives seeks, and each reply belongs to its requested revision. */
-export function useRankedAuthoredWindow<Row extends {ref: string}>(
-  source: {kind: "page_register"; text: string} | {kind: "habits"} | WorkRegisterSource | {kind: "mentions"; ref: string},
+export function useRankedAuthoredWindow<Row extends RankedRow>(
+  source: {kind: "page_register"; text: string} | {kind: "habits"} | WorkRegisterSource | {kind: "mentions"; ref: string} | DailyIndexSource,
   revision: string | null,
   description: Description<Row> | null,
   select: (result: QueryResult) => RankedIndexResult<Row> | null,
+  refreshDescription?: () => void,
 ) {
   const store = useAuthoredStore(), account = useAuthoredAccountId();
   const key = JSON.stringify([account, source, revision]);
@@ -55,14 +59,15 @@ export function useRankedAuthoredWindow<Row extends {ref: string}>(
           throw new Error("Incomplete authored index slice");
         return [start, range.items] as const;
       }));
-      if (retired || results.some(result => result === null)) return;
+      if (retired) return;
+      if (results.some(result => result === null)) { refreshDescription?.(); return; }
       const blocks = new Map(results.filter(result => result !== null));
       const positions = new Map<string, number | null>();
       const pinned: Locations<Row> = [];
-      const knownItems = new Map(description.items.map((item, rank) => [item.ref, {...item, rank}]));
-      for (const item of previous?.pinned ?? []) knownItems.set(item.ref, item);
+      const knownItems = new Map(description.items.map((item, rank) => [identity(item), {...item, rank}]));
+      for (const item of previous?.pinned ?? []) knownItems.set(identity(item), item);
       for (const [start, items] of blocks)
-        for (const [offset, item] of items.entries()) knownItems.set(item.ref, {...item, rank: start + offset});
+        for (const [offset, item] of items.entries()) knownItems.set(identity(item), {...item, rank: start + offset});
       const unresolved: string[] = [];
       for (const ref of wanted.refs) {
         const item = knownItems.get(ref);
@@ -72,12 +77,15 @@ export function useRankedAuthoredWindow<Row extends {ref: string}>(
       }
       for (let start = 0; start < unresolved.length; start += 100) {
         const refs = unresolved.slice(start, start + 100);
-        const result = await store.query({...source, at: {kind: "locate", refs}, expected_revision: revision});
-        if (retired || result.store_revision !== revision) return;
+        const result = await store.query(source.kind === "daily_index"
+          ? {...source, at: {kind: "locate", dates: refs}, expected_revision: revision}
+          : {...source, at: {kind: "locate", refs}, expected_revision: revision});
+        if (retired) return;
+        if (result.store_revision !== revision) { refreshDescription?.(); return; }
         const locations = select(result);
         if (locations?.kind !== "locations") throw new Error("Missing authored index positions");
         for (const ref of refs) positions.set(ref, null);
-        for (const item of locations.items) { positions.set(item.ref, item.rank); pinned.push(item); }
+        for (const item of locations.items) { positions.set(identity(item), item.rank); pinned.push(item); }
       }
       if (!retired) setCache({key, blocks, positions, pinned, error: null});
     })().catch(error => {
@@ -87,7 +95,7 @@ export function useRankedAuthoredWindow<Row extends {ref: string}>(
     return () => { retired = true; };
     // The currently admitted cache is read once per demand, then replaced.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wanted, key, count, revision, description, sampled, store, select, attempt]);
+  }, [wanted, key, count, revision, description, sampled, store, select, attempt, refreshDescription]);
 
   const resolved = cache?.key === key ? cache : null;
   const items = useMemo<ReadonlyMap<number, Row>>(() => {

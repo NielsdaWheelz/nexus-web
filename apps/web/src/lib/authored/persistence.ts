@@ -130,7 +130,7 @@ export class Persistence {
         result.latest_habit_date = typeof record?.local_date === "string" ? record.local_date : null;
       } else if (query.kind === "register_label") {
         result.register_label = record ? {label: typeof record.label === "string" ? record.label : null, oversized: Number(record.oversized) === 1} : null;
-      } else if (query.kind === "page_register" || query.kind === "habits" || query.kind === "mentions") {
+      } else if (query.kind === "page_register" || query.kind === "habits" || query.kind === "mentions" || query.kind === "daily_index") {
         result[query.kind] = JSON.parse(String(record!.register));
       } else if (query.kind === "work_pending" || query.kind === "work_completed") {
         result.work_index = JSON.parse(String(record!.register));
@@ -169,10 +169,6 @@ export class Persistence {
     }
     const compiled = compileQuery(query);
     const raw = await this.db.all(compiled.sql, compiled.params);
-    if (query.kind === "daily_index") return {store_revision: (await this.replica()).store_revision,
-      daily_index: raw.map(row => ({local_date: String(row.local_date), ref: row.ref === null ? null : String(row.ref)})),
-      rows: [], children: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null,
-      positions: [], scope_available: true, page_register: null, register_label: null, outline_filter: null, work_index: null, habits: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null};
     if (query.kind === "outline_children") return {
       store_revision: (await this.replica()).store_revision, rows: [], next_cursor: null,
       previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [],

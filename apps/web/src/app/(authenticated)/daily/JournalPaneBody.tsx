@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Intent } from "@nexus/authored/commands";
+import type { DailyIndexEntry, DailyIndexSource, QueryResult } from "@nexus/authored/types";
 import { Ruling } from "@/components/feedback/Ruling";
 import { useOutcome } from "@/components/feedback/Feedback";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
@@ -16,7 +17,8 @@ import { formatDay, isLocalDate } from "@/lib/localDate";
 import { useAccountToday } from "@/lib/notes/accountDay";
 import { dailyPage } from "@/lib/notes/api";
 import { useAuthoredQuery, useWritingRuntime } from "@/lib/notes/hooks";
-import { useJournalWindow } from "@/lib/notes/journalWindow";
+import { useJournalWindow, type JournalOrder } from "@/lib/notes/journalWindow";
+import { useRankedAuthoredWindow } from "@/lib/notes/rankedAuthoredWindow";
 import { OutlineHistoryAllowance } from "@/lib/notes/outlineHistoryAllowance";
 import { OutlinePresentationAllowance } from "@/lib/notes/outlinePresentationAllowance";
 import { isAuthoredStorageFailure, LocalCommitError, type WritingRuntime } from "@/lib/notes/runtime";
@@ -37,6 +39,7 @@ import styles from "./journal.module.css";
 
 const EMPTY_INTENTS: readonly Intent[] = [];
 type Day = { local_date: string; ref: string | null };
+const dailyIndex = (result: QueryResult) => result.daily_index;
 type RetainedDay = { day: Day; presented: boolean };
 type Resolved = { ref: string; prelude: readonly Intent[] };
 
@@ -50,7 +53,6 @@ export default function JournalPaneBody() {
 
 function Journal({ arrival }: { arrival: string }) {
   const pane = requirePaneRuntime(usePaneRuntime(), "JournalPaneBody");
-  const index = useAuthoredQuery({ kind: "daily_index" });
   const writing = useWritingRuntime();
   const today = useAccountToday();
   const profile = useReaderProfile();
@@ -81,29 +83,54 @@ function Journal({ arrival }: { arrival: string }) {
   const [picker, setPicker] = useState(false);
   const [picked, setPicked] = useState(arrival);
   const pickerId = useId();
-  const members = index.data?.daily_index ?? null;
-  if (index.data !== null && members === null) throw new Error("daily index result is missing");
-  const currentDays = useMemo<Day[]>(() => {
-    if (members === null) return [];
-    const days: Day[] = [...members];
-    // Membership loss must not replace a retained editor with a latent arrival.
-    for (const value of retained.values()) if ((value.presented || value.day.local_date === arrival) && !days.some(day => day.local_date === value.day.local_date)) days.push(value.day);
-    if (!days.some(day => day.local_date === arrival)) days.push({ local_date: arrival, ref: null });
-    return days.sort((a, b) => b.local_date.localeCompare(a.local_date));
-  }, [members, arrival, retained]);
+  const retainedDates = [...retained.values()].flatMap(({day, presented}) =>
+    presented && day.local_date !== arrival ? [day.local_date] : []).sort().join(",");
+  const source = useMemo<DailyIndexSource>(() => ({kind: "daily_index", arrival, retained: retainedDates === "" ? [] : retainedDates.split(",")}), [arrival, retainedDates]);
+  const index = useAuthoredQuery({...source, at: {kind: "describe"}, expected_revision: null});
+  const last = useRef<{source: DailyIndexSource; data: QueryResult} | null>(null);
+  const admitted = index.data === null ? last.current : {source, data: index.data};
+  useLayoutEffect(() => { if (index.data !== null) last.current = {source, data: index.data}; }, [index.data, source]);
+  const description = admitted?.data.daily_index;
+  if (admitted !== null && description?.kind !== "description") throw new Error("daily index description is missing");
+  const revision = admitted?.data.store_revision ?? null;
+  const ranked = useRankedAuthoredWindow(admitted?.source ?? source, revision,
+    description?.kind === "description" ? description : null, dailyIndex, index.retry);
+  const current = useMemo(() => {
+    const byRank = new Map<number, DailyIndexEntry>();
+    const total = description?.kind === "description" ? description.total : 0;
+    const sparse = description?.kind === "description" && description.items.length < total;
+    if (description?.kind === "description") {
+      for (const [rank, day] of description.items.entries()) byRank.set(rank, day);
+      for (const day of description.attachments) byRank.set(day.rank, day);
+      for (const [rank, day] of ranked.items) byRank.set(rank, day);
+    }
+    const byDate = new Map([...byRank.entries()].sort(([a], [b]) => a - b).map(([rank, day]) => [day.local_date, {day, rank}]));
+    const order: JournalOrder = {count: total, dates: [...byDate.keys()],
+      observation: sparse ? JSON.stringify([revision, admitted?.source]) : null,
+      dateAt: rank => byRank.get(rank)?.local_date,
+      rankOf: date => byDate.get(date)?.rank ?? (sparse ? ranked.positions?.get(date) : null)};
+    return {order, byDate};
+  }, [description, revision, admitted?.source, ranked.items, ranked.positions]);
   const motion = usePaneScrollMotion();
-  const presented = useRef(currentDays);
-  const held = motion !== "still" && presented.current.length > 0;
-  const days = held && !(motion === "travel" && currentDays.length > presented.current.length &&
-    presented.current.every((day, rank) => day.local_date === currentDays[rank].local_date)) ? presented.current : currentDays;
-  useLayoutEffect(() => { presented.current = days; }, [days]);
-  const dates = useMemo(() => days.map(day => day.local_date), [days]);
-  const ranks = useMemo(() => new Map(dates.map((date, rank) => [date, rank])), [dates]);
-  const currentByDate = useMemo(() => new Map(currentDays.map(day => [day.local_date, day])), [currentDays]);
-  const window = useJournalWindow(dates, root, members !== null ? "ready" : index.error !== null ? "failed" : "pending",
-    presentationAllowance.pressured ? 0 : 1, held);
+  const presented = useRef(current);
+  const before = presented.current.order;
+  const held = motion !== "still" && before.count > 0;
+  const append = motion === "travel" && current.order.observation === null && before.observation === null &&
+    current.order.count > before.count && before.dates.every((date, rank) => date === current.order.dates[rank]);
+  const view = held && !append && (before.observation === null || before.observation !== current.order.observation)
+    ? presented.current : current;
+  useLayoutEffect(() => { presented.current = view; }, [view]);
+  const {order} = view;
+  const receiving = delivery !== null && ["RevealDailyDate", "AppendNote", "FocusNote", "EditPageTitle"].includes(delivery.entry.kind);
+  const headless = today !== null && order.dateAt(0) === today;
+  // A headless today lends its menu to the band's date line even when the agenda covers its leaf.
+  const lending = headless ? today : null;
+  const requestedDates = [receiving ? arrival : null, lending].filter(date => date !== null);
+  const error = index.error ?? ranked.error;
+  const window = useJournalWindow(order, root, error !== null ? "failed" : admitted === null ? "pending" : "ready",
+    presentationAllowance.pressured ? 0 : 1, held, requestedDates, order.observation !== null && view === current ? ranked.request : undefined);
   usePaneAnchorGeometry({ scope: "journal", geometry: window.geometry, ready: true });
-  usePaneReturnReady(members !== null || index.error !== null);
+  usePaneReturnReady(admitted !== null || error !== null);
   const retain = useCallback((day: Day, keep: boolean, presented: boolean) => setRetained(previous => {
     const old = previous.get(day.local_date);
     if (!keep && old === undefined || keep && old?.day.ref === day.ref && old.presented === presented) return previous;
@@ -113,9 +140,9 @@ function Journal({ arrival }: { arrival: string }) {
   }), []);
   const activateTarget = pane.activateTarget;
   const go = useCallback((href: string) => activateTarget({ target: { href }, disposition: { kind: "Follow" } }), [activateTarget]);
-  // A headless today is drawn by the band; its own head stays for the accessibility tree and journalWindow.
-  const headless = today !== null && days[0]?.local_date === today;
-  const date = window.visible ?? arrival;
+  const lastVisible = useRef(arrival);
+  const date = window.visible ?? lastVisible.current;
+  useLayoutEffect(() => { lastVisible.current = date; }, [date]);
   const name = formatDay(date, today);
   // The running head yields while the head it repeats is in the scrollport. Presentation only: no geometry reads it.
   // A headless today is repeated from the band; any other day from its own head.
@@ -156,13 +183,9 @@ function Journal({ arrival }: { arrival: string }) {
     {date === today ? null : <Button onClick={() => go("/daily")}>today</Button>}
   </div> } }), [type, yielded, picker, date, name, today, go]);
   usePaneChrome(chrome);
-  const receiving = delivery !== null && ["RevealDailyDate", "AppendNote", "FocusNote", "EditPageTitle"].includes(delivery.entry.kind);
-  // A headless today is always admitted: the band's date line holds its menu even when a tall agenda puts the leaf below the fold.
-  const lending = headless ? today : null;
-  const mounted = new Map([...[...retained].map(([date, value]) => [date, value.day] as const),
-    ...days.filter(day => window.dates.includes(day.local_date) || receiving && day.local_date === arrival || day.local_date === lending)
-      .map(day => [day.local_date, day] as const)]);
-  const shown = [...mounted.values()].sort((a, b) => b.local_date.localeCompare(a.local_date));
+  const attached = new Set([...window.dates, ...requestedDates]);
+  const shown = [...new Set([...retained.keys(), ...attached])].filter(date => view.byDate.has(date) || retained.has(date))
+    .sort((a, b) => b.localeCompare(a));
   return <WorkHistoryContext.Provider value={work.history}><div {...type}>
     {/* The band is today's reveal anchor: its .5lh top space is inside its box, so its top is the pane's start. */}
     {today === null ? null : <div ref={watchBand ? setTarget : undefined} className={styles.band} data-pane-return-scope="journal-band" data-collection-row-id="band">
@@ -170,21 +193,22 @@ function Journal({ arrival }: { arrival: string }) {
       <span ref={setSlot} className={styles.menu} />
     </div>}
     {work.history ? <WorkSection history={work.history} /> : null}
-    {index.error === null ? null : <AuthoredReadFailure error={index.error} pending={index.pending} retry={index.retry} noun="your journal" />}
-      <PaneRefreshAnchor identity="journal" value={days} ready={members !== null}><div ref={root} role="feed" aria-label="journal" data-pane-return-scope="journal"
-        className={styles.feed} style={{ height: members === null ? undefined : window.height }}>
-        {members === null && index.error === null ? <Ruling /> : null}
-        {shown.map(day => {
-          const rank = ranks.get(day.local_date) ?? -1;
+    <AuthoredReadFailure error={error} pending={index.pending} retry={index.error === null ? ranked.retry : index.retry} noun="your journal" />
+      <PaneRefreshAnchor identity="journal" value={order.observation ?? order.dates} ready={admitted !== null}><div ref={root} role="feed" aria-label="journal" data-pane-return-scope="journal"
+        className={styles.feed} style={{ height: admitted === null ? undefined : window.height }}>
+        {admitted === null && error === null ? <Ruling /> : null}
+        {shown.map(local_date => {
+          const member = current.byDate.get(local_date)?.day;
+          const day = member?.recorded ? member : retained.get(local_date)?.day ?? member ?? view.byDate.get(local_date)!.day;
+          const rank = order.rankOf(local_date) ?? -1;
           const size = !held || rank < 0 ? undefined : (window.tops[rank + 1] ?? window.height) - window.tops[rank];
-          return <JournalDay key={day.local_date} day={currentByDate.get(day.local_date) ?? {local_date: day.local_date, ref: null}} arrival={arrival} writing={writing} allowance={allowance} presentationAllowance={presentationAllowance}
-            attached={(day.local_date === arrival || members !== null && members.some(member => member.local_date === day.local_date)) &&
-              (window.dates.includes(day.local_date) || receiving && day.local_date === arrival || day.local_date === lending)}
-            rank={rank} count={days.length} top={rank < 0 ? 0 : window.tops[rank]} size={size}
-            today={today} headless={headless && day.local_date === today} slot={slot}
-            headRef={!watchBand && day.local_date === date ? setTarget : undefined}
+          return <JournalDay key={local_date} day={day} arrival={arrival} writing={writing} allowance={allowance} presentationAllowance={presentationAllowance}
+            attached={(local_date === arrival || (member ?? view.byDate.get(local_date)?.day)?.recorded === true) && attached.has(local_date)}
+            rank={rank} count={order.count} top={rank < 0 ? 0 : window.tops[rank]} size={size}
+            today={today} headless={headless && local_date === today} slot={slot}
+            headRef={!watchBand && local_date === date ? setTarget : undefined}
             measure={window.measure} admit={window.admit} retain={retain} mayArrive={mayArrive}
-            newer={rank === 0 ? null : dates[rank - 1]} older={rank + 1 === dates.length ? null : dates[rank + 1]} />;
+            newer={order.dateAt(rank - 1) ?? null} older={rank < 0 ? null : order.dateAt(rank + 1) ?? null} />;
         })}
       </div></PaneRefreshAnchor>
     <Dialog open={picker} title="go to date" onClose={() => setPicker(false)}>

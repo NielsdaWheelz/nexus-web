@@ -475,7 +475,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             .put("scope_available", true).put("daily_index", JSONObject.NULL).put("outline_windows", JSONObject.NULL)
             .put("page_register", JSONObject.NULL).put("register_label", JSONObject.NULL).put("outline_filter", JSONObject.NULL)
             .put("work_index", JSONObject.NULL).put("habits", JSONObject.NULL).put("mentions", JSONObject.NULL).put("habit_days", JSONObject.NULL).put("latest_habit_date", JSONObject.NULL)
-        if (kind in listOf("page_register", "outline_filter", "work_pending", "work_completed", "habits", "mentions")) {
+        if (kind in listOf("page_register", "outline_filter", "work_pending", "work_completed", "habits", "mentions", "daily_index")) {
             val field = if (kind in listOf("work_pending", "work_completed")) "work_index" else kind
             if (!query.isNull("expected_revision") && replica.getString("store_revision") != query.getString("expected_revision")) return result.put(field, JSONObject().put("kind", "changed"))
             if (!literalsComplete && (kind == "page_register" || kind == "outline_filter") && query.getString("text").isNotBlank()) {
@@ -483,7 +483,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
                 literalsComplete = true
             }
             val record = read(0).getJSONObject(0)
-            if (kind in listOf("page_register", "habits", "work_pending", "work_completed", "mentions")) return result.put(field, JSONObject(record.getString("register")))
+            if (kind in listOf("page_register", "habits", "work_pending", "work_completed", "mentions", "daily_index")) return result.put(field, JSONObject(record.getString("register")))
             val raw = JSONArray(record.getString("items"))
             val items = JSONArray()
             for (index in 0 until raw.length()) {
@@ -503,14 +503,6 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             return result.put(kind, JSONObject().put("label", row.get("label")).put("oversized", row.getInt("oversized") == 1))
         }
         val records = read(0)
-        if (kind == "daily_index") {
-            val dates = JSONArray()
-            for (index in 0 until records.length()) {
-                val record = records.getJSONObject(index)
-                dates.put(JSONObject().put("local_date", record.getString("local_date")).put("ref", record.get("ref")))
-            }
-            return result.put("daily_index", dates)
-        }
         if (kind == "outline_children") {
             val children = JSONArray()
             for (index in 0 until records.length()) {

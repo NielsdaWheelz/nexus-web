@@ -92,7 +92,7 @@ export interface OutlineChildrenOccurrence { refs: ResourceRef[]; excluded_link_
 /** Raw rows own their projections; this proof adds only the root and missing
  * boundary peers. Every field belongs to the same serialized SQL read. */
 export interface OutlineWindowProof { resources: ResourceProjection[]; oversized_refs: ResourceRef[]; before: LinkState | null; after: LinkState | null; tail: LinkState | null }
-export interface DailyIndexEntry { local_date: string; ref: ResourceRef | null }
+export interface DailyIndexEntry { local_date: LocalDate; ref: ResourceRef | null; recorded: boolean }
 /** Structural rows contain occurrence identity and bounded presentation. A missing label is resolved only for a mounted row. */
 export interface HabitIndexItem {ref: ResourceRef; label: string | null; enabled: boolean}
 export interface WorkIndexItem {ref: ResourceRef; label: string | null; work: WorkView}
@@ -109,6 +109,12 @@ export type RankedIndexResult<Row, Description extends object = object> =
 export type PageRegisterRequest = {kind: "page_register"; text: string} & RankedIndexRequest;
 /** Groups are consecutive run lengths in register order. Each slice owns its labels. */
 export type PageRegisterResult = RankedIndexResult<RegisterItem, {source_total: number}>;
+export type DailyIndexSource = {kind: "daily_index"; arrival: LocalDate; retained: LocalDate[]};
+export type DailyIndexRequest = DailyIndexSource & (
+  | {at: {kind: "describe"}; expected_revision: null}
+  | {at: {kind: "range"; start: number; limit: number} | {kind: "locate"; dates: LocalDate[]}; expected_revision: Counter}
+);
+export type DailyIndexResult = RankedIndexResult<DailyIndexEntry, {attachments: (DailyIndexEntry & {rank: number})[]}>;
 export type HabitIndexRequest = {kind: "habits"} & RankedIndexRequest;
 export type MentionIndexRequest = {kind: "mentions"; ref: ResourceRef} & RankedIndexRequest;
 export type WorkRegisterSource = {local_date: LocalDate} & ({kind: "work_pending"} | {kind: "work_completed"});
@@ -127,7 +133,7 @@ export type AuthoredQuery =
   | PageRegisterRequest
   | {kind: "register_label"; ref: ResourceRef}
   | OutlineFilterRequest
-  | { kind: "daily_index" }
+  | DailyIndexRequest
   | WorkRegisterRequest
   | HabitIndexRequest
   | {kind: "habit_days"; ref: ResourceRef; year: number}
@@ -150,7 +156,7 @@ export type AuthoredQuery =
   | { kind: "resolve"; refs: ResourceRef[] };
 export interface QueryRow { resource: ResourceProjection; link: LinkState | null; match_text: string | null; activation_ref: ResourceRef | null; matched_field: "quote" | "annotation" | null; activation_field: "annotation" | null }
 /** Only source_alias populates canonical_source_ref; provenance grants no reading permission. */
-export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; previous_cursor: string | null; binding_id: string | null; canonical_source_ref: ResourceRef | null; positions: LinkState[]; children: (boolean | null)[]; scope_available: boolean; daily_index: DailyIndexEntry[] | null; outline_windows: OutlineWindowSlice[] | null; page_register: PageRegisterResult | null; register_label: {label: string | null; oversized: boolean} | null; outline_filter: OutlineFilterResult | null; work_index: WorkRegisterResult | null; habits: RankedIndexResult<HabitIndexItem> | null; mentions: RankedIndexResult<{ref: ResourceRef}> | null; habit_days: LocalDate[] | null; latest_habit_date: LocalDate | null }
+export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; previous_cursor: string | null; binding_id: string | null; canonical_source_ref: ResourceRef | null; positions: LinkState[]; children: (boolean | null)[]; scope_available: boolean; daily_index: DailyIndexResult | null; outline_windows: OutlineWindowSlice[] | null; page_register: PageRegisterResult | null; register_label: {label: string | null; oversized: boolean} | null; outline_filter: OutlineFilterResult | null; work_index: WorkRegisterResult | null; habits: RankedIndexResult<HabitIndexItem> | null; mentions: RankedIndexResult<{ref: ResourceRef}> | null; habit_days: LocalDate[] | null; latest_habit_date: LocalDate | null }
 export interface CommitFrame { expected_store_revision: Counter; replica_id: string; change: Change; states: MergeResult }
 export type CommitResult = { kind: "committed"; command_seq: Counter; store_revision: Counter } | { kind: "stale"; store_revision: Counter; states: Corpus };
 export interface StateSelection { refs: string[]; link_ids: string[]; anchor_ids: string[]; source_refs: string[] }

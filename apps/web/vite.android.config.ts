@@ -66,7 +66,11 @@ export default defineConfig({
           ]),
           register_label: [{kind: "register_label", ref: ""}],
           outline_filter: [{kind: "outline_filter", parent_ref: "", text: "words", start: 0, limit: 1, expected_revision: null}],
-          daily_index: [{kind: "daily_index"}],
+          daily_index: [
+            {kind: "daily_index", arrival: "2026-11-11", retained: [], at: {kind: "describe"}, expected_revision: null},
+            {kind: "daily_index", arrival: "2026-11-11", retained: [], at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
+            {kind: "daily_index", arrival: "2026-11-11", retained: [], at: {kind: "locate", dates: []}, expected_revision: "0"},
+          ],
           work_pending: [...workSamples({kind:"work_pending", local_date:workDate}),
             {kind: "work_pending", local_date: workDate, at: {kind: "place", rows: []}, expected_revision: "0"}],
           work_completed: workSamples({kind:"work_completed", local_date:workDate}),

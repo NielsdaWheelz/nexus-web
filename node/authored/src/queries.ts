@@ -482,14 +482,49 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       FROM resources WHERE ref=? AND visible=1 AND ((kind='page' AND local_date IS NULL) OR kind='note')),
       bounded AS (SELECT name,length(CAST(json_quote(name) AS BLOB))>16770000 AS oversized FROM entry)
       SELECT CASE WHEN NOT oversized THEN name END AS label,oversized FROM bounded`,params:[query.ref]};
-    case "daily_index": return {sql: `WITH dates(local_date) AS (
-      SELECT local_date FROM resources WHERE kind='page' AND visible=1 AND local_date IS NOT NULL
-      UNION SELECT json_extract(state_json,'$.work.task_completed_on.value') FROM resources
-        WHERE kind='note' AND visible=1 AND json_extract(state_json,'$.work.task_completed_on.value') IS NOT NULL
-      UNION SELECT day.key FROM resources r,json_each(r.state_json,'$.work.habit_checks') day
-        WHERE r.kind='note' AND r.visible=1 AND json_extract(day.value,'$.value')=1
-    ) SELECT dates.local_date,p.ref FROM dates LEFT JOIN resources p
-      ON p.kind='page' AND p.visible=1 AND p.local_date=dates.local_date ORDER BY dates.local_date DESC`, params: []};
+    case "daily_index": {
+      validateLocalDate(query.arrival);
+      for (const date of query.retained) validateLocalDate(date);
+      const params = [query.arrival, JSON.stringify(query.retained)];
+      const pages = `FROM resources INDEXED BY resources_daily_pages WHERE kind='page' AND visible=1 AND local_date IS NOT NULL`;
+      const calendar = `WITH added(local_date) AS (SELECT ?1 UNION SELECT value FROM json_each(?2)),
+        recorded(local_date) AS MATERIALIZED (
+          SELECT local_date ${pages}
+          UNION SELECT ${WORK_TASK_DAY} FROM resources INDEXED BY resources_task_days WHERE ${WORK_TASK_HISTORY}
+          UNION SELECT day.key FROM resources INDEXED BY resources_habit_history
+            CROSS JOIN json_each(state_json,'$.work.habit_checks') day
+            WHERE ${WORK_HABIT_HISTORY} AND json_extract(day.value,'$.value')=1
+        ), dates(local_date) AS MATERIALIZED (SELECT local_date FROM recorded UNION SELECT local_date FROM added)`;
+      const item = `json_object('local_date',d.local_date,
+        'ref',(SELECT ref ${pages} AND local_date=d.local_date),
+        'recorded',json(CASE WHEN EXISTS (SELECT 1 FROM recorded r WHERE r.local_date=d.local_date) THEN 'true' ELSE 'false' END))`;
+      const location = `json_set(${item},'$.rank',(SELECT count(*) FROM dates newer WHERE newer.local_date>d.local_date))`;
+      switch (query.at.kind) {
+        case "describe":
+          return {sql: `${calendar}, extent AS (SELECT count(*) AS total FROM dates),
+            sample AS (SELECT local_date FROM dates ORDER BY local_date DESC
+              LIMIT (SELECT CASE WHEN total<=200 THEN total ELSE 24 END FROM extent))
+            SELECT json_object('kind','description','total',total,'groups',json('[]'),
+              'items',json((SELECT json_group_array(${item}) FROM sample d)),
+              'attachments',json((SELECT json_group_array(${location}) FROM added d WHERE total>200))) AS register FROM extent`,
+            params};
+        case "range": {
+          const {start, limit} = query.at;
+          if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > AUTHORED_INDEX_RANGE)
+            throw new RangeError("Invalid journal date range");
+          return {sql: `${calendar}, slice AS (SELECT local_date FROM dates ORDER BY local_date DESC LIMIT ?3 OFFSET ?4)
+            SELECT json_object('kind','range','start',?4,'items',json_group_array(${item})) AS register FROM slice d`,
+            params: [...params, limit, start]};
+        }
+        case "locate": {
+          if (query.at.dates.length > 100) throw new RangeError("Too many journal date locations");
+          for (const date of query.at.dates) validateLocalDate(date);
+          return {sql: `${calendar} SELECT json_object('kind','locations','items',json_group_array(${location})) AS register
+            FROM dates d WHERE d.local_date IN (SELECT value FROM json_each(?3))`,
+            params: [...params, JSON.stringify(query.at.dates)]};
+        }
+      }
+    }
     case "habits": {
       const kind = "json_extract(state_json,'$.work.designation.value.kind')";
       const enabled = `${kind}='habit' AND json_extract(state_json,'$.work.designation.value.enabled')=1`;
