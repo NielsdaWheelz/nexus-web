@@ -1,18 +1,20 @@
 "use client";
 
 import { admissionReason } from "@/lib/api/failure";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import Button from "@/components/ui/Button";
+import ResourceList from "@/components/ui/ResourceList";
 import MachineText from "@/components/ui/MachineText";
 import PaneSection from "@/components/ui/PaneSection";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, outcomeUnknown, type ApiPath } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
-import { writeScrollPosition } from "@/lib/collections/scrollMotion";
+import { useVariableIndex } from "@/lib/collections/variableIndex";
+import { INDEX_WINDOW_THRESHOLD } from "@/lib/collections/measuredIndexWindow";
 import { formatDisplayDate } from "@/lib/display/format";
 import { isAbortError } from "@/lib/errors";
 import { formatLocalDateInTimeZone, shiftLocalDate } from "@/lib/localDate";
@@ -20,7 +22,7 @@ import { useAccountToday } from "@/lib/notes/accountDay";
 import { usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import { definePaneVisitDataKey, PaneRefreshAnchor } from "@/lib/workspace/paneReturnMemento";
+import { definePaneVisitDataKey, PaneRefreshAnchor, usePaneRevealAnchor } from "@/lib/workspace/paneReturnMemento";
 import type { ApiJson } from "@/lib/api/wire";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { undoAssistantWrite, writeKicker, UNDO_LABEL, UNDONE, UNDO_TOO_OLD, UNDO_UNAVAILABLE, UNDO_REFUSED, UNDO_UNKNOWN } from "@/lib/assistantWrites";
@@ -29,7 +31,8 @@ import styles from "./page.module.css";
 type Page = ApiJson<"/assistant-writes", "get">;
 type Write = Page["data"]["items"][number];
 const NO_WRITES: readonly Write[] = [];
-const VISIT = definePaneVisitDataKey<Visit<Page["data"]>>("Settings.AssistantWrites");
+const SCOPE = "Settings.AssistantWrites";
+const VISIT = definePaneVisitDataKey<Visit<Page["data"]>>(SCOPE);
 
 /** Successful writes in server order. Undo changes a row's state, never its place. */
 export default function Writes({ generationId, toolCallId }: {
@@ -47,7 +50,9 @@ export default function Writes({ generationId, toolCallId }: {
   const otherId = useId();
   const { fail } = useOutcome();
   const resendFeedback = useResendFeedback();
-  const focused = useRef<HTMLLIElement>(null);
+  const readList = useRef<HTMLUListElement>(null);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const reveal = usePaneRevealAnchor();
   const [focusId, setFocusId] = useState(toolCallId);
   const { calendarTimeZone } = useAuthenticatedAccount();
   const { displayLocale } = useRenderEnvironment();
@@ -71,15 +76,13 @@ export default function Writes({ generationId, toolCallId }: {
   const found = current && writes.some(write => write.id === toolCallId);
   useEffect(() => {
     if (focusId === null || !current || !active || !writes.some(write => write.id === focusId)) return;
-    const row = focused.current;
+    const row = readList.current?.querySelector<HTMLElement>(`[data-collection-row-id="${CSS.escape(focusId)}"]`);
     const port = row?.closest<HTMLElement>("[data-pane-content]");
-    if (row === null || !port) return;
-    const frame = port.getBoundingClientRect(), line = row.getBoundingClientRect();
-    const delta = line.top < frame.top ? line.top - frame.top : Math.max(0, line.bottom - frame.bottom);
-    if (delta !== 0) writeScrollPosition(port, port.scrollTop + delta);
-    row.focus({ preventScroll: true });
+    const frame = port?.getBoundingClientRect(), line = row?.getBoundingClientRect();
+    if (row && line && frame && line.top >= frame.top && line.bottom <= frame.bottom) row.focus({ preventScroll: true });
+    else reveal(SCOPE, focusId, true);
     setFocusId(null);
-  }, [focusId, writes, current, active]);
+  }, [focusId, writes, current, active, reveal]);
   const { refetch } = list;
   const execute = useCallback<PaneRefreshExecute>(async () => {
     try {
@@ -121,13 +124,20 @@ export default function Writes({ generationId, toolCallId }: {
   const replay = primary && "commandKey" in primary && primary.commandKey === retryKey ? primary : null;
   const waits = recovery !== null && (replay === null || replay.busy || replay.disabledReason !== undefined);
   const waitReason = replay?.disabledReason ?? admissionReason() ?? recovery?.line.reason;
-  const days = new Map<string | null, Write[]>();
-  for (const write of writes) {
-    const day = formatLocalDateInTimeZone(new Date(write.created_at), calendarTimeZone);
-    const group = days.get(day);
-    if (group) group.push(write);
-    else days.set(day, [write]);
-  }
+  const { ids, entries } = useMemo(() => {
+    const entries = new Map<string, {kind: "day"; day: string; createdAt: string} | {kind: "write"; write: Write}>();
+    let previous: string | null = null;
+    for (const write of writes) {
+      const day = formatLocalDateInTimeZone(new Date(write.created_at), calendarTimeZone);
+      if (day !== null && day !== previous && today !== null) entries.set(`day:${day}`, {kind: "day", day, createdAt: write.created_at});
+      entries.set(write.id, {kind: "write", write});
+      previous = day;
+    }
+    return { ids: [...entries.keys()], entries };
+  }, [writes, calendarTimeZone, today]);
+  const pinned = useMemo(() => new Set([focusId, focusedId].filter(id => id !== null)), [focusId, focusedId]);
+  const windowed = writes.length > INDEX_WINDOW_THRESHOLD;
+  const index = useVariableIndex({scope: SCOPE, ids, list: readList, estimate: 52, pinned, windowed});
 
   return <PaneSection id="writes" title="writes" description={generationId
     ? "writes from the answer that made this link."
@@ -141,34 +151,40 @@ export default function Writes({ generationId, toolCallId }: {
         : writes.length === 0 ? <Fact line={{ fact: generationId ? "no writes from this answer." : "no writes yet." }} />
         : toolCallId && !found ? <Fact line={{ fact: "that write isn’t in this list." }} />
         : null}
-      <PaneRefreshAnchor identity={key} value={writes} ready={current}>
-      <div className={styles.days} data-pane-return-scope="Settings.AssistantWrites">
-        {Array.from(days, ([day, group]) => <div key={day ?? "unavailable"}>
-          {day !== null && today !== null ? <h3 className={styles.day}>{day === today || day === yesterday
-            ? new Intl.RelativeTimeFormat(displayLocale, { numeric: "auto" }).format(day === today ? 0 : -1, "day")
-            : formatDisplayDate(group[0].created_at, display, { weekday: "long", day: "numeric", month: "short", ...(day.slice(0, 4) !== today.slice(0, 4) ? { year: "numeric" } : {}) })?.toLowerCase()}</h3> : null}
-          <ol className={styles.writes}>
-            {group.map(write => {
+      <PaneRefreshAnchor identity={key} value={ids} ready={current}>
+        <div data-pane-return-scope={SCOPE}>
+          <ResourceList ref={readList} ariaLabel="writes" windowed={windowed} height={index.height}>
+            {index.slots.map(({id, rank, top, size}) => {
+              const entry = entries.get(id);
+              const style = top === undefined ? undefined : {position: "absolute", insetInline: 0, top, blockSize: size, overflow: size === undefined ? undefined : "clip"} as CSSProperties;
+              if (entry === undefined) return <li key={id} role="presentation" aria-hidden="true" style={style} />;
+              if (entry.kind === "day") return <li key={id} role="presentation" ref={index.measure} style={style} data-index={rank}
+                data-collection-row-id={id}>
+                <h3 className={styles.day}>{entry.day === today || entry.day === yesterday
+                  ? new Intl.RelativeTimeFormat(displayLocale, { numeric: "auto" }).format(entry.day === today ? 0 : -1, "day")
+                  : formatDisplayDate(entry.createdAt, display, { weekday: "long", day: "numeric", month: "short", ...(entry.day.slice(0, 4) !== today?.slice(0, 4) ? { year: "numeric" } : {}) })?.toLowerCase()}</h3>
+              </li>;
+              const {write} = entry;
               const ref = write.created_refs[0];
               const target = ref.label.trim();
               const reverted = write.reverted_at !== null;
-              return <li key={write.id} className={styles.write} ref={write.id === focusId ? focused : undefined}
-                tabIndex={-1} data-collection-row-id={write.id} aria-current={write.id === toolCallId ? "true" : undefined}>
+              return <li key={id} className={styles.write} ref={index.measure} style={style} data-index={rank}
+                onFocus={() => setFocusedId(id)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocusedId(null); }}
+                tabIndex={-1} data-row-focusable="" data-collection-row-id={id} aria-current={id === toolCallId ? "true" : undefined}>
                 <time className={styles.time} dateTime={write.created_at}>{formatDisplayDate(write.created_at, display, { hour: "numeric", minute: "2-digit" })?.toLowerCase()}</time>
                 <span className={styles.writeWords}>
                   <span>{writeKicker(ref)}</span>
                   {target ? <span className={styles.target} data-reverted={reverted || undefined}>{target}</span> : null}
                 </span>
-                {write.undo_allowed ? <Button disabled={busyId !== null || (pending !== null && pending.id !== write.id) || (unknown?.id === write.id && waits)}
-                  aria-busy={busyId === write.id || (unknown?.id === write.id && replay?.busy) || undefined}
-                  aria-describedby={pending !== null && pending.id !== write.id ? otherId : unknown?.id === write.id && waits ? waitsId : undefined}
-                  onClick={() => void undo(write.id)}>{UNDO_LABEL}</Button>
+                {write.undo_allowed ? <Button disabled={busyId !== null || (pending !== null && pending.id !== id) || (unknown?.id === id && waits)}
+                  aria-busy={busyId === id || (unknown?.id === id && replay?.busy) || undefined}
+                  aria-describedby={pending !== null && pending.id !== id ? otherId : unknown?.id === id && waits ? waitsId : undefined}
+                  onClick={() => void undo(id)}>{UNDO_LABEL}</Button>
                   : <span className={styles.undoState}>{reverted ? UNDONE : write.created_refs.some(ref => ref.kind === "entry" && ref.order_revision === null) ? UNDO_TOO_OLD : UNDO_UNAVAILABLE}</span>}
               </li>;
             })}
-          </ol>
-        </div>)}
-      </div>
+          </ResourceList>
+        </div>
       </PaneRefreshAnchor>
       {list.status === "ready" && list.error !== null ? <Failed error={list.error} noun="writes" retry={{ run: list.refetch, busy: list.refreshing }} /> : null}
     </MachineText>

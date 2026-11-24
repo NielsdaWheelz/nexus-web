@@ -6,20 +6,24 @@
  */
 
 const LOCAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const calendarFormatters = new Map<string, Intl.DateTimeFormat>();
 
 /** A server-valid zone can be absent from this browser’s timezone database. */
 export function formatLocalDateInTimeZone(date: Date, timeZone: string): string | null {
-  let formatter: Intl.DateTimeFormat;
-  try {
-    formatter = new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    });
-  } catch (error) {
-    if (error instanceof RangeError) return null;
-    throw error;
+  let formatter = calendarFormatters.get(timeZone);
+  if (formatter === undefined) {
+    try {
+      formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
+    } catch (error) {
+      if (error instanceof RangeError) return null;
+      throw error;
+    }
+    calendarFormatters.set(timeZone, formatter);
   }
   const parts = formatter.formatToParts(date);
   const year = parts.find((part) => part.type === "year")?.value;
