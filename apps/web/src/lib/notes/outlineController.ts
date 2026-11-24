@@ -2601,7 +2601,7 @@ export class OutlineController {
     for (const row of rows) {
       const parent = rows.findIndex(candidate => candidate.row_id === row.parent_id);
       items.push(row.kind === "body" ? {kind: "note", ref: row.ref, body: this.pending.fields.get(row.row_id)?.pending ? this.body(row.row_id) : this.binding.body(row.row_id), parent: parent < 0 ? null : parent}
-        : {kind: "resource", ref: row.ref!, label: row.resource ? localResourceLabel(row.resource) : row.ref!, parent: parent < 0 ? null : parent});
+        : {kind: "resource", ref: row.ref!, label: row.resource ? this.label(row) : row.ref!, parent: parent < 0 ? null : parent});
     }
     event.preventDefault(); writeOutlineClipboard(event.clipboardData, items); return items.filter(item => item.parent === null).length;
   }
