@@ -157,7 +157,7 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
     <div id={contentId} hidden={!open}>
       {today === null ? <AccountCalendarUnavailable /> : null}
       <AuthoredReadFailure {...read} noun="unfinished work" />
-      <ResourceList ref={list} ariaLabel="unfinished work" busy={read.pending && read.data === null} windowed={windowed} height={index.height}>
+      <ResourceList ref={list} ariaLabel="unfinished work" busy={read.pending && read.data === null} windowed={index.windowed} height={index.height}>
         {index.slots.map(({id, rank, top, size}) => {
           const resource = visible.get(id);
           const slot = {ref: index.measure, "data-index": rank, "aria-posinset": rank + 1, "aria-setsize": index.count,

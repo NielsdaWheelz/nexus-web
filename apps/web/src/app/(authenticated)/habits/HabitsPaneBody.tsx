@@ -68,9 +68,9 @@ export default function HabitsPaneBody() {
     {today === null ? <AccountCalendarUnavailable/> : null}
     <AuthoredReadFailure {...latest} noun="the latest habit year"/>
     <div data-pane-return-scope="Habits">
-      <PaneSurface measured={windowed} state={read.data === null && read.error === null ? <Ruling/> : <AuthoredReadFailure {...read} noun="habits"/>}
-        empty={read.data !== null && ids.length === 0 ? <p>no daily habits yet. choose repeat daily on a note.</p> : null}>
-        {ids.length > 0 ? <ResourceList ref={list} ariaLabel="habits" busy={read.pending} height={index.height} windowed={windowed}>
+      <PaneSurface measured={index.windowed} state={read.data === null && read.error === null ? <Ruling/> : <AuthoredReadFailure {...read} noun="habits"/>}
+        empty={read.data !== null && index.count === 0 ? <p>no daily habits yet. choose repeat daily on a note.</p> : null}>
+        {index.count > 0 ? <ResourceList ref={list} ariaLabel="habits" busy={read.pending} height={index.height} windowed={index.windowed}>
           {index.slots.map(({id, rank, top, size}) => {
             const item = items.get(id);
             return <li key={id} ref={index.measure} data-index={rank} data-collection-row-id={id} aria-posinset={rank + 1} aria-setsize={index.count}

@@ -16,7 +16,7 @@ const completed = (result: QueryResult) => result.work_index;
 
 /** A day's completed work as one run-in line. Nothing is drawn until the read has settled with rows. */
 export default function CompletedWork({date}:{date:string}) {
-  const read = useAuthoredIndex({kind:"work_completed",local_date:date,start:0,limit:2048,expected_revision:null}, completed);
+  const read = useAuthoredIndex({kind:"work_completed",local_date:date,start:0,limit:AUTHORED_INDEX_RANGE,expected_revision:null}, completed);
   const history = useContext(WorkHistoryContext);
   if (!history || (read.data?.items.length ?? 0) === 0 && read.error === null) return null;
   return <CompletedLine date={date} read={read} history={history} />;

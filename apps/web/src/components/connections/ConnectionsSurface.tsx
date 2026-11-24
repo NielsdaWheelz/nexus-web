@@ -45,6 +45,7 @@ import { useConnectionAttachments } from "./useConnectionAttachments";
 import styles from "./ConnectionsSurface.module.css";
 
 const mentionIndex = (result: QueryResult) => result.mentions;
+const NO_MENTIONS: readonly string[] = [];
 
 export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   resourceRef: ResourceRef;
@@ -90,7 +91,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
         retry={() => {self.retry(); linked.retry(); mentions.retry();}}/> : null}
       {opening ? <Ruling /> : empty ? <Fact line={{ fact: "no connections yet." }} /> : null}
       <LocalOutline rootRef={selfRef} occurrencePrefix={`connections:${selfRef}`} />
-      {mentions.data?.items.length ? <MentionedIn selfRef={selfRef} ids={mentions.data.items}/> : null}
+      <MentionedIn selfRef={selfRef} ids={mentions.data?.items ?? NO_MENTIONS}/>
       {embedded.length ? <section aria-label="embedded in this note">
         <h3 className={styles.subtitle}>embedded in this note</h3>
         <ResourceOutlineList scope={`embeds:${selfRef}`} ariaLabel="embedded in this note" ancestorRef={selfRef}>
@@ -110,10 +111,11 @@ function MentionedIn({selfRef, ids}: {selfRef: string; ids: readonly string[]}) 
   const windowed = ids.length > INDEX_WINDOW_THRESHOLD;
   const index = useVariableIndex({scope, ids, list, estimate: 68, pinned, windowed});
   const members = useMemo(() => new Set(ids), [ids]);
+  if (index.count === 0) return null;
   return <section aria-label="mentioned in">
     <h3 className={styles.subtitle}>mentioned in</h3>
     <ResourceOutlineList scope={scope} ariaLabel="mentioned in" ancestorRef={selfRef}
-      listProps={{ref: list, style: windowed ? {position: "relative", height: index.height} : undefined}}>
+      listProps={{ref: list, style: index.windowed ? {position: "relative", height: index.height} : undefined}}>
       {index.slots.map(({id, rank, top, size}) => {
         const style = top === undefined ? undefined : {position: "absolute", insetInline: 0, top, blockSize: size, overflow: size === undefined ? undefined : "clip"} as const;
         return members.has(id)

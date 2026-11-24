@@ -5,7 +5,7 @@ import {defaultRangeExtractor, measureElement, useVirtualizer} from "@tanstack/r
 import {writeScrollPosition} from "./scrollMotion";
 import {usePaneAnchorGeometry, usePaneScrollMotion, type AnchorGeometry, type AnchorGeometryFrame} from "@/lib/workspace/paneReturnMemento";
 
-export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, windowed}: {
+export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, windowed: requestedWindow}: {
   scope: string;
   ids: readonly string[];
   list: RefObject<HTMLUListElement | null>;
@@ -15,14 +15,17 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
 }) {
   const motion = usePaneScrollMotion();
   const held = motion !== "still";
-  const previous = useRef(incoming);
-  const ids = useMemo(() => {
+  const previous = useRef({ids: incoming, windowed: requestedWindow});
+  const presentation = useMemo(() => {
     const before = previous.current;
-    if (!windowed || !held || before.length === 0 || motion === "travel" &&
-      incoming.length > before.length && before.every((id, index) => incoming[index] === id)) return incoming;
-    return before;
-  }, [incoming, windowed, held, motion]);
-  useLayoutEffect(() => {previous.current = ids;}, [ids]);
+    if (held && before.ids.length > 0 && (!requestedWindow || before.windowed) &&
+      !(motion === "travel" && incoming.length > before.ids.length && before.ids.every((id, rank) => incoming[rank] === id))) {
+      return before;
+    }
+    return {ids: incoming, windowed: requestedWindow};
+  }, [incoming, requestedWindow, held, motion]);
+  const {ids, windowed} = presentation;
+  useLayoutEffect(() => {previous.current = presentation;}, [presentation]);
   const frame = useRef<AnchorGeometryFrame | null>(null);
   const [demands, setDemands] = useState<ReadonlyMap<symbol, string>>(() => new Map());
   const [origin, setOrigin] = useState<number | null>(null);
@@ -115,5 +118,5 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
   usePaneAnchorGeometry({scope, geometry: windowed ? geometry : null, ready: !windowed || slots.length > 0});
   const viewport = origin !== null && index.range !== null && index.scrollRect !== null
     ? {first: index.range.startIndex, height: index.scrollRect.height} : null;
-  return {slots, height, count: ids.length, viewport, measure: windowed ? index.measureElement : undefined};
+  return {slots, height, windowed, count: ids.length, viewport, measure: windowed ? index.measureElement : undefined};
 }
