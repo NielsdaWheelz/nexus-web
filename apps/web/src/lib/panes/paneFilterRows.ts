@@ -1,6 +1,6 @@
 "use client";
 
-import { paneFilterText } from "./paneFilterText";
+import { foldFilterText } from "@nexus/authored/filter";
 import { useCallback, useMemo, useState } from "react";
 import { truncatePaneSearchQuery } from "@/lib/panes/paneChrome";
 import { definePaneVisitDataKey, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
@@ -59,20 +59,16 @@ export function matchesPaneFilterQuery(
   query: string,
   fields: readonly string[],
 ): boolean {
-  const needle = paneFilterText(query.trim());
+  const needle = foldFilterText(query.trim());
   return (
     needle.length === 0 ||
     fields.some((field) =>
-      paneFilterText(field).includes(needle),
+      foldFilterText(field).includes(needle),
     )
   );
 }
 /** Visit-local filter text; a new source starts empty. */
-export function usePaneFilterRows(input: {
-  readonly sourceKey: string;
-  readonly getRowStatus: (query: string) => PaneFilterRowsStatus;
-}) {
-  const { sourceKey, getRowStatus } = input;
+export function usePaneFilterQuery(sourceKey: string) {
   const retained = usePaneVisitData(FILTER, () => ({ sourceKey, query }));
   const [state, setState] = useState(retained ?? { sourceKey, query: "" });
   const query: string = state.sourceKey === sourceKey ? state.query : "";
@@ -85,9 +81,14 @@ export function usePaneFilterRows(input: {
     () => setState({ sourceKey, query: "" }),
     [sourceKey],
   );
-  const rowStatus = useMemo(() => getRowStatus(query), [getRowStatus, query]);
-  return useMemo(
-    () => ({ query, onQueryChange, clearQuery, rowStatus }),
-    [query, onQueryChange, clearQuery, rowStatus],
-  );
+  return useMemo(() => ({query, onQueryChange, clearQuery}), [query, onQueryChange, clearQuery]);
+}
+
+export function usePaneFilterRows(input: {
+  readonly sourceKey: string;
+  readonly getRowStatus: (query: string) => PaneFilterRowsStatus;
+}) {
+  const filter = usePaneFilterQuery(input.sourceKey);
+  const rowStatus = useMemo(() => input.getRowStatus(filter.query), [input, filter.query]);
+  return useMemo(() => ({...filter, rowStatus}), [filter, rowStatus]);
 }

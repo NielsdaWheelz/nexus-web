@@ -8,6 +8,7 @@ import type { AuthoredQuery, Change, OutlineRange, PassageState, QueryResult, Qu
 import { normalizeQuote } from "./identity.ts";
 import { counter } from "./merge.ts";
 import { validateLocalDate } from "./work.ts";
+import { foldFilterText } from "./filter.ts";
 import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, SEARCH_FAMILIES, type ScopeInterval, type ScopeReading } from "./scope.ts";
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
 const HIGHLIGHT_TEXT_FIELDS = ["prefix", "quote_exact", "suffix"] as const;
@@ -62,6 +63,17 @@ const READABLE = `WITH readable AS (
 )`;
 /** Rebuild one FTS row from canonical presented content, on either SQLite host. */
 export const PAGE_TITLE_SQL = `COALESCE(NULLIF(title,''),${DAILY_TITLE_SQL},'untitled page')`;
+/** Rebuildable literal fields. Local resources and passages take precedence over their source stubs. */
+export const LITERAL_SOURCE_SQL = `SELECT CASE WHEN kind='page' THEN ${PAGE_TITLE_SQL} ELSE title END AS title,body_text AS body,
+  CASE WHEN kind='highlight' THEN json_extract(projection_json,'$.selection.quote_exact') END AS quote FROM resources WHERE ref=?1
+  UNION ALL SELECT json_extract(projection_json,'$.title'),NULL,NULL FROM passages WHERE 'passage_anchor:'||anchor_id=?1
+  UNION ALL SELECT json_extract(state_json,'$.capture.value.label'),NULL,NULL FROM source_stubs WHERE source_ref=?1 LIMIT 1`;
+export const LITERAL_MISSING_SQL = `SELECT ref FROM (SELECT ref FROM resources UNION SELECT 'passage_anchor:'||anchor_id AS ref FROM passages UNION SELECT source_ref AS ref FROM source_stubs) r
+  WHERE NOT EXISTS(SELECT 1 FROM literal_fields f WHERE f.ref=r.ref) ORDER BY ref LIMIT 128`;
+export const LITERAL_WRITE_SQL = `INSERT INTO literal_fields(ref,title,body,quote) VALUES(?,?,?,?) ON CONFLICT(ref) DO UPDATE SET title=excluded.title,body=excluded.body,quote=excluded.quote`;
+export function foldedFields(row: Record<string, unknown>): [string,string,string] {
+  return [foldFilterText(String(row.title ?? "")), foldFilterText(String(row.body ?? "")), foldFilterText(String(row.quote ?? ""))];
+}
 export const SEARCH_INDEX_SQL = `${READABLE}, indexed AS (
   SELECT ref,projection_json,json_extract(projection_json,'$.kind') AS kind,
   json_extract(projection_json,'$.title') AS title,json_extract(projection_json,'$.local_date') AS local_date FROM readable
@@ -420,6 +432,31 @@ function workQuery(query: Extract<AuthoredQuery, {kind: "work_pending" | "work_c
 export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission" | "outline_windows"}>): CompiledQuery {
   const limit = "limit" in query ? Math.max(1, Math.min(100, Math.floor(query.limit))) : 100;
   switch (query.kind) {
+    case "page_register":
+    case "outline_filter": {
+      if (!Number.isSafeInteger(query.start) || query.start < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 2048) throw new RangeError("Invalid index range");
+      const needle = foldFilterText(query.text.trim());
+      if (query.kind === "page_register") {
+        const base = `FROM resources AS r INDEXED BY resources_register WHERE kind='page' AND visible=1 AND local_date IS NULL`;
+        const selected = `${base}${needle ? " AND EXISTS(SELECT 1 FROM literal_fields f WHERE f.ref=r.ref AND instr(f.title,?3)>0)" : ""}`;
+        return {sql: `WITH slice AS (SELECT ref,${PAGE_TITLE_SQL} AS name ${selected} ORDER BY name COLLATE NOCASE,ref LIMIT ?1 OFFSET ?2)
+          SELECT (SELECT count(*) ${selected}) AS total, (SELECT count(*) ${base}) AS source_total,
+            json_group_array(json_array(ref,upper(substr(name,1,1)),CASE WHEN length(CAST(name AS BLOB))<=512 THEN name END)) AS items FROM slice`,
+          params: [query.limit,query.start,...needle ? [needle] : []]};
+      }
+      const incident = (["a","b"] as const).map(side => {
+        const peer = side === "a" ? "b" : "a";
+        return `SELECT l.link_id,l.endpoint_${peer} AS other_ref,l.position_${side} AS position FROM links l INDEXED BY links_${side}
+          WHERE l.endpoint_${side}=?1 AND l.visible=1 AND ${live("?1")} AND ${live(`l.endpoint_${peer}`)}`;
+      }).join(" UNION ALL ");
+      return {sql: `WITH incident AS NOT MATERIALIZED (${incident}),slice AS (SELECT link_id,other_ref FROM incident ORDER BY position,link_id LIMIT ?2 OFFSET ?3)
+        SELECT (SELECT count(*) FROM incident) AS total,json_group_array(json_array(link_id,other_ref,
+          ${needle ? "EXISTS(SELECT 1 FROM literal_fields f WHERE f.ref=slice.other_ref AND (instr(f.title,?4)>0 OR instr(f.body,?4)>0 OR instr(f.quote,?4)>0))" : "1"})) AS items FROM slice`,
+        params: [query.parent_ref,query.limit,query.start,...needle ? [needle] : []]};
+    }
+    case "page_label": return {sql:`WITH page(name) AS (SELECT ${PAGE_TITLE_SQL} FROM resources WHERE ref=? AND kind='page' AND visible=1 AND local_date IS NULL),
+      bounded AS (SELECT name,length(CAST(json_quote(name) AS BLOB))>16770000 AS oversized FROM page)
+      SELECT CASE WHEN NOT oversized THEN name END AS label,oversized FROM bounded`,params:[query.ref]};
     case "daily_index": return {sql: `WITH dates(local_date) AS (
       SELECT local_date FROM resources WHERE kind='page' AND visible=1 AND local_date IS NOT NULL
       UNION SELECT json_extract(state_json,'$.work.task_completed_on.value') FROM resources
@@ -479,12 +516,12 @@ type PassageMembership = { activation_ref: string | null } | false;
 /** Active published source identity only; this proves no reading permission. */
 export async function sourceAliasQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "source_alias"}>): Promise<Omit<QueryResult, "store_revision">> {
   const rows = await read(compileQuery(query));
-  return {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: rows[0] ? String(rows[0].canonical_source_ref) : null, positions: [], children: [], scope_available: true, daily_index: null, outline_windows: null};
+  return {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: rows[0] ? String(rows[0].canonical_source_ref) : null, positions: [], children: [], scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, outline_windows: null};
 }
 
 /** Exact capture identity is loaded first. Reading aliases prove admission only, never substitute a capture. */
 export async function excerptQuery(read: QueryRead, query: Extract<AuthoredQuery,{kind:"excerpt"}>): Promise<Omit<QueryResult,"store_revision">> {
-  const result: Omit<QueryResult,"store_revision"> = {rows:[],next_cursor:null,previous_cursor:null,binding_id:null,canonical_source_ref:null,positions:[],children:[],scope_available:true,daily_index:null,outline_windows:null};
+  const result: Omit<QueryResult,"store_revision"> = {rows:[],next_cursor:null,previous_cursor:null,binding_id:null,canonical_source_ref:null,positions:[],children:[],scope_available:true,daily_index:null,page_register:null,page_label:null,outline_filter:null,outline_windows:null};
   const rows = await read({sql:EXCERPT_ROW_SQL,params:[query.ref]});
   if (!rows.length) return result;
   const row = rows[0]!, resource: ResourceProjection = JSON.parse(String(row.projection_json));
@@ -581,7 +618,7 @@ export async function excerptQuery(read: QueryRead, query: Extract<AuthoredQuery
  * derived scope inputs never replace the canonical authored projection. */
 export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "search" | "search_preview" | "search_admission"}>,
   score: (text: string, expression: string) => Promise<number | null>): Promise<Omit<QueryResult, "store_revision">> {
-  const result: Omit<QueryResult, "store_revision"> = {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, outline_windows: null};
+  const result: Omit<QueryResult, "store_revision"> = {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, outline_windows: null};
   const preview = query.kind !== "search";
   const admission = query.kind === "search_admission";
   if (query.kind === "search_preview" && !Number.isFinite(query.limit)

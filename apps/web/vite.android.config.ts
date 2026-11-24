@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { Features } from "lightningcss";
-import { compileQuery, compileOutlineWindows, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, SEARCH_READ_SQL, SEARCH_MATCH_SQL } from "../../node/authored/src/queries";
+import { compileQuery, compileOutlineWindows, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, SEARCH_READ_SQL, SEARCH_MATCH_SQL, LITERAL_SOURCE_SQL, LITERAL_MISSING_SQL, LITERAL_WRITE_SQL } from "../../node/authored/src/queries";
 import { SCOPE_SQL } from "../../node/authored/src/scope";
 import { nativeQueryPlans } from "./src/lib/authored/nativeQuery";
 import type { AuthoredQuery } from "../../node/authored/src/types";
@@ -53,6 +53,9 @@ export default defineConfig({
         const workCursors = [null, JSON.stringify(["1", "22222222-2222-4222-8222-222222222222", "note_block:33333333-3333-4333-8333-333333333333"])];
         type PackagedQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;
         const samples: Record<PackagedQuery["kind"], PackagedQuery[]> = {
+          page_register: ["","words"].map(text => ({kind: "page_register", text, start: 0, limit: 1, expected_revision: null})),
+          page_label: [{kind: "page_label", ref: ""}],
+          outline_filter: ["","words"].map(text => ({kind: "outline_filter", parent_ref: "", text, start: 0, limit: 1, expected_revision: null})),
           daily_index: [{kind: "daily_index"}],
           work_pending: workCursors.map(cursor => ({kind: "work_pending", local_date: "2026-11-11", cursor, limit: 100})),
           work_completed: workCursors.map(cursor => ({kind: "work_completed", local_date: "2026-11-11", cursor, limit: 100})),
@@ -76,7 +79,8 @@ export default defineConfig({
           positions: [{ kind: "positions", ref: "", exclude_link_id: null, at: { kind: "tail" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "neighbors", link_id: "", side: "before" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "neighbors", link_id: "", side: "after" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "bounds", position: "a0" } }, { kind: "positions", ref: "", exclude_link_id: null, at: { kind: "tie", position: "a0", cursor: null, limit: 100 } }],
           resolve: Array.from({ length: 101 }, (_, count) => ({ kind: "resolve", refs: Array(count).fill("") })),
         };
-        const statements: Record<string, string> = { pending_changes: PENDING_CHANGES_SQL, search_index: SEARCH_INDEX_SQL, search_remove: SEARCH_REMOVE_SQL, ...SCOPE_SQL, ...SEARCH_MATCH_SQL };
+        const statements: Record<string, string> = { pending_changes: PENDING_CHANGES_SQL, search_index: SEARCH_INDEX_SQL, search_remove: SEARCH_REMOVE_SQL,
+          literal_source: LITERAL_SOURCE_SQL, literal_missing: LITERAL_MISSING_SQL, literal_write: LITERAL_WRITE_SQL, ...SCOPE_SQL, ...SEARCH_MATCH_SQL };
         for (const sql of SEARCH_READ_SQL) statements[`search_read:${createHash("sha256").update(sql).digest("hex")}`] = sql;
         for (const query of Object.values(samples).flat()) {
           const compiled = query.kind === "outline_windows" ? compileOutlineWindows(query) : [compileQuery(query)];

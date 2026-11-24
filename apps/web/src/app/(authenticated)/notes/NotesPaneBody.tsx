@@ -1,19 +1,17 @@
 "use client";
 
-// The register. The local account database owns it online and offline: undated pages in
-// the query's ascii-folded title/ref order, a head on each letter's run, and above them
-// the undated pages this device opened last. Filtering describes only the loaded prefix.
+import { useCallback, useMemo } from "react";
+import type { QueryResult, RegisterItem } from "@nexus/authored/types";
 import * as Icon from "@/lib/ui/icons";
-import { useMemo, useState } from "react";
-import { pageTitle } from "@nexus/authored/queries";
-import CollectionView from "@/components/collections/CollectionView";
+import CollectionView, { type CollectionViewRowRenderProps } from "@/components/collections/CollectionView";
+import type { CollectionRowView } from "@/lib/collections/types";
+import CollectionRow from "@/components/collections/CollectionRow";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { Fact } from "@/components/feedback/Fact";
-import Button from "@/components/ui/Button";
 import { presentNote } from "@/lib/collections/presenters/note";
-import { useAuthoredPages, useResolvedRefs } from "@/lib/notes/hooks";
+import { useAuthoredIndex, useAuthoredQuery } from "@/lib/notes/hooks";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { matchesPaneFilterQuery, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
+import { usePaneFilterQuery } from "@/lib/panes/paneFilterRows";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
@@ -22,92 +20,85 @@ import { useRecent } from "@/lib/recent/store";
 import { usePaneReturnReady, usePaneScrollRetention } from "@/lib/workspace/paneReturnMemento";
 import styles from "./NotesPaneBody.module.css";
 
-const UNIT = { singular: "page", plural: "pages" };
+const UNIT = {singular: "page", plural: "pages"};
+const register = (result: QueryResult) => result.page_register;
 
-/** sqlite's NOCASE folds ascii alone; a head under any wider fold would split a run. */
-function letter(title: string): string {
-  const first = String.fromCodePoint(title.codePointAt(0)!);
-  return first >= "a" && first <= "z" ? first.toUpperCase() : first;
+/** Only mounted oversized titles need a read. Their identity, header and link already exist. */
+function LongTitleRow(props: CollectionViewRowRenderProps) {
+  const ref = props.row.resourceRef!;
+  const read = useAuthoredQuery({kind: "page_label", ref});
+  const result = read.data?.page_label;
+  const title = result?.label ?? (result?.oversized ? "title too large to display" : read.error ? "couldn’t read title" : "page");
+  return <CollectionRow {...props} row={{...presentNote({id: ref.slice(5), title}), id: props.row.id}}
+    primaryControl={read.error ? <AuthoredReadFailure {...read} noun="this title"/> : props.primaryControl}/>;
 }
 
 export default function NotesPaneBody() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "NotesPaneBody");
   const type = readerType(useReaderProfile());
-  const read = useAuthoredPages({ kind: "pages", cursor: null, limit: 100 });
-  const complete = read.data !== null && read.data.next_cursor === null;
-  const rows = useMemo(() => (read.data?.rows ?? []).flatMap(({ resource }) => resource.kind === "page"
-    ? [presentNote({ id: resource.ref.slice("page:".length), title: pageTitle(resource.title ?? "", resource.local_date) })] : []), [read.data]);
-  const recentStore = useRecent();
-  const recent = recentStore.snapshot;
-  const recentRefs = useMemo(() => (recent?.entries ?? []).flatMap(({ target }) =>
-    target.kind === "resource_ref" && target.ref.startsWith("page:") ? [target.ref] : []), [recent]);
-  // A page entering recents keeps the run standing while its read is pending.
-  const opened = useResolvedRefs(recentRefs);
-  const openedRows = useMemo(() => recentRefs.flatMap(ref => {
-    const page = opened.resources.get(ref);
-    const id = ref.slice("page:".length);
-    return page?.kind === "page" && page.local_date === null ? [{ ...presentNote({ id, title: pageTitle(page.title ?? "", null) }), id: `recent:${id}` }] : [];
-  }).slice(0, 8), [opened.resources, recentRefs]);
-  const listed = useMemo(() => [...openedRows, ...rows], [openedRows, rows]);
-  // The pane is ready once its pages and its first recent run have settled, a failure included.
-  // A later change to recents holds its rows provisionally and does not withdraw readiness.
-  const [recentsSettled, setRecentsSettled] = useState(false);
-  if (!recentsSettled && (recent !== null ? opened.settled : recentStore.readFailure)) setRecentsSettled(true);
-  usePaneReturnReady((read.data !== null || read.error !== null) && recentsSettled);
-  usePaneScrollRetention(listed);
-  const filter = usePaneFilterRows({
-    sourceKey: "Notes.Pages",
-    getRowStatus: query => {
-      const visibleCount = rows.filter(row => matchesPaneFilterQuery(query, [row.title.text])).length;
-      return complete
-        ? { kind: "Complete", visibleCount, totalCount: rows.length, unit: UNIT }
-        : { kind: read.error === null ? "Partial" : "Failed", visibleCount, loadedCount: rows.length, unit: UNIT };
-    },
-  });
-  const filtering = filter.query.trim() !== "";
-  const visible = rows.filter(row => matchesPaneFilterQuery(filter.query, [row.title.text]));
+  const filter = usePaneFilterQuery("Notes.Pages");
+  const text = filter.query.trim();
+  const read = useAuthoredIndex({kind: "page_register", text, start: 0, limit: 2048, expected_revision: null}, register);
+  const recent = useRecent();
+  const list = useMemo(() => {
+    const rows = [], heads = new Map<string,string>(), long = new Set<string>();
+    const items = read.data?.items ?? [];
+    let opened = 0;
+    const add = (item: RegisterItem, isRecent: boolean) => {
+      const id = item.ref.slice(5), row = presentNote({id, title: item.label ?? "page"});
+      const occurrence = isRecent ? `recent:${id}` : id;
+      if (item.label === null) long.add(occurrence);
+      return {...row, id: occurrence};
+    };
+    if (!text && recent.snapshot) {
+      const byRef = new Map(items.map(item => [item.ref,item]));
+      for (const {target} of recent.snapshot.entries) {
+        const item = target.kind === "resource_ref" ? byRef.get(target.ref) : null;
+        if (!item) continue;
+        const row = add(item, true);
+        if (opened++ === 0) heads.set(row.id, "opened here");
+        rows.push(row);
+        byRef.delete(item.ref);
+        if (opened === 8) break;
+      }
+    }
+    let previous: string | null = null;
+    for (const item of items) {
+      const row = add(item, false);
+      if (item.group !== previous) heads.set(row.id, item.group);
+      rows.push(row); previous = item.group;
+    }
+    return {rows, heads, long};
+  }, [read.data, text, recent.snapshot]);
+  const ready = (read.data !== null || read.error !== null) && (text !== "" || recent.snapshot !== null || recent.readFailure);
+  usePaneReturnReady(ready);
+  usePaneScrollRetention(list.rows);
+  const count = read.data?.items.length ?? 0, total = read.data?.sourceTotal ?? 0;
   usePaneChrome({
-    primaryAction: { kind: "link", id: "NewPage", label: "New page", icon: <Icon.Add aria-hidden="true" />, href: "/pages/new",
-      onActivate: event => activateTargetLink({ event, runtime, target: { href: "/pages/new" }, entry: { kind: "ComposePage", title: "" } }) },
-    query: { kind: "Collation", collation: {
-      words: { label: "filter pages", value: filter.query, applied: filter.query,
-        onChange: filter.onQueryChange, onClear: filter.clearQuery, standing: false, onSubmit: null,
-        rows: { status: filter.rowStatus, announce: read.data !== null && read.error === null }, notice: null, verbs: [] },
-      dimensions: [], order: null, reset: null,
-    } },
-    header: { kind: "Section", meta: complete ? { kind: "Count", value: visible.length, of: rows.length, unit: "page" } : { kind: "Pending" } },
+    primaryAction: {kind: "link", id: "NewPage", label: "New page", icon: <Icon.Add aria-hidden="true"/>, href: "/pages/new",
+      onActivate: event => activateTargetLink({event, runtime, target: {href: "/pages/new"}, entry: {kind: "ComposePage", title: ""}})},
+    query: {kind: "Collation", collation: {
+      words: {label: "filter pages", value: filter.query, applied: filter.query, onChange: filter.onQueryChange,
+        onClear: filter.clearQuery, standing: false, onSubmit: null, rows: {status: read.data
+          ? {kind: "Complete", visibleCount: count, totalCount: total, unit: UNIT}
+          : {kind: read.error ? "Failed" : "Partial", visibleCount: 0, loadedCount: 0, unit: UNIT}, announce: !!read.data && !read.error}, notice: null, verbs: []},
+      dimensions: [], order: null, reset: null}},
+    header: {kind: "Section", meta: read.data ? {kind: "Count", value: count, of: total, unit: "page"} : {kind: "Pending"}},
   });
-
-  const runStarts = new Set<string>();
-  let previous: string | null = null;
-  for (const row of visible) {
-    const head = letter(row.title.text);
-    if (head !== previous) runStarts.add(row.id);
-    previous = head;
-  }
+  const headBefore = useCallback((row: CollectionRowView) => {
+    const label = list.heads.get(row.id);
+    return label === undefined ? null : <h3 className={row.id.startsWith("recent:") ? styles.recent : styles.letter}>{label}</h3>;
+  }, [list.heads]);
   const failure = <AuthoredReadFailure {...read} noun="pages"/>;
-  const recentFailure = recent === null && recentStore.readFailure
-    ? <Fact line={{ fact: "couldn’t load recent items." }} verbs={[{ label: "retry", commandKey: "retry recent", run: recentStore.read }]} />
-    : opened.error !== null ? <AuthoredReadFailure {...opened} noun="recent pages"/> : null;
-  const emptyTitle = filtering
-    ? complete ? "no pages match this filter." : "no loaded page matches this filter."
-    : complete ? "no pages yet. daily pages stay in the journal." : "no pages loaded yet.";
   return <div {...type} className={styles.register}>
-    <CollectionView
-      returnScope="Notes.Pages" rows={filtering ? visible : [...openedRows, ...visible]} ariaLabel="Notes"
-      status={read.data !== null ? "ready" : read.error !== null ? "error" : "loading"}
-      collectionBusy={read.data === null && read.error === null}
-      anchorKey={filter.query.trim()}
-      notice={<>
-        {filtering && !complete ? <p>filter applies to loaded pages.</p> : null}
-        {read.data !== null && read.error !== null ? failure : null}
-        {filtering ? null : recentFailure}
-      </>}
-      error={read.data === null ? failure : undefined}
-      empty={<Fact line={{ fact: emptyTitle }} />}
-      footer={!complete && read.data !== null ? <Button aria-busy={read.pending} onClick={read.more}>show more pages</Button> : undefined}
-      headBefore={row => row.id === openedRows[0]?.id ? <h3 className={styles.recent}>opened here</h3>
-        : runStarts.has(row.id) ? <h3 className={styles.letter}>{letter(row.title.text)}</h3> : null}
-    />
+    <CollectionView returnScope="Notes.Pages" ariaLabel="Notes" rows={list.rows} geometry="UniformIndex" anchorKey={text}
+      status={read.data ? "ready" : read.error ? "error" : "loading"} collectionBusy={!ready}
+      notice={<>{read.data && read.error ? failure : null}
+        {!text && recent.snapshot === null && recent.readFailure ? <Fact line={{fact: "couldn’t load recent items."}}
+          verbs={[{label: "retry", commandKey: "retry recent", run: recent.read}]}/> : null}</>}
+      error={!read.data ? failure : undefined}
+      empty={<Fact line={{fact: text ? "no pages match this filter." : "no pages yet. daily pages stay in the journal."}}/>}
+      renderRow={props => list.long.has(props.row.id) ? <LongTitleRow {...props}/> : <CollectionRow {...props}/>}
+      headBefore={headBefore}/>
   </div>;
 }

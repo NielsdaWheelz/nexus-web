@@ -91,9 +91,17 @@ export interface OutlineChildrenOccurrence { refs: ResourceRef[]; excluded_link_
  * boundary peers. Every field belongs to the same serialized SQL read. */
 export interface OutlineWindowProof { resources: ResourceProjection[]; before: LinkState | null; after: LinkState | null; tail: LinkState | null }
 export interface DailyIndexEntry { local_date: string; ref: ResourceRef | null }
+/** Structural rows contain occurrence identity and bounded presentation. A missing label is resolved only for a mounted row. */
+export interface RegisterItem { ref: ResourceRef; group: string; label: string | null }
+export interface OutlineIndexItem { link_id: string; other_ref: ResourceRef; matched: boolean }
+export type IndexRange<Row> = {kind: "changed"} | {kind: "range"; total: number; source_total: number; start: number; items: Row[]};
+export type IndexRequest = {start: number; limit: number; expected_revision: Counter | null};
 export interface OutlineRange { cursor: string | null; anchor_link_id: string | null; limit: number }
 export interface OutlineWindowSlice { rows: QueryRow[]; children: (boolean | null)[]; next_cursor: string | null; previous_cursor: string | null; proof: OutlineWindowProof }
 export type AuthoredQuery =
+  | ({kind: "page_register"; text: string} & IndexRequest)
+  | {kind: "page_label"; ref: ResourceRef}
+  | ({kind: "outline_filter"; parent_ref: ResourceRef; text: string} & IndexRequest)
   | { kind: "daily_index" }
   | { kind: "work_pending"; local_date: LocalDate; cursor: string | null; limit: number }
   | { kind: "work_completed"; local_date: LocalDate; cursor: string | null; limit: number }
@@ -116,7 +124,7 @@ export type AuthoredQuery =
   | { kind: "resolve"; refs: ResourceRef[] };
 export interface QueryRow { resource: ResourceProjection; link: LinkState | null; match_text: string | null; activation_ref: ResourceRef | null; matched_field: "quote" | "annotation" | null; activation_field: "annotation" | null }
 /** Only source_alias populates canonical_source_ref; provenance grants no reading permission. */
-export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; previous_cursor: string | null; binding_id: string | null; canonical_source_ref: ResourceRef | null; positions: LinkState[]; children: (boolean | null)[]; scope_available: boolean; daily_index: DailyIndexEntry[] | null; outline_windows: OutlineWindowSlice[] | null }
+export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; previous_cursor: string | null; binding_id: string | null; canonical_source_ref: ResourceRef | null; positions: LinkState[]; children: (boolean | null)[]; scope_available: boolean; daily_index: DailyIndexEntry[] | null; outline_windows: OutlineWindowSlice[] | null; page_register: IndexRange<RegisterItem> | null; page_label: {label: string | null; oversized: boolean} | null; outline_filter: IndexRange<OutlineIndexItem> | null }
 export interface CommitFrame { expected_store_revision: Counter; replica_id: string; change: Change; states: MergeResult }
 export type CommitResult = { kind: "committed"; command_seq: Counter; store_revision: Counter } | { kind: "stale"; store_revision: Counter; states: Corpus };
 export interface StateSelection { refs: string[]; link_ids: string[]; anchor_ids: string[]; source_refs: string[] }

@@ -3,9 +3,10 @@
  * unassigned characters stay opaque boundaries; final sigma uses frozen
  * properties because even assigned characters' casing properties can change.
  */
-import { CASED_15, CASE_IGNORABLE_15, UNASSIGNED_15 } from "./paneFilterUnicode15.gen";
+import { CASED_15, CASE_IGNORABLE_15, UNASSIGNED_15 } from "./filterUnicode15.gen.ts";
 
-export function paneFilterText(value: string): string {
+export function foldFilterText(value: string): string {
+  if (!/[\u0080-\u{10ffff}]/u.test(value)) return value.toLowerCase();
   const normalized = value.split(UNASSIGNED_15)
     .map((part, index) => index % 2 === 0 ? part.normalize("NFC") : part).join("");
   const characters = Array.from(normalized);

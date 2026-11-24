@@ -239,6 +239,10 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
             "read_snapshot" -> store!!.readSnapshot(request.getJSONObject("selection"))
             "states" -> store!!.states(request.getJSONObject("selection"))
             "query" -> store!!.query(request.getJSONObject("query"), request.getJSONArray("plans"))
+            "literal_inputs" -> store!!.literalInputs()
+            "literal_piece" -> store!!.literalPiece(request)
+            "literal_install" -> { store!!.literalInstall(request); JSONObject() }
+            "literal_part" -> JSONObject().put("accepted", store!!.literalPart(request))
             "search_read" -> store!!.searchRead(request.getJSONArray("params"), request.getString("plan_key"))
             "search_match" -> store!!.searchMatch(request.getString("text"), request.getString("expression"))
             "scope_progress" -> store!!.scopeProgress()
@@ -257,13 +261,13 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
             "scope_normalized" -> JSONObject().put("accepted", store!!.scopeNormalized(request))
             "scope_text_complete" -> JSONObject().put("accepted", store!!.scopeTextComplete(request.getString("revision"), request.getString("reading_ref")))
             "scope_publish" -> JSONObject().put("accepted", store!!.scopePublish(request.getString("revision"), request.getString("expected_store_revision")))
-            "commit" -> { require(lease != null && lease == request.getString("lease") && preparations.holdsLock(lease!!)); store!!.commit(request.getJSONObject("frame")) }
+            "commit" -> { require(lease != null && lease == request.getString("lease") && preparations.holdsLock(lease!!)); store!!.commit(request.getJSONObject("frame"), request.optJSONArray("literal_fields")) }
             "uploaded" -> JSONObject().put("uploaded", store!!.uploaded(request.getString("command_seq")))
             "pending" -> JSONObject().put("changes", store!!.pending())
             "acknowledge" -> { store!!.acknowledge(request.getString("sequence")); JSONObject() }
             "apply_remote" -> store!!.applyRemote(request)
             "reset_provisioning" -> { store!!.resetProvisioning(); JSONObject() }
-            "stage" -> { store!!.stage(request.getJSONObject("states")); JSONObject() }
+            "stage" -> { store!!.stage(request.getJSONObject("states"), request.optJSONArray("literal_fields")); JSONObject() }
             "finish_provisioning" -> { store!!.finishProvisioning(request.getString("cursor"), request.getJSONObject("counts"), request.getString("lamport")); JSONObject() }
             "register" -> JSONObject().put("data", origin.authoredRegister(account, request.getJSONObject("body")))
             "push" -> JSONObject().put("data", origin.authoredPush(account, request.getJSONObject("body")))

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./filter": "./src/filter.ts",
     "./excerpt": "./src/excerpt.ts",
     "./canonical": "./src/canonical.ts",
     "./capture": "./src/capture.ts",

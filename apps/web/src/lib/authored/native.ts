@@ -1,9 +1,10 @@
 /** Native adapter uses the same shared semantic kernel. Kotlin admits only
  * closed SQL transactions and fixed foreground transport operations. */
-import { bindingQueries, changesDailyIndex, excerptQuery, searchQuery, sourceAliasQuery, type CompiledQuery } from "@nexus/authored/queries";
+import { bindingQueries, changesDailyIndex, excerptQuery, searchQuery, sourceAliasQuery, pageTitle, foldedFields, type CompiledQuery } from "@nexus/authored/queries";
+import { decodeBytes } from "@nexus/authored/documents";
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
-import { FORMAT_REVISION, type AuthoredStore, type Change, type FeedChange, type ReplicaState, type StateSelection, type QueryResult, type SyncFailure, type SyncStatus } from "@nexus/authored/types";
+import { FORMAT_REVISION, type AuthoredStore, type Change, type FeedChange, type MergeResult, type ReplicaState, type StateSelection, type QueryResult, type SyncFailure, type SyncStatus } from "@nexus/authored/types";
 import type { ScopeInputsPage, ScopeProgress, ScopeTextPage, ScopeNormalizationInterval, ScopeRawChunk, ScopeNormalizationObservation, NormalizedScopeChunk } from "@nexus/authored/scope";
 import { selectionFor } from "./persistence";
 import { nativeQueryPlans, nativeSearchPlan } from "./nativeQuery";
@@ -70,8 +71,19 @@ async function frame<T>(op: string, input: Record<string, unknown> = {}, signal?
 }
 function base64(bytes: Uint8Array): string { return btoa(String.fromCharCode(...bytes)); }
 function unbase64(value: string): Uint8Array { return Uint8Array.from(atob(value), char => char.charCodeAt(0)); }
-async function call<T>(op: string, input: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
-  const bytes = new TextEncoder().encode(JSON.stringify({ op, ...input }));
+async function call<T>(op: string, input: Record<string, unknown> = {}, signal?: AbortSignal, projections?: MergeResult["projections"]): Promise<T> {
+  const encoder = new TextEncoder();
+  let bytes = encoder.encode(JSON.stringify({ op, ...input }));
+  if (projections?.length) {
+    // Keep a canonical commit admissible even when its derived fields would exceed a native transfer.
+    const literal = projections.map(p => [p.ref, ...foldedFields({title: p.kind === "page" ? pageTitle(p.title ?? "", p.local_date) : p.title,
+      body: p.body_text, quote: p.selection?.quote_exact})]);
+    const suffix = encoder.encode(`,"literal_fields":${JSON.stringify(literal)}}`);
+    if (bytes.length - 1 + suffix.length <= 16 * 1024 * 1024) {
+      const combined = new Uint8Array(bytes.length - 1 + suffix.length);
+      combined.set(bytes.subarray(0,-1)); combined.set(suffix, bytes.length - 1); bytes = combined;
+    }
+  }
   const transfer_id = crypto.randomUUID();
   try {
   let byte_count: number;
@@ -99,6 +111,40 @@ async function call<T>(op: string, input: Record<string, unknown> = {}, signal?:
   return JSON.parse(new TextDecoder().decode(output));
   } finally { if (signal?.aborted) void frame("discard_transfer", { transfer_id }).catch(reportError); }
 }
+
+/** Canonical local text repairs old installations or a write whose derived sidecar did not fit.
+ * A large field crosses in pieces and is normalized as a whole, preserving NFC and final sigma. */
+async function repairLiteralFields() {
+  const {revision, items} = await call<{revision: string; items: {ref: string; fields: [string,string,string] | null}[]}>("literal_inputs");
+  const small: string[][] = [];
+  for (const {ref, fields} of items) {
+    if (fields !== null) { small.push([ref, ...foldedFields({title: fields[0],body: fields[1],quote: fields[2]})]); continue; }
+    const ticket = crypto.randomUUID();
+    for (const field of ["title","body","quote"] as const) {
+      const decoder = new TextDecoder(), text: string[] = [];
+      for (let offset = 0;;) {
+        const piece: {changed: boolean; chunk: string | null} = await call("literal_piece", {revision, ref, field, offset});
+        if (piece.changed) return;
+        const bytes = decodeBytes(piece.chunk!);
+        text.push(decoder.decode(bytes, {stream: true})); offset += bytes.length;
+        if (bytes.length < 65536) break;
+      }
+      text.push(decoder.decode());
+      const [folded] = foldedFields({title: text.join("")});
+      for (let offset = 0;;) {
+        let end = Math.min(folded.length, offset + 65536);
+        if (end < folded.length && /[\uD800-\uDBFF]/u.test(folded[end-1]!)) end--;
+        const last = end === folded.length;
+        const {accepted} = await call<{accepted: boolean}>("literal_part", {ticket, revision, ref, field, offset, text: folded.slice(offset,end), last});
+        if (!accepted) return;
+        if (last) break;
+        offset = end;
+      }
+    }
+  }
+  if (small.length) await call("literal_install", {revision, items: small});
+}
+
 export async function openNativeAuthoredStore(accountId: string): Promise<AuthoredStore> {
   const replica = await nativeHello(accountId);
   let lease: string | null = null;
@@ -112,7 +158,12 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   const changed = (corpusChanged = false, dailyIndexChanged = false) => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.detail, sync.facts.failure); for (const listener of queries) listener(corpusChanged, dailyIndexChanged); };
   const queryLocal = async (query: Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult> => {
     if (query.kind !== "search" && query.kind !== "search_preview" && query.kind !== "search_admission" && query.kind !== "source_alias" && query.kind !== "excerpt") {
-      return call<QueryResult>("query", {query, plans: await nativeQueryPlans(query)});
+      const plans = await nativeQueryPlans(query);
+      for (;;) {
+        const value = await call<QueryResult | {literal_repair: true}>("query", {query, plans});
+        if (!("literal_repair" in value)) return value;
+        await repairLiteralFields();
+      }
     }
     for (;;) {
       const before = await call<ReplicaState>("replica");
@@ -148,12 +199,12 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
         const states = await changeStates(changes.map(entry => entry.change));
         await validateBindings(accountId, states, changes.map(entry => entry.change));
         const merged = mergeChanges(states, changes.map(entry => entry.change));
-        const result = await call<ReplicaState | { kind: "stale" }>("apply_remote", { expected_store_revision: current.store_revision, changes, next_cursor: nextCursor, states: merged });
+        const result = await call<ReplicaState | { kind: "stale" }>("apply_remote", { expected_store_revision: current.store_revision, changes, next_cursor: nextCursor, states: merged }, undefined, merged.projections);
         if (!("kind" in result)) return result;
       }
     },
     resetProvisioning: async () => { await call("reset_provisioning"); },
-    stage: async (states: Parameters<typeof mergeChanges>[0] & { projections: unknown[] }) => { await call("stage", { states }); },
+    stage: async (states: MergeResult) => { await call("stage", { states }, undefined, states.projections); },
     finishProvisioning: async (cursor: string, counts: Record<string, number>, lamport: string) => { await call("finish_provisioning", { cursor, counts, lamport }); },
     scopeProgress: () => call<ScopeProgress>("scope_progress"),
     scopeRefs: async (after: string | null) => (await call<{refs: string[]}>("scope_refs", {after})).refs,
@@ -223,7 +274,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
         const states = await changeStates([frame.change]);
         await validateBindings(accountId, states, [frame.change]);
         frame = { ...frame, states: mergeChanges(states, [frame.change]) };
-        const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease }); sync.facts.pending = true; if (result.kind === "committed") changed(true, changesDailyIndex(frame.change)); replication.wake(); return result; }
+        const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease }, undefined, frame.states.projections); sync.facts.pending = true; if (result.kind === "committed") changed(true, changesDailyIndex(frame.change)); replication.wake(); return result; }
       finally { sync.facts.saving = false; changed(); }
     }),
     subscribe: (query, listener, failed) => {
