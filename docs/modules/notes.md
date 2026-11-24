@@ -270,8 +270,8 @@ then ref, using the `resources_register` partial index. the uppercased first cod
 point heads each run. an empty title files as `untitled page`. `opened here`
 shows the first eight distinct visible undated pages from device recents. a filter
 hides that group and matches every title by unicode-15 nfc/lower/substring.
-a small description returns the full lean order. a large description returns
-the total, consecutive heading lengths and a measurement sample. the viewport
+through 200 rows, the description returns the full lean order. beyond that it
+returns the total, consecutive heading lengths and a 24-row head. the viewport
 reads bounded ranks and locates saved references at that revision. long titles
 retain their register slot and resolve only when mounted. `New page` opens
 an empty focused title on the paper. authored devices store no edit timestamps.

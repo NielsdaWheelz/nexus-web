@@ -12,6 +12,7 @@ import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_
 export const WORK_CAPTURE_ORDER = `CAST(json_extract(state_json,'$.work.captured.lamport') AS INTEGER),json_extract(state_json,'$.work.captured.replica_id'),ref`;
 export const WORK_REGISTER_MEMBERSHIP = `kind='note' AND visible=1 AND json_type(state_json,'$.work')='object'`;
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
+const COMPLETE_REGISTER_ROWS = 200;
 const HIGHLIGHT_TEXT_FIELDS = ["prefix", "quote_exact", "suffix"] as const;
 /** Literal stored capture; search supplies its authorized excerpt separately. */
 export function capturedHighlightText(resource: ResourceProjection): string {
@@ -410,11 +411,11 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
         case "describe":
           return {sql: `WITH extent AS (SELECT (SELECT count(*) ${filtered}) AS total,(SELECT count(*) ${base}) AS source_total),
             slice AS (SELECT ref,${PAGE_TITLE_SQL} AS name ${filtered} ORDER BY ${order}
-              LIMIT (SELECT CASE WHEN total<=${AUTHORED_INDEX_RANGE} THEN total ELSE 24 END FROM extent)),
+              LIMIT (SELECT CASE WHEN total<=${COMPLETE_REGISTER_ROWS} THEN total ELSE 24 END FROM extent)),
             groups AS (SELECT count(*) AS size FROM (SELECT ${PAGE_TITLE_SQL} AS name ${filtered})
               GROUP BY substr(name,1,1) COLLATE NOCASE ORDER BY substr(name,1,1) COLLATE NOCASE)
             SELECT json_object('kind','description','total',total,'source_total',source_total,
-              'groups',json(CASE WHEN total>${AUTHORED_INDEX_RANGE} THEN
+              'groups',json(CASE WHEN total>${COMPLETE_REGISTER_ROWS} THEN
                 (SELECT json_group_array(size) FROM groups) ELSE '[]' END),
               'items',json((SELECT json_group_array(json_object(${item})) FROM slice))) AS register FROM extent`, params};
         case "range": {

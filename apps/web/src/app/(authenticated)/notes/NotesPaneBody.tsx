@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { AUTHORED_INDEX_RANGE, type RegisterItem } from "@nexus/authored/types";
+import type { RegisterItem } from "@nexus/authored/types";
 import * as Icon from "@/lib/ui/icons";
 import CollectionView, { type CollectionViewRowRenderProps } from "@/components/collections/CollectionView";
 import type { CollectionRowView } from "@/lib/collections/types";
@@ -50,7 +50,7 @@ export default function NotesPaneBody() {
   const shown = observation?.page_register;
   const description = shown?.kind === "description" ? shown : null;
   const revision = observation?.store_revision ?? null;
-  const sparse = (description?.total ?? 0) > AUTHORED_INDEX_RANGE;
+  const sparse = description !== null && description.total > description.items.length;
   const {items, positions, request, error: rangeError, retry: retryRange} = usePageRegisterWindow(shownText, revision, description);
   const recent = useRecent();
   const refs = useMemo(() => shownText ? [] : (recent.snapshot?.entries ?? []).flatMap(({target}) =>

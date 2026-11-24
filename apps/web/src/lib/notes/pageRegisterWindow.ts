@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AUTHORED_INDEX_RANGE, type PageRegisterResult, type RegisterItem } from "@nexus/authored/types";
+import type { PageRegisterResult, RegisterItem } from "@nexus/authored/types";
 import { useAuthoredAccountId, useAuthoredStore } from "@/lib/authored/provider";
 
 type Description = Extract<PageRegisterResult, {kind: "description"}>;
@@ -25,6 +25,7 @@ export function usePageRegisterWindow(text: string, revision: string | null, des
   const [attempt, setAttempt] = useState(0);
   const retry = useCallback(() => setAttempt(value => value + 1), []);
   const count = description?.total ?? 0;
+  const sampled = description?.items.length ?? 0;
   const request = useCallback((ranks: readonly number[], refs: readonly string[]) => {
     const starts = [...new Set(ranks.filter(rank => rank >= 0 && rank < count).map(rank => rank - rank % BLOCK))]
       .sort((left, right) => left - right);
@@ -34,7 +35,7 @@ export function usePageRegisterWindow(text: string, revision: string | null, des
   }, [key, count]);
 
   useEffect(() => {
-    if (revision === null || count <= AUTHORED_INDEX_RANGE || wanted?.key !== key) return;
+    if (revision === null || count <= sampled || wanted?.key !== key) return;
     const previous = cache?.key === key ? cache : null;
     let retired = false;
     void (async () => {
@@ -79,11 +80,11 @@ export function usePageRegisterWindow(text: string, revision: string | null, des
     return () => { retired = true; };
     // The currently admitted cache is read once per demand, then replaced.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wanted, key, count, revision, text, store, attempt]);
+  }, [wanted, key, count, sampled, revision, text, store, attempt]);
 
   const resolved = cache?.key === key ? cache : null;
   const items = useMemo(() => {
-    if (description === null || description.total <= AUTHORED_INDEX_RANGE) return EMPTY;
+    if (description === null || description.total <= description.items.length) return EMPTY;
     const rows = new Map(description.items.map((item, rank) => [rank, item]));
     if (resolved !== null) {
       for (const [start, block] of resolved.blocks) for (const [offset, item] of block.entries()) rows.set(start + offset, item);
