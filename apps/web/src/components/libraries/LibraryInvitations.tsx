@@ -38,6 +38,7 @@ export function useLibraryInvitations() {
   const resendFeedback = useResendFeedback();
   const admission = useRemoteAdmission();
   const connectivity = useConnectivity();
+  const active = usePaneIsActive();
   const owner = useResourceDraft<Pending | null>("Libraries.Answer", () => null, value => ({
     changed: false, unconfirmed: value !== null, stopsBrowserWork: false,
   }));
@@ -50,7 +51,7 @@ export function useLibraryInvitations() {
   const [answered, setAnswered] = useState(0);
   const list = useServerValue({
     key: "/libraries/invites", stale: `${useChangeStamp("Libraries")}:${answered}`,
-    enabled: usePaneIsActive(), visit: VISIT, load: viewerInvitationsIndex,
+    enabled: active, visit: VISIT, load: viewerInvitationsIndex,
   });
   async function send(command: Answer, previous: Pending | null): Promise<boolean> {
     if (!mounted.current || !owns() || read() !== previous || previous?.running ||
@@ -86,7 +87,8 @@ export function useLibraryInvitations() {
     {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
       resend: { label: "retry", commandKey: `${owner.owner}:${pending.command.invitation.id}:${pending.command.accept}:retry`, busy: pending.running,
         run: () => { void send(pending.command, pending); } } })} />;
-  return { list, admission, held, busy: pending?.running ? pending.command.invitation.id : null,
+  const opening = active && list.status === "loading" && connectivity === "Online" && remoteAttemptAllowed();
+  return { list, admission, opening, held, busy: pending?.running ? pending.command.invitation.id : null,
     blocked: pending !== null || admission === "Checking" || !remoteAttemptAllowed() || connectivity === "Offline",
     answer: (invitation: ViewerInvitation, accept: boolean) => send({ invitation, accept }, null) };
 }

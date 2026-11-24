@@ -40,8 +40,11 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
     const read = () => setMargin(root.getBoundingClientRect().top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop);
     read();
     const resize = new ResizeObserver(read);
-    resize.observe(port);
-    resize.observe(root);
+    // A preceding section can move the list without resizing the list or its port.
+    for (let node: HTMLElement | null = root; node !== null; node = node.parentElement) {
+      resize.observe(node);
+      if (node === port) break;
+    }
     return () => resize.disconnect();
   }, [getPort, ids.length, list, windowed]);
 
