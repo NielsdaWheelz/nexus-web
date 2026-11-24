@@ -70,7 +70,7 @@ interface FailedCommit {
   baseline: CheckedBaseline | null;
   prepared: { frame: CommitFrame; before: LocalCommit["before"] } | null;
   store: AuthoredStore | null; held: boolean; attempting: boolean;
-  settled: Promise<LocalCommit>; resolve(receipt: LocalCommit): void; reject(error: Error): void;
+  settled: Promise<LocalCommit>; committed: boolean; resolve(receipt: LocalCommit): void; reject(error: Error): void;
   result: Promise<LocalCommit>; accept(receipt: LocalCommit): void; refuse(error: unknown): void; retry_failure: ((error: unknown) => void) | null;
   ready: Promise<void>; release(): void; faulted: boolean; fault: unknown;
   created_refs: readonly string[];
@@ -118,7 +118,8 @@ export class WritingRuntime {
   }
   async committedPrefix(): Promise<string> {
     const admitted = this.tail;
-    const required = [...this.pending_commands.keys()];
+    // A successful retry can settle the command before its first attempt leaves this map.
+    const required = [...this.pending_commands].flatMap(([result, owner]) => owner?.committed ? [] : [result]);
     await Promise.all(required);
     await admitted;
     if (this.retired) throw new Error("Writing account is closed");
@@ -364,7 +365,12 @@ export class WritingRuntime {
     void settled.catch(() => {});
     let release: () => void = () => {};
     const ready = new Promise<void>(done => { release = done; });
-    const owner: FailedCommit = { occurrence: {}, credit, highlight_registers: new Map(), reject_oversize: false, intent: null, selection: selectStates({}), baseline: null, change: null, prepared: null, store: null, held: false, attempting: false, settled, resolve, reject, result, accept, refuse, retry_failure: null, ready, release, faulted: false, fault: null, created_refs: [], prepare_graph: null };
+    const owner: FailedCommit = {
+      occurrence: {}, credit, highlight_registers: new Map(), reject_oversize: false, intent: null, selection: selectStates({}), baseline: null,
+      change: null, prepared: null, store: null, held: false, attempting: false, settled, committed: false,
+      resolve(receipt) { owner.committed = true; resolve(receipt); },
+      reject, result, accept, refuse, retry_failure: null, ready, release, faulted: false, fault: null, created_refs: [], prepare_graph: null,
+    };
     return owner;
   }
   private reserve(credit: PageCredit): FailedCommit {
