@@ -109,7 +109,10 @@ async function call<T>(op: string, input: Record<string, unknown> = {}, signal?:
     output.set(raw, offset); offset = chunk.next_offset;
   }
   return JSON.parse(new TextDecoder().decode(output));
-  } finally { if (signal?.aborted) void frame("discard_transfer", { transfer_id }).catch(reportError); }
+  } catch (error) {
+    void frame("discard_transfer", { transfer_id }).catch(reportError);
+    throw error;
+  }
 }
 
 /** Canonical local text repairs old installations or a write whose derived sidecar did not fit.
@@ -357,8 +360,15 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       finally { sync.facts.saving = false; changed(); }
     }),
     subscribe: (query, listener, failed) => {
-      let live = true;
-      const read = (corpusChanged: boolean, dailyIndexChanged: boolean) => { if (!(query.kind === "daily_index" ? dailyIndexChanged : corpusChanged)) return; void serialize(() => queryLocal(query)).then(value => { if (live) listener(value); }, error => { if (live) failed(error); }); };
+      let live = true, queued = false;
+      const read = (corpusChanged: boolean, dailyIndexChanged: boolean) => {
+        if (!live || queued || !(query.kind === "daily_index" ? dailyIndexChanged : corpusChanged)) return;
+        queued = true;
+        void serialize(async () => {
+          queued = false;
+          return live ? queryLocal(query) : null;
+        }).then(value => { if (live && value !== null) listener(value); }, error => { if (live) failed(error); });
+      };
       queries.add(read); read(true, true);
       return () => { live = false; queries.delete(read); };
     },

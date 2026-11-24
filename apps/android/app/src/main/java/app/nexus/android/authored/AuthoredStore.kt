@@ -241,7 +241,10 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         run("UPDATE replica_state SET server_cursor=?,store_revision=store_revision+?,lamport=? WHERE singleton=1", cursor, entries.length(), lamport)
         replica()
     }
-    fun resetProvisioning() = transaction { for (table in listOf("resources", "links", "passages", "source_stubs", "reference_index", "search_documents", "literal_fields")) run("DELETE FROM $table") }
+    fun resetProvisioning() = transaction {
+        require(!replica().getBoolean("provisioning_complete"))
+        for (table in listOf("resources", "links", "passages", "source_stubs", "reference_index", "search_documents", "literal_fields")) run("DELETE FROM $table")
+    }
     fun stage(states: JSONObject, literalFields: JSONArray?) = transaction { require(!replica().getBoolean("provisioning_complete")); write(states, literalFields) }
     fun finishProvisioning(cursor: String, counts: JSONObject, lamport: String) = transaction {
         for (table in listOf("resources", "links", "passages", "source_stubs")) require(rows("SELECT COUNT(*) AS count FROM $table").getJSONObject(0).getString("count").toLong() == counts.getLong(table))
