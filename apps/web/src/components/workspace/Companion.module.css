@@ -5,6 +5,7 @@
   flex-direction: column;
   min-height: 0;
   height: 100%;
+  padding-inline-end: var(--resize-handle-width);
   border-left: 1px solid var(--edge-subtle);
   background: var(--surface-canvas);
   color: var(--ink);
