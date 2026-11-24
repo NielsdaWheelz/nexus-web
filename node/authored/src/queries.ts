@@ -411,12 +411,11 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
           return {sql: `WITH extent AS (SELECT (SELECT count(*) ${filtered}) AS total,(SELECT count(*) ${base}) AS source_total),
             slice AS (SELECT ref,${PAGE_TITLE_SQL} AS name ${filtered} ORDER BY ${order}
               LIMIT (SELECT CASE WHEN total<=${AUTHORED_INDEX_RANGE} THEN total ELSE 24 END FROM extent)),
-            groups AS (SELECT ${group} AS label,count(*) AS size,substr(name,1,1) AS initial FROM (SELECT ${PAGE_TITLE_SQL} AS name ${filtered})
-              GROUP BY substr(name,1,1) COLLATE NOCASE),
-            starts AS (SELECT label,sum(size) OVER (ORDER BY initial COLLATE NOCASE ROWS UNBOUNDED PRECEDING)-size AS start FROM groups)
+            groups AS (SELECT count(*) AS size FROM (SELECT ${PAGE_TITLE_SQL} AS name ${filtered})
+              GROUP BY substr(name,1,1) COLLATE NOCASE ORDER BY substr(name,1,1) COLLATE NOCASE)
             SELECT json_object('kind','description','total',total,'source_total',source_total,
               'groups',json(CASE WHEN total>${AUTHORED_INDEX_RANGE} THEN
-                (SELECT json_group_array(json_object('start',start,'label',label)) FROM (SELECT * FROM starts ORDER BY start)) ELSE '[]' END),
+                (SELECT json_group_array(size) FROM groups) ELSE '[]' END),
               'items',json((SELECT json_group_array(json_object(${item})) FROM slice))) AS register FROM extent`, params};
         case "range": {
           const {start,limit} = query.at;

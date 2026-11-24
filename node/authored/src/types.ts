@@ -102,9 +102,10 @@ export type PageRegisterRequest = {kind: "page_register"; text: string} & (
   | {at: {kind: "describe"}; expected_revision: null}
   | {at: {kind: "range"; start: number; limit: number} | {kind: "locate"; refs: ResourceRef[]}; expected_revision: Counter}
 );
+/** Groups are consecutive run lengths in register order. Each slice owns its labels. */
 export type PageRegisterResult =
   | {kind: "changed"}
-  | {kind: "description"; total: number; source_total: number; groups: {start: number; label: string}[]; items: RegisterItem[]}
+  | {kind: "description"; total: number; source_total: number; groups: number[]; items: RegisterItem[]}
   | {kind: "range"; start: number; items: RegisterItem[]}
   | {kind: "locations"; items: (RegisterItem & {rank: number})[]};
 export interface OutlineIndexItem { link_id: string; other_ref: ResourceRef; matched: boolean }

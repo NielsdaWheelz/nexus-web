@@ -66,12 +66,13 @@ export default function NotesPaneBody() {
   }, [description, locations, refs, sparse]);
   const shift = opened.length;
   const groups = useMemo(() => {
-    const heads = new Map<number, string>(), labels = new Map<number, string>();
-    if (shift > 0) { heads.set(0, "recent"); labels.set(0, "opened here"); }
-    for (const group of description?.groups ?? []) { heads.set(group.start + shift, "letter"); labels.set(group.start + shift, group.label); }
+    const heads = new Map<number, string>();
+    if (shift > 0) heads.set(0, "recent");
+    let start = shift;
+    for (const size of description?.groups ?? []) { heads.set(start, "letter"); start += size; }
     const headSamples = new Map<string, React.ReactNode>([["letter", <h3 key="letter" className={styles.letter}>A</h3>]]);
     if (shift > 0) headSamples.set("recent", <h3 className={styles.recent}>opened here</h3>);
-    return {heads, labels, headSamples};
+    return {heads, headSamples};
   }, [description?.groups, shift]);
   const list = useMemo(() => {
     const rows: CollectionRowView[] = [];
@@ -117,9 +118,12 @@ export default function NotesPaneBody() {
         request(ranks.map(rank => rank - shift), ids.filter(id => !id.startsWith("recent:")).map(id => `page:${id}`));
       },
     };
-    return {source, headSamples: groups.headSamples, headAt: (rank: number) =>
-      <h3 className={rank === 0 && shift > 0 ? styles.recent : styles.letter}>{groups.labels.get(rank)}</h3>};
-  }, [description, groups, list, opened, positions, rangeError, request, revision, shift, sparse]);
+    return {source, headSamples: groups.headSamples, headAt: (rank: number) => {
+      if (rank === 0 && shift > 0) return <h3 className={styles.recent}>opened here</h3>;
+      const label = items.get(rank - shift)?.group;
+      return <h3 className={styles.letter} aria-hidden={label === undefined || undefined}>{label ?? "\u00a0"}</h3>;
+    }};
+  }, [description, groups, items, list, opened, positions, rangeError, request, revision, shift, sparse]);
   const ready = (read.data !== null || read.error !== null) && (text !== "" || recent.snapshot !== null || recent.readFailure) &&
     (!sparse || refs.length === 0 || recentRead.data !== null || recentRead.error !== null);
   usePaneReturnReady(ready);

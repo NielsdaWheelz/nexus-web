@@ -63,11 +63,12 @@ export function usePageRegisterWindow(text: string, revision: string | null, des
         else if (previous?.positions.get(ref) === null) positions.set(ref, null);
         else unresolved.push(ref);
       }
-      if (unresolved.length > 0) {
-        const result = await store.query({kind: "page_register", text, at: {kind: "locate", refs: unresolved}, expected_revision: revision});
+      for (let start = 0; start < unresolved.length; start += 100) {
+        const refs = unresolved.slice(start, start + 100);
+        const result = await store.query({kind: "page_register", text, at: {kind: "locate", refs}, expected_revision: revision});
         if (retired || result.store_revision !== revision) return;
         if (result.page_register?.kind !== "locations") throw new Error("Missing page register positions");
-        for (const ref of unresolved) positions.set(ref, null);
+        for (const ref of refs) positions.set(ref, null);
         for (const item of result.page_register.items) { positions.set(item.ref, item.rank); pinned.push(item); }
       }
       if (!retired) setCache({key, blocks, positions, pinned, error: null});
