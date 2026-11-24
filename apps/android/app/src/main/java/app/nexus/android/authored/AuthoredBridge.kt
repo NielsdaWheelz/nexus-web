@@ -82,7 +82,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
         indexOrders.clear()
         if (account != null && tokens.isNotEmpty()) orderRetirement.launch {
             commands.withLock {
-                runCatching { store?.takeIf { it.account == account }?.releasePageOrders(tokens) }
+                runCatching { store?.takeIf { it.account == account }?.releaseIndexOrders(tokens) }
                     .onFailure { Log.w("AuthoredBridge", "could not release a retired page order", it) }
             }
         }
@@ -156,7 +156,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                         }
                         val query = if (operation == "query") request.optJSONObject("query") else null
                         val indexKind = query?.optString("kind")
-                        val order = if (indexKind == "page_register" || indexKind == "habits") query?.optJSONObject("at") else null
+                        val order = if (indexKind == "page_register" || indexKind == "habits") query.optJSONObject("at") else null
                         val token = order?.takeIf { it.has("token") }?.getString("token")
                         val orderOperation = order?.optString("kind")
                         if (token != null) when (orderOperation) {
