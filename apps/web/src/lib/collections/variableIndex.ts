@@ -28,7 +28,8 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
   const byId = useMemo(() => new Map(ids.map((id, rank) => [id, rank])), [ids]);
   const getPort = useCallback(() => {
     for (let node = list.current?.parentElement; node; node = node.parentElement) {
-      if (/^(auto|scroll)$/u.test(getComputedStyle(node).overflowY)) return node;
+      if (node.matches("[data-pane-content]") ||
+        node.scrollHeight > node.clientHeight && /^(auto|scroll)$/u.test(getComputedStyle(node).overflowY)) return node;
     }
     return null;
   }, [list]);

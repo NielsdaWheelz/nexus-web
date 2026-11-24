@@ -117,7 +117,7 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
   }, []);
   const layout = useMemo(() => ({rows:read.data?.items ?? null,held,completions,open,adding}),[read.data?.items,held,completions,open,adding]);
   if (failure) throw failure.error;
-  const {pending, visible, refs, pins} = useMemo(() => {
+  const {pending, visible, refs, ranks, pins} = useMemo(() => {
     const pending = new Map((read.data?.items ?? []).map(resource => [resource.ref, resource] as const));
     const visible = new Map([...held, ...pending]);
     for (const [ref, completion] of completions) {
@@ -129,7 +129,8 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
       const left = BigInt(a.work.captured.lamport), right = BigInt(b.work.captured.lamport);
       return left < right ? -1 : left > right ? 1 : a.work.captured.replica_id.localeCompare(b.work.captured.replica_id) || a.ref.localeCompare(b.ref);
     });
-    return {pending, visible, refs: rows.map(row => row.ref), pins: new Set([...held.keys(), ...completions.keys()])};
+    const refs = rows.map(row => row.ref);
+    return {pending, visible, refs, ranks: new Map(refs.map((ref, index) => [ref, index])), pins: new Set([...held.keys(), ...completions.keys()])};
   }, [read.data, held, completions]);
   const windowed = refs.length > INDEX_WINDOW_THRESHOLD;
   const index = useVariableIndex({scope: "work", ids: refs, list, estimate: 48, pinned: pins, windowed});
@@ -163,7 +164,7 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
             style: top === undefined ? undefined : {position: "absolute", insetInline: 0, top, blockSize: size, overflow: size === undefined ? undefined : "clip"} as CSSProperties};
           if (!resource) return <li key={id} aria-hidden="true" role="presentation" style={slot.style}/>;
           const completion = completions.get(resource.ref);
-          const position = refs.indexOf(id);
+          const position = ranks.get(id)!;
           return completion?.phase === "receipt"
             ? <Receipt key={resource.ref} slot={slot} completion={completion} history={history} step={step} fail={fail}
               recover={() => signOf([resource.ref, ...around(position)])} />
