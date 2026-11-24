@@ -52,6 +52,12 @@ export default defineConfig({
         const cursor = JSON.stringify(["a0", ""]);
         const index = {start: 0, limit: 100, expected_revision: null};
         type PackagedQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;
+        const workDate = "2026-11-11";
+        const workSamples = (kind: "work_pending" | "work_completed"): PackagedQuery[] => [
+          {kind, local_date: workDate, at: {kind: "describe"}, expected_revision: null},
+          {kind, local_date: workDate, at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
+          {kind, local_date: workDate, at: {kind: "locate", refs: []}, expected_revision: "0"},
+        ];
         const samples: Record<PackagedQuery["kind"], PackagedQuery[]> = {
           page_register: ["", "words"].flatMap<PackagedQuery>(text => [
             {kind: "page_register", text, at: {kind: "describe"}, expected_revision: null},
@@ -61,8 +67,9 @@ export default defineConfig({
           register_label: [{kind: "register_label", ref: ""}],
           outline_filter: ["","words"].map(text => ({kind: "outline_filter", parent_ref: "", text, start: 0, limit: 1, expected_revision: null})),
           daily_index: [{kind: "daily_index"}],
-          work_pending: [{kind: "work_pending", local_date: "2026-11-11", ...index}],
-          work_completed: [{kind: "work_completed", local_date: "2026-11-11", ...index}],
+          work_pending: [...workSamples("work_pending"),
+            {kind: "work_pending", local_date: workDate, at: {kind: "place", rows: []}, expected_revision: "0"}],
+          work_completed: workSamples("work_completed"),
           habits: [
             {kind: "habits", at: {kind: "describe"}, expected_revision: null},
             {kind: "habits", at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},

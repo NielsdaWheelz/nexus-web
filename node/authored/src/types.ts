@@ -111,6 +111,13 @@ export type PageRegisterRequest = {kind: "page_register"; text: string} & Ranked
 /** Groups are consecutive run lengths in register order. Each slice owns its labels. */
 export type PageRegisterResult = RankedIndexResult<RegisterItem, {source_total: number; groups: number[]}>;
 export type HabitIndexRequest = {kind: "habits"} & RankedIndexRequest;
+export type WorkRegisterSource = {local_date: LocalDate} & ({kind: "work_pending"} | {kind: "work_completed"});
+export type WorkRegisterRequest = (WorkRegisterSource & RankedIndexRequest) | {
+  kind: "work_pending"; local_date: LocalDate; expected_revision: Counter;
+  at: {kind: "place"; rows: {ref: ResourceRef; captured: Stamp}[]};
+};
+export type WorkRegisterResult = RankedIndexResult<WorkIndexItem, {groups: number[]}> |
+  {kind: "placements"; items: {ref: ResourceRef; rank: number; present: boolean}[]};
 export interface OutlineIndexItem { link_id: string; other_ref: ResourceRef; matched: boolean }
 export type IndexRange<Row> = {kind: "changed"} | {kind: "range"; total: number; source_total: number; start: number; items: Row[]};
 export type IndexRequest = {start: number; limit: number; expected_revision: Counter | null};
@@ -121,7 +128,7 @@ export type AuthoredQuery =
   | {kind: "register_label"; ref: ResourceRef}
   | ({kind: "outline_filter"; parent_ref: ResourceRef; text: string} & IndexRequest)
   | { kind: "daily_index" }
-  | ({kind: "work_pending" | "work_completed"; local_date: LocalDate} & IndexRequest)
+  | WorkRegisterRequest
   | HabitIndexRequest
   | {kind: "habit_days"; ref: ResourceRef; year: number}
   | {kind: "latest_habit_date"}
@@ -143,7 +150,7 @@ export type AuthoredQuery =
   | { kind: "resolve"; refs: ResourceRef[] };
 export interface QueryRow { resource: ResourceProjection; link: LinkState | null; match_text: string | null; activation_ref: ResourceRef | null; matched_field: "quote" | "annotation" | null; activation_field: "annotation" | null }
 /** Only source_alias populates canonical_source_ref; provenance grants no reading permission. */
-export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; previous_cursor: string | null; binding_id: string | null; canonical_source_ref: ResourceRef | null; positions: LinkState[]; children: (boolean | null)[]; scope_available: boolean; daily_index: DailyIndexEntry[] | null; outline_windows: OutlineWindowSlice[] | null; page_register: PageRegisterResult | null; register_label: {label: string | null; oversized: boolean} | null; outline_filter: IndexRange<OutlineIndexItem> | null; work_index: IndexRange<WorkIndexItem> | null; habits: RankedIndexResult<HabitIndexItem> | null; mentions: IndexRange<ResourceRef> | null; habit_days: LocalDate[] | null; latest_habit_date: LocalDate | null }
+export interface QueryResult { store_revision: Counter; rows: QueryRow[]; next_cursor: string | null; previous_cursor: string | null; binding_id: string | null; canonical_source_ref: ResourceRef | null; positions: LinkState[]; children: (boolean | null)[]; scope_available: boolean; daily_index: DailyIndexEntry[] | null; outline_windows: OutlineWindowSlice[] | null; page_register: PageRegisterResult | null; register_label: {label: string | null; oversized: boolean} | null; outline_filter: IndexRange<OutlineIndexItem> | null; work_index: WorkRegisterResult | null; habits: RankedIndexResult<HabitIndexItem> | null; mentions: IndexRange<ResourceRef> | null; habit_days: LocalDate[] | null; latest_habit_date: LocalDate | null }
 export interface CommitFrame { expected_store_revision: Counter; replica_id: string; change: Change; states: MergeResult }
 export type CommitResult = { kind: "committed"; command_seq: Counter; store_revision: Counter } | { kind: "stale"; store_revision: Counter; states: Corpus };
 export interface StateSelection { refs: string[]; link_ids: string[]; anchor_ids: string[]; source_refs: string[] }
