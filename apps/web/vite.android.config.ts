@@ -63,7 +63,11 @@ export default defineConfig({
           daily_index: [{kind: "daily_index"}],
           work_pending: [{kind: "work_pending", local_date: "2026-11-11", ...index}],
           work_completed: [{kind: "work_completed", local_date: "2026-11-11", ...index}],
-          habits: [{kind: "habits", ...index}],
+          habits: [
+            {kind: "habits", at: {kind: "describe"}, expected_revision: null},
+            {kind: "habits", at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
+            {kind: "habits", at: {kind: "locate", refs: []}, expected_revision: "0"},
+          ],
           habit_days: [{kind: "habit_days", ref: "", year: 2026}],
           latest_habit_date: [{kind: "latest_habit_date"}],
           mentions: [{kind: "mentions", ref: "", ...index}],

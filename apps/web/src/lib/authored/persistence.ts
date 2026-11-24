@@ -15,7 +15,7 @@ import { mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
 import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_TO_6_SQL } from "@nexus/authored/schema";
 import { bindingQueries, compileQuery, compileOutlineWindows, excerptQuery, searchQuery, sourceAliasQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, LITERAL_MISSING_SQL, LITERAL_SOURCE_SQL, LITERAL_WRITE_SQL, foldedFields } from "@nexus/authored/queries";
-import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange, type LinkState, type OutlineWindowProof, type OutlineWindowSlice, type ResourceProjection, type WorkIndexItem, type HabitIndexItem } from "@nexus/authored/types";
+import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange, type LinkState, type OutlineWindowProof, type OutlineWindowSlice, type ResourceProjection, type WorkIndexItem } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
 import { SCOPE_SQL, type ScopeInputsPage, type ScopeProgress, type ScopeTextPage, type ScopeNormalizationInterval, type ScopeRawChunk, type ScopeNormalizationObservation, type NormalizedScopeChunk } from "@nexus/authored/scope";
 
@@ -126,8 +126,8 @@ export class Persistence {
         result.latest_habit_date = typeof record?.local_date === "string" ? record.local_date : null;
       } else if (query.kind === "page_label") {
         result.page_label = {label: typeof record?.label === "string" ? record.label : null, oversized: Number(record?.oversized) === 1};
-      } else if (query.kind === "page_register") {
-        result.page_register = JSON.parse(String(record!.register));
+      } else if (query.kind === "page_register" || query.kind === "habits") {
+        result[query.kind] = JSON.parse(String(record!.register));
       } else {
         const total = Number(record!.total), start = query.start;
         if (query.kind === "outline_filter") {
@@ -136,9 +136,6 @@ export class Persistence {
         } else if (query.kind === "mentions") {
           const items: string[] = JSON.parse(String(record!.items));
           result.mentions = {kind: "range", start, total, source_total: total, items};
-        } else if (query.kind === "habits") {
-          const items: HabitIndexItem[] = JSON.parse(String(record!.items));
-          result.habits = {kind: "range", start, total, source_total: total, items};
         } else {
           const items: WorkIndexItem[] = JSON.parse(String(record!.items));
           result.work_index = {kind: "range", start, total, source_total: total, items};

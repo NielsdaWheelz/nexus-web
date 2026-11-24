@@ -9,7 +9,10 @@ import { normalizeQuote } from "./identity.ts";
 import { validateLocalDate } from "./work.ts";
 import { foldFilterText } from "./filter.ts";
 import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, SEARCH_FAMILIES, type ScopeInterval, type ScopeReading } from "./scope.ts";
-export const WORK_CAPTURE_ORDER = `CAST(json_extract(state_json,'$.work.captured.lamport') AS INTEGER),json_extract(state_json,'$.work.captured.replica_id'),ref`;
+const WORK_CAPTURE_LAMPORT = "CAST(json_extract(state_json,'$.work.captured.lamport') AS INTEGER)";
+const WORK_CAPTURE_REPLICA = "json_extract(state_json,'$.work.captured.replica_id')";
+export const WORK_CAPTURE_ORDER = `${WORK_CAPTURE_LAMPORT},${WORK_CAPTURE_REPLICA},ref`;
+const WORK_LABEL_SQL = "trim(substr(COALESCE(body_text,'')||char(10),1,instr(COALESCE(body_text,'')||char(10),char(10))-1))";
 export const WORK_REGISTER_MEMBERSHIP = `kind='note' AND visible=1 AND json_type(state_json,'$.work')='object'`;
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
 const COMPLETE_REGISTER_ROWS = 200;
@@ -462,9 +465,41 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
         WHERE r.kind='note' AND r.visible=1 AND json_extract(day.value,'$.value')=1
     ) SELECT dates.local_date,p.ref FROM dates LEFT JOIN resources p
       ON p.kind='page' AND p.visible=1 AND p.local_date=dates.local_date ORDER BY dates.local_date DESC`, params: []};
+    case "habits": {
+      const kind = "json_extract(state_json,'$.work.designation.value.kind')";
+      const enabled = `${kind}='habit' AND json_extract(state_json,'$.work.designation.value.enabled')=1`;
+      const selected = `FROM resources INDEXED BY resources_work_capture WHERE ${WORK_REGISTER_MEMBERSHIP}
+        AND (${kind}='habit' OR EXISTS(SELECT 1 FROM json_each(state_json,'$.work.habit_checks') day WHERE json_extract(day.value,'$.value')=1))`;
+      const columns = `ref,${WORK_LABEL_SQL} AS label,CASE WHEN ${enabled} THEN 'true' ELSE 'false' END AS enabled`;
+      const item = "'ref',ref,'label',CASE WHEN length(CAST(json_quote(label) AS BLOB))<=512 THEN label END,'enabled',json(enabled)";
+      switch (query.at.kind) {
+        case "describe":
+          return {sql: `WITH extent AS (SELECT count(*) AS total ${selected}),
+            slice AS (SELECT ${columns} ${selected} ORDER BY ${WORK_CAPTURE_ORDER}
+              LIMIT (SELECT CASE WHEN total<=${COMPLETE_REGISTER_ROWS} THEN total ELSE 24 END FROM extent))
+            SELECT json_object('kind','description','total',total,
+              'items',json((SELECT json_group_array(json_object(${item})) FROM slice))) AS register FROM extent`, params: []};
+        case "range": {
+          const {start,limit} = query.at;
+          if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > AUTHORED_INDEX_RANGE)
+            throw new RangeError("Invalid habit range");
+          return {sql: `WITH slice AS (SELECT ${columns} ${selected} ORDER BY ${WORK_CAPTURE_ORDER} LIMIT ?1 OFFSET ?2)
+            SELECT json_object('kind','range','start',?2,'items',json_group_array(json_object(${item}))) AS register FROM slice`,
+            params: [limit,start]};
+        }
+        case "locate": {
+          if (query.at.refs.length > 100) throw new RangeError("Too many habit locations");
+          return {sql: `WITH targets AS (SELECT ${columns},${WORK_CAPTURE_LAMPORT} AS lamport,${WORK_CAPTURE_REPLICA} AS replica
+              ${selected} AND ref IN (SELECT value FROM json_each(?1))),
+            ranked AS (SELECT targets.*, (SELECT count(*) ${selected} AND (${WORK_CAPTURE_ORDER}) <
+              (targets.lamport,targets.replica,targets.ref)) AS rank FROM targets)
+            SELECT json_object('kind','locations','items',json_group_array(json_object(${item},'rank',rank))) AS register FROM ranked`,
+            params: [JSON.stringify(query.at.refs)]};
+        }
+      }
+    }
     case "work_pending":
     case "work_completed":
-    case "habits":
     case "mentions": {
       if (!Number.isSafeInteger(query.start) || query.start < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > AUTHORED_INDEX_RANGE) throw new RangeError("Invalid index range");
       if (query.kind === "mentions") return {sql: `WITH admitted AS (
@@ -475,22 +510,16 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       const task = "json_extract(state_json,'$.work.task_completed_on.value')";
       const kind = "json_extract(state_json,'$.work.designation.value.kind')";
       const habitDay = "EXISTS(SELECT 1 FROM json_each(state_json,'$.work.habit_checks') day WHERE day.key=?3 AND json_extract(day.value,'$.value')=1)";
-      const anyHabitDay = "EXISTS(SELECT 1 FROM json_each(state_json,'$.work.habit_checks') day WHERE json_extract(day.value,'$.value')=1)";
-      const where = query.kind === "habits" ? `(${kind}='habit' OR ${anyHabitDay})` : query.kind === "work_completed"
-        ? `(${task}=?3 OR ${habitDay})` : `json_extract(state_json,'$.work.designation.value.enabled')=1 AND ((${kind}='task' AND ${task} IS NULL) OR (${kind}='habit' AND NOT ${habitDay}))`;
-      if (query.kind !== "habits") validateLocalDate(query.local_date);
+      const where = query.kind === "work_completed" ? `(${task}=?3 OR ${habitDay})`
+        : `json_extract(state_json,'$.work.designation.value.enabled')=1 AND ((${kind}='task' AND ${task} IS NULL) OR (${kind}='habit' AND NOT ${habitDay}))`;
+      validateLocalDate(query.local_date);
       const selection = `FROM resources INDEXED BY resources_work_capture WHERE ${WORK_REGISTER_MEMBERSHIP} AND ${where}`;
-      const habits = query.kind === "habits";
-      const facts = habits
-        ? `json(iif(${kind}='habit' AND json_extract(state_json,'$.work.designation.value.enabled')=1,'true','false')) AS enabled`
-        : `json_extract(projection_json,'$.work') AS work`;
-      return {sql: `WITH slice AS (SELECT ref,${facts},
-          trim(substr(COALESCE(body_text,'')||char(10),1,instr(COALESCE(body_text,'')||char(10),char(10))-1)) AS label
+      return {sql: `WITH slice AS (SELECT ref,json_extract(projection_json,'$.work') AS work,${WORK_LABEL_SQL} AS label
           ${selection} ORDER BY ${WORK_CAPTURE_ORDER} LIMIT ?1 OFFSET ?2)
         SELECT (SELECT count(*) ${selection}) AS total,json_group_array(json_object('ref',ref,
           'label',CASE WHEN length(CAST(json_quote(label) AS BLOB))<=512 THEN label END,
-          ${habits ? "'enabled',json(enabled)" : "'work',json_set(work,'$.habit_dates',json('[]'))"})) AS items FROM slice`,
-        params: [query.limit, query.start, ...(query.kind === "habits" ? [] : [query.local_date])]};
+          'work',json_set(work,'$.habit_dates',json('[]')))) AS items FROM slice`,
+        params: [query.limit, query.start, query.local_date]};
     }
     case "habit_days": {
       if (!Number.isInteger(query.year) || query.year < 1 || query.year > 9999) throw new RangeError("Invalid habit year");

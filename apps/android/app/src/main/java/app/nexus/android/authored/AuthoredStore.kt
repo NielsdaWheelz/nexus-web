@@ -483,7 +483,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
                 literalsComplete = true
             }
             val record = read(0).getJSONObject(0)
-            if (kind == "page_register") return result.put(field, JSONObject(record.getString("register")))
+            if (kind == "page_register" || kind == "habits") return result.put(field, JSONObject(record.getString("register")))
             val raw = JSONArray(record.getString("items"))
             val items = JSONArray()
             for (index in 0 until raw.length()) {

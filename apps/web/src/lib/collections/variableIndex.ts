@@ -2,35 +2,44 @@
 
 import {useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject} from "react";
 import {defaultRangeExtractor, measureElement, useVirtualizer} from "@tanstack/react-virtual";
+import type {RankedIndex} from "./measuredIndexWindow";
 import {writeScrollPosition} from "./scrollMotion";
 import {usePaneAnchorGeometry, usePaneScrollMotion, type AnchorGeometry, type AnchorGeometryFrame} from "@/lib/workspace/paneReturnMemento";
 
-export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, windowed: requestedWindow}: {
+export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, ranked: incomingRanked, windowed: requestedWindow}: {
   scope: string;
   ids: readonly string[];
   list: RefObject<HTMLUListElement | null>;
   estimate: number;
   pinned: ReadonlySet<string>;
+  ranked?: Omit<RankedIndex, "heads">;
   windowed: boolean;
 }) {
   const motion = usePaneScrollMotion();
   const held = motion !== "still";
-  const previous = useRef({scope, ids: incoming, windowed: requestedWindow});
+  const previous = useRef({scope, ids: incoming, ranked: incomingRanked, windowed: requestedWindow});
   const presentation = useMemo(() => {
     const before = previous.current;
-    if (held && before.scope === scope && before.ids.length > 0 &&
-      !(motion === "travel" && incoming.length > before.ids.length && before.ids.every((id, rank) => incoming[rank] === id))) {
+    const sameRankedRevision = before.ranked !== undefined && before.ranked.revision === incomingRanked?.revision;
+    if (held && before.scope === scope && before.ids.length > 0 && !sameRankedRevision &&
+      !(motion === "travel" && before.ranked === undefined && incomingRanked === undefined &&
+        incoming.length > before.ids.length && before.ids.every((id, rank) => incoming[rank] === id))) {
       return before;
     }
-    return {scope, ids: incoming, windowed: requestedWindow};
-  }, [scope, incoming, requestedWindow, held, motion]);
-  const {ids, windowed} = presentation;
+    return {scope, ids: incoming, ranked: incomingRanked, windowed: requestedWindow};
+  }, [scope, incoming, incomingRanked, requestedWindow, held, motion]);
+  const {ids, ranked, windowed} = presentation;
+  const count = ranked?.count ?? ids.length;
   useLayoutEffect(() => {previous.current = presentation;}, [presentation]);
   const frame = useRef<AnchorGeometryFrame | null>(null);
   const [demands, setDemands] = useState<ReadonlyMap<symbol, string>>(() => new Map());
   const [origin, setOrigin] = useState<{offset: number; companion: boolean} | null>(null);
   const margin = origin?.offset ?? 0;
-  const byId = useMemo(() => new Map(ids.map((id, rank) => [id, rank])), [ids]);
+  const keyIds = ranked === undefined ? ids : null;
+  const byId = useMemo(() => new Map(keyIds?.map((id, rank) => [id, rank])), [keyIds]);
+  const rankOf = ranked?.rankOf ?? ((id: string) => byId.get(id) ?? null);
+  const idAt = ranked?.idAt ?? ((rank: number) => ids[rank]);
+  const pins = [...pinned, ...demands.values()];
   const getPort = useCallback(() => {
     for (let node = list.current?.parentElement; node; node = node.parentElement) {
       if (node.matches("[data-pane-content], [data-companion-scrollport]") ||
@@ -55,23 +64,23 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
       if (node === port) break;
     }
     return () => resize.disconnect();
-  }, [getPort, ids.length, list, windowed]);
+  }, [getPort, count, list, windowed]);
 
-  const getItemKey = useCallback((rank: number) => ids[rank]!, [ids]);
+  const getItemKey = useCallback((rank: number) => keyIds?.[rank] ?? rank, [keyIds]);
   const index = useVirtualizer<HTMLElement, HTMLLIElement>({
-    count: ids.length, enabled: windowed, getScrollElement: getPort,
+    count, enabled: windowed, getScrollElement: getPort,
     anchorTo: origin?.companion ? "end" : "start",
     getItemKey, estimateSize: () => estimate, scrollMargin: margin, overscan: 4,
     rangeExtractor(range) {
       const ranks = new Set(defaultRangeExtractor(range));
-      for (const id of [...pinned, ...demands.values()]) {
-        const rank = byId.get(id);
-        if (rank !== undefined) ranks.add(rank);
+      for (const id of pins) {
+        const rank = rankOf(id);
+        if (rank != null) ranks.add(rank);
       }
       return [...ranks].sort((a, b) => a - b);
     },
     measureElement: (element, entry, instance) => held
-      ? instance.itemSizeCache.get(ids[instance.indexFromElement(element)]!) ?? estimate
+      ? instance.itemSizeCache.get(getItemKey(instance.indexFromElement(element))) ?? estimate
       : measureElement(element, entry, instance),
     scrollToFn(offset, {adjustments}, instance) {
       const port = instance.scrollElement;
@@ -83,9 +92,23 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
     const port = instance.scrollElement;
     return !held && port?.hasAttribute("data-companion-scrollport") === true && slot.end <= port.scrollTop + 0.5;
   };
-  const slots = windowed ? index.getVirtualItems().map(slot => ({
-    id: ids[slot.index]!, rank: slot.index, top: slot.start - margin, size: held ? slot.size : undefined,
-  })) : ids.map((id, rank) => ({id, rank, top: undefined, size: undefined}));
+  const virtual = windowed ? index.getVirtualItems() : [];
+  const slots = windowed ? virtual.flatMap(slot => {
+    const id = idAt(slot.index);
+    return id === undefined ? [] : [{id, rank: slot.index, top: slot.start - margin, size: held ? slot.size : undefined}];
+  }) : ids.map((id, rank) => ({id, rank, top: undefined, size: undefined}));
+  useLayoutEffect(() => { ranked?.request(virtual.map(slot => slot.index), pins); });
+  const publishedRevision = ranked?.revision ?? null;
+  const measuredRevision = useRef(publishedRevision);
+  useLayoutEffect(() => {
+    const previous = measuredRevision.current;
+    measuredRevision.current = publishedRevision;
+    if (previous === null || publishedRevision === null || previous === publishedRevision) return;
+    index.measure();
+    for (const row of list.current?.querySelectorAll<HTMLLIElement>(":scope > li[data-index]") ?? []) {
+      index.resizeItem(index.indexFromElement(row), row.offsetHeight);
+    }
+  }, [index, list, publishedRevision]);
   const height = windowed ? index.getTotalSize() : undefined;
   const measurements = index.measurementsCache;
   const revision = useRef({measurements, count: 0});
@@ -93,7 +116,7 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
     const root = list.current, port = index.scrollElement;
     if (!windowed || !root || !port) {frame.current = null; return;}
     if (revision.current.measurements !== measurements) revision.current = {measurements, count: revision.current.count + 1};
-    frame.current = {revision: revision.current.count, root, scrollport: port, origin: margin, anchors: ids,
+    frame.current = {revision: revision.current.count, observation: publishedRevision ?? undefined, root, scrollport: port, origin: margin, anchors: ids,
       firstVisible(top, bottom) {
         let lo = 0, hi = measurements.length;
         while (lo < hi) {
@@ -101,12 +124,18 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
           if (measurements[middle]!.end - margin <= top) lo = middle + 1;
           else hi = middle;
         }
-        const item = measurements[lo];
-        return item && item.start - margin < bottom ? {id: ids[lo]!, offset: item.start - margin} : null;
+        for (let rank = lo; rank < measurements.length; rank++) {
+          const offset = measurements[rank]!.start - margin;
+          if (offset >= bottom) break;
+          const id = idAt(rank);
+          if (id !== undefined) return {id, offset};
+        }
+        return null;
       },
       position(id) {
-        const rank = byId.get(id);
-        const slot = rank === undefined ? null : measurements[rank];
+        const rank = rankOf(id);
+        if (rank === undefined) return ranked?.failed ? {kind: "failed"} : {kind: "pending", estimate: null};
+        const slot = rank === null ? null : measurements[rank];
         return slot ? {kind: "ready", offset: slot.start - margin} : {kind: "missing"};
       }};
   });
@@ -123,5 +152,5 @@ export function useVariableIndex({scope, ids: incoming, list, estimate, pinned, 
   usePaneAnchorGeometry({scope, geometry: windowed ? geometry : null, ready: !windowed || slots.length > 0});
   const viewport = origin !== null && index.range !== null && index.scrollRect !== null
     ? {first: index.range.startIndex, height: index.scrollRect.height} : null;
-  return {slots, height, windowed, count: ids.length, viewport, measure: windowed ? index.measureElement : undefined};
+  return {slots, height, windowed, count, viewport, measure: windowed ? index.measureElement : undefined};
 }

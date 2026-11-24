@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import type { RegisterItem } from "@nexus/authored/types";
+import type { QueryResult, RegisterItem } from "@nexus/authored/types";
 import * as Icon from "@/lib/ui/icons";
 import CollectionView, { type CollectionViewRowRenderProps } from "@/components/collections/CollectionView";
 import type { CollectionRowView } from "@/lib/collections/types";
@@ -11,7 +11,7 @@ import { Fact } from "@/components/feedback/Fact";
 import { presentNote } from "@/lib/collections/presenters/note";
 import { useAuthoredAccountId } from "@/lib/authored/provider";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
-import { usePageRegisterWindow } from "@/lib/notes/pageRegisterWindow";
+import { useRankedAuthoredWindow } from "@/lib/notes/rankedAuthoredWindow";
 import type { RankedIndex } from "@/lib/collections/measuredIndexWindow";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { usePaneFilterQuery } from "@/lib/panes/paneFilterRows";
@@ -23,6 +23,7 @@ import { useRecent } from "@/lib/recent/store";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./NotesPaneBody.module.css";
 
+const register = (result: QueryResult) => result.page_register;
 const UNIT = {singular: "page", plural: "pages"};
 
 /** Only mounted oversized titles need a read. Their identity, header and link already exist. */
@@ -51,7 +52,7 @@ export default function NotesPaneBody() {
   const description = shown?.kind === "description" ? shown : null;
   const revision = observation?.store_revision ?? null;
   const sparse = description !== null && description.total > description.items.length;
-  const {items, positions, request, error: rangeError, retry: retryRange} = usePageRegisterWindow(shownText, revision, description);
+  const {items, positions, request, error: rangeError, retry: retryRange} = useRankedAuthoredWindow({kind: "page_register", text: shownText}, revision, description, register);
   const recent = useRecent();
   const refs = useMemo(() => shownText ? [] : (recent.snapshot?.entries ?? []).flatMap(({target}) =>
     target.kind === "resource_ref" && target.ref.startsWith("page:") ? [target.ref] : []), [shownText, recent.snapshot]);
