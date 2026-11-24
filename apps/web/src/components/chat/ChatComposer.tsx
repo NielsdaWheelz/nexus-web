@@ -84,7 +84,8 @@ export default function ChatComposer({ catalog: catalogRead, command, owner, foc
         if (!event.repeat) submit();
       }} />
     {memory.read.status === "failed" ? <Failed error={memory.read.error} noun="saved model" retry={{ run: memory.read.refetch, busy: memory.read.retrying }} /> : null}
-    {refusal ? <Fact line={refusal.line} /> : reason ? <Fact line={{ fact: reason }} /> : null}
+    {refusal ? <Fact line={refusal.line} /> : null}
+    {reason && refusal?.line.reason !== reason ? <Fact line={{ fact: reason }} /> : null}
     <div className={styles.row}><GenerationPicker catalogRead={catalogRead} choice={choice} onChange={setSelection} returnFocus={() => textarea.current?.focus({ preventScroll: true })} />
       <Button tone="accent" className={styles.send} disabled={!canSend} aria-busy={command.kind === "Busy" || undefined} title={pendingReason(command) ?? undefined} onClick={submit}>
         send{!mobile ? <span className={styles.hint} aria-hidden="true">↵</span> : null}

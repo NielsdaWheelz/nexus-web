@@ -55,6 +55,7 @@ export default function GenerationPicker({ catalogRead, choice, onChange, return
   const skipReturn = useRef(false);
   const touch = useRef(false);
   const id = useId();
+  const reasonId = useId();
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
   const { value, route, row, model, modelKey, effort, variant, reason } = choice;
   const sections: ProviderSection[] = catalog?.routes.map(row => ({
@@ -168,7 +169,7 @@ export default function GenerationPicker({ catalogRead, choice, onChange, return
     <button ref={trigger} type="button" className={styles.trigger}
       style={pressSize ? { minInlineSize: pressSize.width, minBlockSize: pressSize.height } : undefined}
       aria-label={cold ? "model" : `model and effort: ${current?.label ?? "model unavailable"}, ${effortLabel}`}
-      aria-description={reason ?? undefined} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} aria-busy={busy || undefined}
+      aria-describedby={reason ? reasonId : undefined} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} aria-busy={busy || undefined}
       onPointerDown={event => {
         if (event.button !== 0 || !event.isPrimary) return;
         // A focus-triggered recall may shorten the label before this press clicks.
@@ -197,6 +198,7 @@ export default function GenerationPicker({ catalogRead, choice, onChange, return
         <span className={styles.chevron}><ControlContents busy={busy} icon={<Icon.Choose size={12} aria-hidden="true" />} /></span>
       </span>
     </button>
+    {reason ? <span id={reasonId} className="sr-only">{reason}</span> : null}
     <PickerSurface active={open} onClose={() => setOpen(false)} anchor={() => trigger.current}
       skipReturnFocus={() => skipReturn.current} title="model and effort" panelId={id} placement="above" className={styles.surface}
       slipContent={list}
