@@ -8,6 +8,7 @@ import { exactWrite, requestWithRetry } from "@/lib/api/retry";
 import type { ApiJson } from "@/lib/api/wire";
 import { getWritingRuntime } from "@/lib/notes/runtime";
 import type { WorkGuard } from "@/lib/unsavedWork";
+import { selectionKey } from "./selection";
 import { failureOf, rejected, refusal, type AcceptedReceipt, type Refusal, type RejectionCode, type RunCreateRequest, type Selection } from "./wire";
 
 export type DraftRequest = Omit<RunCreateRequest, "expected_deletion_revision">;
@@ -75,6 +76,8 @@ function createCommands(accountId: string) {
   let state: CommandState = IDLE_COMMAND;
   let defect: CommandDefect | null = null;
   let occurrence = 0;
+  let catalogRevision = 0;
+  const refusedSelections = new Map<string, number>();
   let retired = false;
   let flight: Promise<CommandOutcome> | null = null;
   let pending: { command: ChatCommand; body: string | null; uncertain: boolean; attempt: number; controller: AbortController; prefix: Promise<string>; accepted: ((receipt: AcceptedReceipt) => void) | null } | null = null;
@@ -123,6 +126,10 @@ function createCommands(accountId: string) {
           set({ kind: "Unconfirmed", command, phase: "Sending", attempt: ++attempt.attempt, standing: { kind: "Unknown", refused: answer } });
           return { kind: "Pending" };
         }
+        if (code === "E_INVALID_GENERATION_SELECTION" || code === "E_GENERATION_SELECTION_UNAVAILABLE") {
+          const selection = command.kind === "Send" ? command.request.selection : command.selection;
+          refusedSelections.set(selectionKey(selection), ++catalogRevision);
+        }
         settle(); return failed(answer, code);
       }
       attempt.uncertain = true;
@@ -155,6 +162,12 @@ function createCommands(accountId: string) {
     isActive: active,
     canExecute: () => active() && state.kind === "Idle" && flight === null,
     getSnapshot: () => state,
+    getCatalogRevision: () => catalogRevision,
+    // Each chat catalog read stamps the foreground and rejection revision. A failed read
+    // retains the earlier accepted stamp, including while another tuple is edited.
+    selectionRejected(selection: Selection, acceptedStamp: string | null) {
+      return (refusedSelections.get(selectionKey(selection)) ?? 0) > Number(acceptedStamp?.split("/")[1] ?? 0);
+    },
     getDefect: () => defect,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     hasUnconfirmed: () => pending?.uncertain === true || state.kind === "Busy" && state.phase === "Sending",

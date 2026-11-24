@@ -148,8 +148,11 @@ A chat send stores one `GenerationSpec` on its run: operation, exact selection,
 the presentation shown at dispatch, tool plan and admitted scope, effect mode,
 and the context/output budgets it was assembled against. Every generation's
 `llm_calls` row records the same shape for the call it ran. A generation reads
-the catalog once more when it starts; a selection that is no longer runnable
-fails `runtime_unavailable` rather than running something else.
+the catalog again when it starts. if a readable catalog has lost the admitted
+chat selection, the call closes `runtime_unavailable` before dispatch, with
+empty evidence and null usage, display and budgets. the run retains its admitted
+specification. a missing background policy selection closes
+`invalid_configuration` and holds its job for operator repair.
 
 Model selection does not grant tools. The operation policy independently
 resolves one of:
@@ -292,12 +295,9 @@ one watcher per generation polls every 0.25 s for the owner's stop (`Cancelled`)
 a lost job claim (`interrupted`) and the operation deadline (`timeout`). failure
 codes: auth, quota, rate_limited, timeout, output_limit, content_filtered,
 context_too_large, invalid_output, policy_violation, runtime_unavailable,
-interrupted, defect. a pre-dispatch refusal (catalog, readiness, tools, memory
-grant) is a `runtime_unavailable` row. for chat it is the terminal value (the
-user reruns); a background generation that never reached its model (refused, a
-Codex session that did not open, or a turn Codex did not submit) instead raises
-`RouteUnavailable` while its job has attempts left, so the queue retries it with
-the kind's backoff, and only the last attempt settles the domain row. a failed
+interrupted, invalid_configuration, uncertain_effect, defect. readiness failures
+retain their catalog explanations. an unread codex host is retryable for background
+work before dispatch. missing tool or memory grants require operator repair. a failed
 Codex catalog fetch is retried after 10 s (a good one is kept 60 s). a decode
 rejection is `invalid_output` in the same terminal write. a stock input-size
 refusal closes the bound attempt as `context_too_large` before model execution. a stop that the tool

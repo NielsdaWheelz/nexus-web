@@ -1,12 +1,14 @@
 "use client";
 
 import type { ActionContext } from "@/lib/actions/ResourceActionsProvider";
+import type { ServerValue } from "@/lib/api/serverState";
 import { createRandomId } from "@/lib/createRandomId";
 import type { Capture, ReaderAnnotation } from "@/lib/documentReader/annotations";
 import type { WorkGuard } from "@/lib/unsavedWork";
+import { getLibrarianCommands } from "./commands";
 import { getChatDraft, type Draft } from "./drafts";
-import { type SelectionEditor } from "./selection";
-import type { RunCreateRequest } from "./wire";
+import { resolveSelection, type SelectionEditor } from "./selection";
+import type { Catalog, RunCreateRequest } from "./wire";
 
 /** A draft retains its browser capture; admission proves it before saving words. */
 export interface ReaderQuote {
@@ -30,18 +32,22 @@ export function captureReaderQuote(input: {
 type LaunchContext = Pick<ActionContext, "accountId" | "workspace" | "sessionSignal" | "isActive">;
 export function launchReaderChat(input: {
   ctx: LaunchContext; guard: WorkGuard; originPaneId: string; question: string;
-  quote: ReaderQuote; selection: SelectionEditor;
+  quote: ReaderQuote; catalog: ServerValue<Catalog>; readSelection(catalog: Catalog | null): SelectionEditor | null;
 }): { kind: "Opened"; paneId: string } | { kind: "Cancelled" } {
-  return launchChatDraft({ ...input, draft: { text: input.question, selection: input.selection, quote: input.quote } });
+  const read = input.catalog.status === "ready" && input.catalog.source.kind === "live" && input.catalog.acceptedStale !== null && !input.catalog.error ? input.catalog : null;
+  const selection = input.readSelection(read?.data ?? null) ?? { kind: "Uninitialized" };
+  const commands = getLibrarianCommands(input.ctx.accountId);
+  const send = read !== null && selection.kind === "Selected" && resolveSelection(read.data, selection, value => commands.selectionRejected(value, read.acceptedStale)).reason === null;
+  return launchChatDraft({ ...input, send, draft: { text: input.question, selection, quote: input.quote } });
 }
 
 /** The same timeline receives every gesture. Empty questions only focus a draft. */
 export function launchChatDraft(input: {
-  ctx: LaunchContext; guard: WorkGuard; originPaneId: string; draft: Draft;
+  ctx: LaunchContext; guard: WorkGuard; originPaneId: string; draft: Draft; send?: boolean;
 }): { kind: "Opened"; paneId: string } | { kind: "Cancelled" } {
   const { ctx } = input;
   if (!ctx.isActive() || ctx.sessionSignal().aborted) return { kind: "Cancelled" };
-  const activated = ctx.workspace().activateWorkspaceTarget({ originPaneId: input.originPaneId, target: { href: "/librarian" }, disposition: { kind: "Fork" }, entry: { kind: "FocusLibrarian", send: !!input.draft.text.trim() } });
+  const activated = ctx.workspace().activateWorkspaceTarget({ originPaneId: input.originPaneId, target: { href: "/librarian" }, disposition: { kind: "Fork" }, entry: { kind: "FocusLibrarian", send: input.send === true && !!input.draft.text.trim() } });
   if (activated.kind === "Cancelled") return activated;
   const { paneId } = activated;
   const draft = getChatDraft(ctx.accountId, paneId, input.guard);
