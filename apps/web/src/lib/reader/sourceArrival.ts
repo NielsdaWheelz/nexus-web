@@ -20,7 +20,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import type { ApiJson } from "@/lib/api/wire";
 import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneRouteModel";
 import { requirePaneRuntime, usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
-import type { SourceArrivalTarget, SourceTarget } from "@/lib/resources/sourceTarget";
+import type { MessageCitationArrival, SourceArrivalTarget, SourceTarget } from "@/lib/resources/sourceTarget";
 import type { ReaderDestination } from "@/lib/documentReader/location";
 import { getInteractionOwner, hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import { isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eventTarget";
@@ -47,6 +47,7 @@ export interface SourceArrivalContext {
 }
 
 export type SourceArrivalApplyTarget =
+  | MessageCitationArrival
   | { readonly kind: "source"; readonly source: SourceTarget }
   | { readonly kind: "resource"; readonly resource_ref: string; readonly field: "annotation" | null }
   | { readonly kind: "highlight"; readonly highlight_id: string }
@@ -273,20 +274,26 @@ export function useSourceArrival(input: {
           const destination = latest.current.runtime;
           const readingMediaId = destination.routeId === "media" && destination.resourceRef?.startsWith("media:")
             ? destination.resourceRef.slice("media:".length) : null;
+          const citation = intent.target.kind === "message_citation" ? intent.target : null;
+          const resolveTarget = citation ? { kind: "citation", edge_id: citation.edge_id, side: "source" } : intent.target;
           const { data } = await apiFetch<ApiJson<"/resource-items/source-targets/resolve", "post">>(
             "/api/resource-items/source-targets/resolve",
-            { method: "POST", body: JSON.stringify({ target: intent.target, reading_media_id: readingMediaId }), signal },
+            { method: "POST", body: JSON.stringify({ target: resolveTarget, reading_media_id: readingMediaId }), signal },
           );
           if (!current()) return;
           const source = data.source_activation;
-          // Endpoint queries never change the source ownership.
-          const sameOwner = source?.resource_ref && destination.resourceRef
-            ? source.resource_ref === destination.resourceRef
-            : (data.location.kind === "resource" || destination.routeId === "xCapture" || destination.routeId === "librarian") && source?.kind === "route" && source.href !== null && resolveWorkspaceActivationRouteId(source.href) === resolveWorkspaceActivationRouteId(destination.href);
-          // The destination validates its typed locator and publication identity;
-          // current() separately fences the complete mounted view for this attempt.
-          target = data.location.kind === "unavailable" || !sameOwner || ((data.location.kind === "located" || data.location.kind === "point") && sourceIdentity === null)
-            ? null : { kind: "source", source: data };
+          if (citation) {
+            target = data.location.kind === "resource" && source?.resource_ref === `message:${citation.message_id}` ? citation : null;
+          } else {
+            // Endpoint queries never change the source ownership.
+            const sameOwner = source?.resource_ref && destination.resourceRef
+              ? source.resource_ref === destination.resourceRef
+              : (data.location.kind === "resource" || destination.routeId === "xCapture" || destination.routeId === "librarian") && source?.kind === "route" && source.href !== null && resolveWorkspaceActivationRouteId(source.href) === resolveWorkspaceActivationRouteId(destination.href);
+            // The destination validates its typed locator and publication identity;
+            // current() separately fences the complete mounted view for this attempt.
+            target = data.location.kind === "unavailable" || !sameOwner || ((data.location.kind === "located" || data.location.kind === "point") && sourceIdentity === null)
+              ? null : { kind: "source", source: data };
+          }
         }
         const outcome = target === null ? "Unavailable" : await latest.current.input.apply(target, {
           activationId: intent.activationId,
@@ -327,7 +334,10 @@ export function useSourceArrival(input: {
         if (!current() || handleUnauthenticatedApiError(error)) return;
         if (!isApiError(error) || isSameSystemApiDefect(error)) { setDefect({ error }); return; }
         controller.abort();
-        publishStatus({ ...pending, pending: false, failure: { title: "couldn’t open that location.", error } });
+        publishStatus({ ...pending, pending: false, failure: {
+          title: "couldn’t open that location.",
+          error: intent.target.kind === "message_citation" && error.code === "E_NOT_FOUND" ? null : error,
+        } });
       }
     };
     void run();

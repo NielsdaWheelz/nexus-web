@@ -386,6 +386,10 @@ def read_page_range(
     start, end = int(bounds[0]), int(bounds[1])
     if end - start > READ_DOCUMENT_MAX_CHARS:
         raise DocumentTooLarge(str(media_id))
+    return _pdf_words(db, media_id, start, end)
+
+
+def _pdf_words(db: Session, media_id: UUID, start: int, end: int) -> str | None:
     return db.scalar(
         text("SELECT substring(plain_text FROM :start+1 FOR :size) FROM media WHERE id=:id"),
         {"id": media_id, "start": start, "size": end - start},
@@ -550,3 +554,67 @@ def _fragment_previews(db: Session, fragment_ids: list[UUID]) -> dict[UUID, str]
         {"ids": fragment_ids},
     )
     return {row[0]: str(row[1] or "") for row in rows}
+
+
+def ask_page_context(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    captured_page: int,
+    source_identity: str | None,
+    exact: str,
+) -> list[tuple[str, str]]:
+    """A captured page is historical until its edition or unique current words place it."""
+    from nexus.schemas.resource_evidence import CapturedPassageTarget, LocationQuote
+    from nexus.schemas.retrieval import PdfPageLocator
+    from nexus.services import text_quote
+    from nexus.services.resource_items.locations import current_locator, location_reads
+
+    target = CapturedPassageTarget(
+        field=None,
+        owner_ref=f"media:{media_id}",
+        source_identity=source_identity,
+        precision="page",
+        locator=PdfPageLocator(media_id=media_id, page_number=captured_page),
+    )
+    quote = LocationQuote(exact=exact, prefix=None, suffix=None, color=None)
+    reads = location_reads(db, viewer_id, [target])
+    located = current_locator(target, quote, reads)
+    if located is None:
+        return [("location", f"captured page {captured_page}")]
+    page = located["page_number"]
+    result = [("location", f"page {page} · page_range:{media_id}:{page}-{page}")]
+    span = next((span for span in reads.pages if span["page_number"] == page), None)
+    readable = _readable(db, viewer_id, media_id)
+    if span is None or readable is None or readable.kind != "pdf":
+        return result
+    # Uniqueness requires the whole proved page. Only bounded slices enter the prompt.
+    words = _pdf_words(db, media_id, span["start_offset"], span["end_offset"])
+    if not words:
+        return result
+    normalized = text_quote.normalize_for_match(exact).text.strip()
+    match = text_quote.match_quote_in_sources(
+        [text_quote.NormalizedOwnerSource(None, None, None, text_quote.normalize_for_match(words))],
+        exact=normalized,
+    )
+    match = text_quote.project_note_match(words, match, exact=normalized)
+    if match.raw_start is None or match.raw_end is None:
+        if len(words) <= 1024:
+            result.append(("page text", words))
+        return result
+    before, after = match.raw_start, match.raw_end
+    if before:
+        result.append(
+            (
+                "before selection",
+                ("[…] " if before > 512 else "") + words[max(0, before - 512) : before],
+            )
+        )
+    if after < len(words):
+        result.append(
+            (
+                "after selection",
+                words[after : after + 512] + (" […]" if len(words) - after > 512 else ""),
+            )
+        )
+    return result

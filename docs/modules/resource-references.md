@@ -217,6 +217,17 @@ targets and arrival. selections create no highlight, passage anchor or annotatio
 chat url citations retain only the url. source-owned native and oracle quotations
 keep the captured-evidence contract above.
 
+an eligible item overflow starts the notes reference chooser at the displayed
+item. the menu uses the same query, accepted targets and authored link commands
+as `@`. linkable passages bind the displayed reading, locator and full quote
+through the resource projection's proof. a work's secondary-match excerpt leaves
+the work as the subject. exact lookup rechecks the frozen passage proof before
+the one local authored batch. confirmation appends both endpoints and their
+required creation intents. duplicate pairs keep their existing positions.
+
+reader link details carry the machine writer's rationale per edge. folding
+several edges under one resource preserves each edge's own reason and source.
+
 outlines serve notes, pages and connections: a muted typed opening marker, actual
 disclosure, editable note/annotation prose and page titles, and a quiet resource
 ellipsis. immutable references show title, canonical episode show, ordered authors and

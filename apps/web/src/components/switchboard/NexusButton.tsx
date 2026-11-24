@@ -9,6 +9,7 @@ import AsterismMark from "@/components/AsterismMark";
 import { useMobileChromeSurface } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { SWIPE_CHIP_MS } from "@/lib/nexus/policy";
+import { suppressDragReleaseClick } from "@/lib/ui/dragGesture";
 import type { WorkspaceAdjacentPaneDirection } from "@/lib/workspace/store";
 import styles from "./Switchboard.module.css";
 
@@ -58,7 +59,9 @@ export default function NexusButton({
 
   const tracked = (event: PointerEvent) => (press.current?.pointerId === event.pointerId ? press.current : null);
   const cancel = (event: PointerEvent) => {
-    if (tracked(event)) press.current = null;
+    if (!tracked(event)) return;
+    press.current = null;
+    suppressClick.current = true;
   };
 
   return (
@@ -77,10 +80,13 @@ export default function NexusButton({
             press.current = null;
             return;
           }
+          if (!event.isPrimary || event.button !== 0 || open || event.currentTarget.inert) return;
           suppressClick.current = false;
-          if (!event.isPrimary || event.button !== 0 || open) return;
-          // touch compatibility focus can move nexus after capture ends.
-          if (event.pointerType === "touch") event.preventDefault();
+          if (event.pointerType === "touch") {
+            event.preventDefault();
+            // The release can move or open the UI before its compatibility click.
+            suppressDragReleaseClick(event.pointerId);
+          }
           press.current = { phase: "Tracking", pointerId: event.pointerId, x: event.clientX, y: event.clientY };
           // keep release on this button when input blur moves its bottom band.
           event.currentTarget.setPointerCapture(event.pointerId);
@@ -99,8 +105,16 @@ export default function NexusButton({
           if (!current) return;
           press.current = null;
           const dx = event.clientX - current.x;
-          // A button the chrome retreated mid-swipe (module-written inert) never commits.
-          if (event.pointerType === "touch" && current.phase === "Locked" && Math.abs(dx) >= COMMIT_PX && !open && !event.currentTarget.inert) {
+          const dy = event.clientY - current.y;
+          if (open || event.currentTarget.inert ||
+              (current.phase === "Tracking" && Math.hypot(dx, dy) >= SLOP_PX)) {
+            suppressClick.current = true;
+            return;
+          }
+          if (event.pointerType !== "touch") return;
+          if (current.phase === "Tracking") {
+            flushSync(onOpen);
+          } else if (current.phase === "Locked" && Math.abs(dx) >= COMMIT_PX) {
             const text = onSwipe({ direction: dx < 0 ? "Next" : "Previous" });
             setChip(text === null ? null : { text });
           }
@@ -110,9 +124,11 @@ export default function NexusButton({
         onClick={(event) => {
           if (event.detail > 0 && suppressClick.current) {
             suppressClick.current = false;
+            event.preventDefault();
+            event.stopPropagation();
             return;
           }
-          flushSync(onOpen);
+          if (!open && !event.currentTarget.inert) flushSync(onOpen);
         }}
       >
         <span className={styles.nexusFace}>

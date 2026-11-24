@@ -1,6 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useRef, type MouseEvent, type KeyboardEvent } from "react";
+import ItemLink from "@/components/resources/ItemLink";
 import FeedAcquisitionDialog from "@/components/feeds/FeedAcquisitionDialog";
 import FeedEntryRemovalDialog from "@/components/feeds/FeedEntryRemovalDialog";
 import MediaRemovalDialog from "@/components/media/MediaRemovalDialog";
@@ -67,6 +68,7 @@ export function ResourceOverlays({
       visitId="resource-action-overlays"
       routeKey="resource-action-overlays"
     >
+      {overlay?.kind === "LinkItem" ? <ItemLink key={overlay.key} source={overlay.source} open={overlay.open} onClose={close} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} /> : null}
       {overlay?.kind === "TaskCompletion" ? <div onKeyDown={event => workHistoryKey(overlay.history,event.nativeEvent,platform)}><TaskCompletionDialog key={overlay.key} noteRef={overlay.ref} history={overlay.history} onClose={close} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback}/></div> : null}
       {overlay?.kind === "HabitHistory" ? <div onKeyDown={event => workHistoryKey(overlay.history,event.nativeEvent,platform)}><HabitHistoryDialog key={overlay.key} open={overlay.open} noteRef={overlay.ref} local_date={overlay.local_date} history={overlay.history} onClose={close} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback}/></div> : null}
       {overlay?.kind === "Metadata" ? (

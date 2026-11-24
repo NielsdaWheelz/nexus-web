@@ -76,6 +76,7 @@ import {
 
 /** The one overlay a verb can open; it loads its own facts by id. */
 export type Overlay =
+  | {readonly kind: "LinkItem"; readonly source: import("@/lib/resourceGraph/links").ItemLinkSource}
   | {readonly kind:"HabitHistory"; readonly ref:string; readonly local_date:string; readonly history:OutlineHistory}
   | {readonly kind:"TaskCompletion"; readonly ref:string; readonly history:OutlineHistory}
   | {

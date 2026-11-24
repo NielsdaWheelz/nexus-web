@@ -90,7 +90,7 @@ export default function NotePaneBody() {
       return "Applied";
     },
   });
-  const connections = useMemo(() => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} />, [blockId]);
+  const connections = useMemo(() => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} resourceLabel={read.rootTitle} />, [blockId, read.rootTitle]);
   useResourceInspector({ scheme: "note_block", handle: resource ? blockId : null, bodies: { linkedItems: connections } });
   const resourceRef = resource ? canonicalResourceRef({ scheme: "note_block", id: blockId }) : undefined;
   usePaneChrome({workHistory: read.controller?.history,resourceRef, displayTitle: resource ? read.rootTitle ?? undefined : undefined,

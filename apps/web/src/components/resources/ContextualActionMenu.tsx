@@ -8,12 +8,12 @@ import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 export type { ContextActionSection, DisplayedNavigation } from "@/lib/actions/useContextualActions";
 
 type ContextualMenuProps = Pick<ActionMenuProps,
-  "label" | "placement" | "align" | "onOpenChange" | "renderTrigger" | "triggerAttributes" | "triggerRef" | "returnFocusTo" | "renderContextAnchor" | "hold"
+  "triggerDisabled" | "triggerDisabledReason" | "className" | "label" | "placement" | "align" | "onOpenChange" | "renderTrigger" | "triggerAttributes" | "triggerRef" | "returnFocusTo" | "renderContextAnchor" | "hold"
 > & ContextualActionsInput;
 
 export default function ContextualActionMenu(props: ContextualMenuProps) {
   const pane = usePaneRuntime();
-  const subjectKey = `${pane?.visitId ?? "workspace"}:${props.subjectKey}:${props.resourceRef ?? "local"}:${props.navigation?.key ?? "resource-only"}`;
+  const subjectKey = `${pane?.visitId ?? "workspace"}:${props.subjectKey}:${props.resourceRef ?? "local"}:${props.navigation?.key ?? "resource-only"}:${props.linkSource?.ref ?? ""}:${props.linkSource?.passage?.revision ?? ""}:${props.linkSource?.passage?.readingMediaId ?? ""}`;
   return <ActionMenuHost {...props} title={props.title} subjectKey={subjectKey}>{session =>
     <ContextualMenuInvocation {...props} subjectKey={subjectKey} session={session} />
   }</ActionMenuHost>;

@@ -381,6 +381,7 @@ function DayMenu({ date, name, refId, onOpen, edit }: {
 }) {
   const pageId = refId.slice(5);
   return <span className={styles.menu}><ContextualActionMenu title={name} subjectKey={`journal:${date}`}
+    linkSource={{ ref: refId, label: name, target: { kind: "resource", ref: refId }, journalDate: date }}
     onOpenChange={onOpen} label={`actions for ${name}`} navigation={null}
     resourceRef={canonicalResourceRef({ scheme: "page", id: pageId })}
     omitResourceActions={["EditPageTitle"]} sections={[{ id: "View", actions: [

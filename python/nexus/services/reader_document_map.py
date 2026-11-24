@@ -331,6 +331,10 @@ def get_capture_document_map(
                         edge_id=connection.edge_id,
                         origin=connection.origin,
                         ordinal=connection.ordinal,
+                        rationale=connection.snapshot.rationale
+                        if connection.origin in ("assistant", "discovery")
+                        and connection.snapshot is not None
+                        else None,
                     )
                 )
     values = list(roots.values())

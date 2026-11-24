@@ -7,7 +7,8 @@ import { Announcement } from "@/components/feedback/Announcement";
 import { Field } from "@/components/feedback/Fact";
 import type { Retract, Verb, Verbs } from "@/components/feedback/stage";
 import NoteEditor, { type NoteEditorHandle } from "@/components/notes/NoteEditor";
-import ActionMenu from "@/components/ui/ActionMenu";
+import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
+import {directLinkSource} from "@/lib/resourceGraph/links";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
@@ -19,7 +20,7 @@ import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
 import { localResourceLabel } from "@/lib/resources/localResource";
 import { PaneReturnVisitScope, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
-import { prepareActionSelect, type ActionDescriptor, type MenuSource } from "@/lib/ui/actionDescriptor";
+import { prepareActionSelect, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -386,9 +387,10 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
       options.push({ kind: "command", id: "DeleteHighlight", label: ACTION_CATALOG.DeleteHighlight.label, icon: null, tone: "danger",
         onSelect: () => verbs.remove(id), disabled: deleteReason !== null, disabledReason: deleteReason ?? undefined });
     }
-    const source: MenuSource = { kind: "Immediate", subjectKey: JSON.stringify([draft.id, opening.id, draft.highlightId]), title: "passage actions",
-      content: { sections: [{ id: "Passage", label: null, options }] } };
-    const more = options.length > 0 ? <ActionMenu source={source} label="more passage actions" className={styles.selectionIcon} triggerRef={(node) => { moreTrigger.current = node; }} /> : null;
+    const more = options.length > 0 ? <ContextualActionMenu title="passage actions" label="more passage actions" navigation={null}
+      subjectKey={JSON.stringify([draft.id, opening.id, draft.highlightId])} className={styles.selectionIcon}
+      linkSource={highlightId === null ? null : directLinkSource(`highlight:${highlightId}`, composer.copyQuote ?? "highlight")}
+      sections={[{id: "Occurrence", actions: options}]} triggerRef={node => {moreTrigger.current = node;}} /> : null;
     const passageField = isMobile && composer.selectionBlocked && !confirming && verbs.mobileSelection === null
       ? <Field id={fieldId} line={{ fact: composer.selectionBlocked }} />
       : refused && !sourceChanged ? <Field id={fieldId} line={refused.line} verbs={selectAgain ? [selectAgain, copyText] : [copyText]} />

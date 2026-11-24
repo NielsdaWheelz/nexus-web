@@ -4,7 +4,7 @@
  * slots. Editable prose remains ProseMirror's contentDOM. */
 import HighlightAnnotation from "./HighlightAnnotation";
 import {createPortal} from "react-dom";
-import {useRef, type MouseEvent as ReactMouseEvent} from "react";
+import {useRef, type ReactNode, type MouseEvent as ReactMouseEvent} from "react";
 import type {ResourceProjection} from "@nexus/authored/types";
 import type {ActionMenuContextAnchorProps} from "@/components/ui/ActionMenuHost";
 import {FullResourceBody} from "@/components/resources/ExcerptDisclosure";
@@ -21,6 +21,10 @@ import {useActionFocusRecovery} from "@/lib/ui/useActionFocusRecovery";
 import * as Icon from "@/lib/ui/icons";
 import type {BranchRead, OutlineAnnotationCapability} from "@/lib/notes/outlineController";
 import AuthoredReadFailure from "./AuthoredReadFailure";
+import {resolveResourceItem, type ResourceItem} from "@/lib/resources/items";
+import {usePaneFreeServerValue} from "@/lib/api/serverState";
+import {useChangeStamp} from "@/lib/api/changes";
+import {directLinkSource} from "@/lib/resourceGraph/links";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import {ResourceTypeIcon} from "@/components/resources/ResourceType";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
@@ -130,9 +134,7 @@ export default function OutlineEditorRows({mounts, rows, history}: {mounts: read
   for (const {resource} of rows.values()) {
     if (resource?.kind === "highlight" && resource.source_ref !== null) citations.set(resource.source_ref, []);
   }
-  const portals = mounts.flatMap(mount => {
-    const row = rows.get(mount.row_id);
-    if (!row) return [];
+  const renderRow = (mount: OutlineRowMount, row: OutlineRowChrome, sourceMissing = false) => {
     const parsed = row.ref === null ? null : parseResourceRef(row.ref);
     // justify-defect: only uncommitted drafts lack a canonical resource ref.
     if (row.ref !== null && parsed === null) throw new Error(`invalid canonical resource ref: ${row.ref}`);
@@ -168,7 +170,7 @@ export default function OutlineEditorRows({mounts, rows, history}: {mounts: read
       onPointerDown={event => event.stopPropagation()} onPointerMove={event => event.stopPropagation()}
       onPointerUp={event => event.stopPropagation()} onPointerCancel={event => event.stopPropagation()}
       onContextMenu={event => event.stopPropagation()}>
-      <ContextualActionMenu navigation={null} title={row.label} subjectKey={`outline:${row.row_id}`} label={`actions for ${row.label}`} hold="external"
+      <ContextualActionMenu navigation={null} linkSource={resource?.visible && !sourceMissing ? directLinkSource(resource.ref, row.label) : null} title={row.label} subjectKey={`outline:${row.row_id}`} label={`actions for ${row.label}`} hold="external"
         sections={[{id: "Occurrence", actions}]} renderContextAnchor={(context, menu) => {
           const ref = (node: HTMLElement | null) => {context.ref(node); mount.openMenu = node ? menu.open : null;};
           return row.terminal ? <button {...context} ref={ref} type="button" className={control} tabIndex={0} data-outline-bullet="true" data-row-focusable="true" data-marker={marker}
@@ -206,6 +208,15 @@ export default function OutlineEditorRows({mounts, rows, history}: {mounts: read
         {resource?.kind === "highlight" ? <div className={styles.excerpt}><FullResourceBody item={authoredItem(resource, null, row.href)}/></div> : resource?.excerpt ? <FullResourceBody item={authoredItem(resource, null, row.href)} /> : row.href ? <a href={row.href} data-workspace-rich-target="true" onClick={event => activateTargetLink({event, runtime, target: {href: row.href!, labelHint: row.label}})}>{row.label}</a> : row.label}
         {scheme === "media" ? <EpisodeBibliography mediaId={parsed!.id} returnFocus={() => mount.leading.querySelector<HTMLElement>("[data-row-focusable]")}/> : null}
       </>, mount.presentation, `${row.row_id}:content`), ...(resource?.kind === "highlight" ? [createPortal(<HighlightAnnotation highlightRef={resource.ref} resource={resource} occurrenceKey={row.row_id} editable={row.annotation !== null} outline={row.annotation} onWorkOwners={row.workOwners}/>, mount.annotation, `${row.row_id}:annotation`)] : [])] : [])];
+  };
+  const portals = mounts.flatMap(mount => {
+    const row = rows.get(mount.row_id);
+    if (!row) return [];
+    if (row.resource?.kind === "source" && row.ref?.startsWith("message:")) {
+      return [<LinkedMessage key={row.row_id} subject={row.ref}>{item => renderRow(mount, item
+        ? {...row, href: item.activation.href, label: item.label} : row, item?.missing)}</LinkedMessage>];
+    }
+    return renderRow(mount, row);
   });
   const sources = [...citations.keys()].sort();
   const batches = [];
@@ -213,6 +224,14 @@ export default function OutlineEditorRows({mounts, rows, history}: {mounts: read
     batches.push(<HighlightCitations key={start} sources={sources.slice(start, start + 100)} citations={citations}/>);
   }
   return <>{portals}{batches}</>;
+}
+
+/** A saved message stub retains its label. Its server-owned turn decides
+ * whether the reader can still open it; removing the turn leaves the link. */
+function LinkedMessage({subject, children}: {subject: string; children(item: ResourceItem | null): ReactNode}) {
+  const remote = usePaneFreeServerValue({key: `/resource-items/${subject}`, stale: useChangeStamp("Chats"),
+    load: signal => resolveResourceItem(subject, signal)});
+  return children(remote.status === "ready" ? remote.data : null);
 }
 
 type Citation = {mount: OutlineRowMount; page: number | null};

@@ -54,7 +54,7 @@ def recent_intent(db: Session, *, viewer_id: UUID) -> tuple[IntentAnchor, ...]:
             SELECT r.id,r.created_at,NULLIF(left(r.content,:text_limit),'') AS terms,v.media_id
             FROM recent r LEFT JOIN LATERAL (
                 SELECT media_id FROM jsonb_array_elements(r.attachments) WITH ORDINALITY a(value,n)
-                JOIN visible ON a.value->>'resource_ref'='media:' || visible.media_id::text
+                JOIN visible ON a.value #>> '{{reference,resource_ref}}'='media:' || visible.media_id::text
                 ORDER BY a.n LIMIT 1
             ) v ON true
             ORDER BY r.created_at DESC,r.id DESC

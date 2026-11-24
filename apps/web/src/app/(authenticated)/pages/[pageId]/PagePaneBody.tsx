@@ -125,15 +125,15 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
   }, [claim, delivery, id, newPage, root.rootReady, entryFailed, say]);
   if (entryDefect !== null) throw entryDefect.error;
   return <>
-    {page !== null && id !== null ? <Inspector pageId={id} /> : null}
+    {page !== null && id !== null ? <Inspector pageId={id} label={displayTitle} /> : null}
     {root.rootEditor}
     {filter.trim() ? <p>filter applies to loaded items.</p> : null}
     {root.view}
   </>;
 }
 
-function Inspector({ pageId }: { pageId: string }) {
-  const connections = useMemo(() => <ConnectionsSurface resourceRef={{ scheme: "page", id: pageId }} />, [pageId]);
+function Inspector({pageId, label}: {pageId: string; label: string}) {
+  const connections = useMemo(() => <ConnectionsSurface resourceRef={{ scheme: "page", id: pageId }} resourceLabel={label} />, [pageId, label]);
   useResourceInspector({ scheme: "page", handle: pageId, bodies: { linkedItems: connections } });
   return null;
 }

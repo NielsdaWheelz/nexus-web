@@ -16,6 +16,7 @@ import { useChangeStamp } from "@/lib/api/changes";
 import { apiFetch } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import type { CitedPassage } from "@/lib/chat/markdownPassages";
 import type { ReaderQuote } from "@/lib/chat/readerIntent";
 import { refusal } from "@/lib/chat/wire";
 import { formatClock } from "@/lib/formatClock";
@@ -32,15 +33,23 @@ import styles from "./ReferenceFigure.module.css";
 type ResolvedReference = Schema<"AttachmentOut"> | Schema<"ChatCitationOut">;
 
 /** One resolved occurrence. Its host owns placement, density, correspondence and focus. */
-export default function ReferenceFigure({ value, className, tabIndex = -1, onClickCapture, ...attributes }: {
+export default function ReferenceFigure({ value, passages = [], marker = null, className, tabIndex = -1, onClickCapture, ...attributes }: {
   value: ResolvedReference;
+  passages?: readonly CitedPassage[];
+  marker?: number | null;
 } & Omit<ComponentPropsWithRef<"figure">, "children">) {
   const target = "reference" in value ? { kind: "resource", reference: value.reference } as const : value.target;
+  const chosen = marker === null ? undefined : passages.find(passage => passage.markers.includes(marker));
+  const ordered = chosen ? [chosen, ...passages.filter(passage => passage !== chosen)] : passages;
   return <figure {...attributes} tabIndex={tabIndex} className={cx(styles.figure, className)} onClickCapture={event => {
     if (event.target instanceof Element && event.target.closest("a[href]")) suppressSelectionActivation(event);
     onClickCapture?.(event);
   }}>
     {"ordinal" in value ? <div className={styles.ordinal} aria-label={`reference ${value.ordinal}`}>{value.ordinal}</div> : null}
+    {ordered.length ? <div className={styles.citedPassages} aria-label="cited in">
+      <span className={styles.attribution}>cited in</span>
+      {ordered.map(passage => <blockquote key={`${passage.start}:${passage.end}`}>{passage.text}</blockquote>)}
+    </div> : null}
     {target.kind === "url" ? <>
       <a className={styles.primary} href={target.url} data-reference-control="source" onClick={suppressSelectionActivation}>
         <span data-resource-primary>{target.url}</span>

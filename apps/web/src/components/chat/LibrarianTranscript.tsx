@@ -16,7 +16,7 @@ import { useHydratedBrowserTimeZone } from "@/lib/time/browserTimeZone";
 import * as Icon from "@/lib/ui/icons";
 import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
 import ChatTurn from "./ChatTurn";
-import { useLibrarianReferences } from "./LibrarianReferences";
+import { EMPTY_CITATION_PASSAGES, useLibrarianReferences } from "./LibrarianReferences";
 import { inspectChatMessage, useChatScroll, type ChatReadingPosition } from "./useChatScroll";
 import styles from "./ChatSurface.module.css";
 
@@ -86,6 +86,9 @@ export default function LibrarianTranscript({ history, adopted, queryKey, retryB
   }, [history.status, readingPosition, scroll.handle]);
   const [passage, setPassage] = useState<{ messageId: string; start: number; end: number; activationId: string } | null>(null);
   const arrival = useSourceArrival({ ready: history.status === "ready", sourceIdentity: accountId, apply: async (target, context) => {
+    if (target.kind === "message_citation") {
+      return references.revealEdge(target.message_id, target.edge_id, context) ? "Applied" : "Unavailable";
+    }
     if (target.kind !== "source") return "Unavailable";
     const location = target.source.location;
     const resource = target.source.source_activation?.resource_ref;
@@ -127,6 +130,7 @@ export default function LibrarianTranscript({ history, adopted, queryKey, retryB
       leaves.push(<ChatTurn key={turn.run_id} turn={turn} passage={passage} day={day} time={timeFormat.format(date)}
         refresh={history.revalidate} onInspect={scroll.handle.inspectDisclosure} onRetry={() => onRetry(turn.run_id)}
         retryBlocked={retryBlocked} inlineAttachments={references.inlineAttachments} onReadTurn={onReadTurn}
+        citationPassages={references.passagesByMessage.get(turn.assistant_message.id) ?? EMPTY_CITATION_PASSAGES}
         onContentLayout={scroll.afterLayout} onRevealReferences={references.reveal} />);
     }
   }

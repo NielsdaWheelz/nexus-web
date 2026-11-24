@@ -41,7 +41,7 @@ export interface ChatScrollHandle {
   getTranscriptElement(): HTMLDivElement | null;
   subscribeGeometry(listener: () => void): () => void;
   releaseFollowing(): void;
-  inspectReference(messageId: string, citationId: string | null): HTMLElement | null;
+  inspectReference(messageId: string, citationId: string | null, marker: number | null): HTMLElement | null;
 }
 
 function createScrollOwner(
@@ -301,16 +301,17 @@ function createScrollOwner(
     getTranscriptElement: () => transcript.current,
     subscribeGeometry(listener) { geometryListeners.add(listener); return () => { geometryListeners.delete(listener); }; },
     releaseFollowing() { onAttention(); releaseInspection(); capturePoint(); },
-    inspectReference(id, citationId) {
+    inspectReference(id, citationId, marker) {
       const root = message(id);
+      const suffix = marker === null ? "" : `[data-citation-marker-start="${marker}"]`;
       const target = citationId === null ? root?.querySelector<HTMLElement>("[data-message-content]")
-        : root?.querySelector<HTMLElement>(`[data-citation-id="${CSS.escape(citationId)}"]`);
+        : root?.querySelector<HTMLElement>(`[data-citation-id="${CSS.escape(citationId)}"]${suffix}`);
       const port = scrollport.current;
       if (!target || !port) return null;
       onAttention(); releaseInspection();
       jump(port.scrollTop + target.getBoundingClientRect().top - port.getBoundingClientRect().top - inset(), false);
       capturePoint(); notifyGeometry();
-      return target;
+      return citationId === null ? target : target.querySelector<HTMLElement>("a[href]") ?? target;
     },
 
   };

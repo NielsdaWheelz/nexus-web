@@ -78,6 +78,21 @@ pixel 6 avd and exact runtime apk. `scripts/lab/android.ts:91` raised
 the annotation's ten browser journeys and static gate passed; native touch
 qualification remains pending this attachment diagnosis.
 
+on 2026-11-24 at `d77bffa5c1`, lab `20261124-025410-c76269c2fbf2` opened
+gboard and focused the last row on stock api 34. webview 113.0.5672.136 reported
+five touch points and `(any-pointer: coarse)` false on the combined stylus and
+touchscreen device, so the touch commands never appeared. stock api 35 webview
+124.0.6367.219 reports the touchscreen.
+
+on api 35, lab `20261124-030811-2c2e9a39f53b` recorded a requested 350ms
+stationary adb swipe as a 562ms webview press. the viewport grew from 554 to
+867 css px with the drag ghost still present. the resize retired the lift
+before release and the menu stayed closed. in `20261124-032035-5128ec7316a0`,
+separate native down/up events released after 309ms, with the lift active
+and the keyboard still up. the real item menu opened and selection dismissed
+the keyboard. this qualifies that hold and selection path. the longer hold
+across a keyboard resize remains open.
+
 resolved when one run attaches and passes every step above on api 34 with real adb
 touch and the real handoff.
 

@@ -1636,8 +1636,8 @@ export class OutlineController {
     void this.pending.join(destination.row_id, source.row_id, this.capture(), {destination: dest, source: src},
       revision => {
         if (!this.sameOccurrence(destination) || !this.sameOccurrence(source) || this.hasChildren(this.rows.get(source.row_id)!)) return false;
-        const pressed = this.rows.get(row_id)!, neighbour = direction === "backward" ? this.previousVisible(pressed) : this.peer(pressed);
-        if (!neighbour || !("row_id" in neighbour) || neighbour.row_id !== peer.row_id) return false;
+        const pressed = this.rows.get(row_id)!, neighbour = direction === "backward" ? this.previousVisible(pressed) : this.following(pressed);
+        if (neighbour?.row_id !== peer.row_id) return false;
         // A newer store can have inserted a sibling before its window has painted.
         // The preceding visible row can be in a different disclosed branch.
         const branches = new Set([source.parent_id!, destination.parent_id!]);

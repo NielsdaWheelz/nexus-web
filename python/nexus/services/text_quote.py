@@ -13,6 +13,7 @@ from __future__ import annotations
 import unicodedata
 from array import array
 from collections import Counter
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from enum import Enum
 from uuid import UUID
@@ -110,14 +111,34 @@ def find_quote_candidates(
     start_cut: bool = False,
     end_cut: bool = False,
 ) -> list[QuoteCandidate]:
+    return list(
+        _quote_candidates(
+            normalized,
+            exact=exact,
+            prefix=prefix,
+            suffix=suffix,
+            start_cut=start_cut,
+            end_cut=end_cut,
+        )
+    )
+
+
+def _quote_candidates(
+    normalized: NormalizedText,
+    *,
+    exact: str,
+    prefix: str,
+    suffix: str,
+    start_cut: bool,
+    end_cut: bool,
+) -> Iterator[QuoteCandidate]:
     """Occurrences of an already-normalized quote, narrowed by normalized context; at a
     cut edge, context running past the text compares only its part inside it."""
-    candidates: list[QuoteCandidate] = []
     start = normalized.text.find(exact)
     while start != -1:
         end = start + len(exact)
-        before = normalized.text[:start].rstrip()
-        after = normalized.text[end:].lstrip()
+        before = normalized.text[:start].rstrip() if prefix else ""
+        after = normalized.text[end:].lstrip() if suffix else ""
         if (
             not prefix
             or before.endswith(prefix)
@@ -127,11 +148,10 @@ def find_quote_candidates(
             or after.startswith(suffix)
             or (end_cut and len(after) < len(suffix) and suffix.startswith(after.rstrip()))
         ):
-            candidates.append(
-                QuoteCandidate(normalized.boundaries[start], normalized.boundaries[end], start, end)
+            yield QuoteCandidate(
+                normalized.boundaries[start], normalized.boundaries[end], start, end
             )
         start = normalized.text.find(exact, start + 1)
-    return candidates
 
 
 def context_window(normalized: NormalizedText, *, start: int, end: int) -> tuple[str, str]:
@@ -185,9 +205,10 @@ def match_quote_in_sources(
     """
     if not exact:
         return _EMPTY_EXACT
-    hits: dict[tuple[UUID | None, int, int], tuple[NormalizedOwnerSource, QuoteCandidate]] = {}
+    occurrence = None
+    hit = None
     for source in sources:
-        for candidate in find_quote_candidates(
+        for candidate in _quote_candidates(
             source.normalized,
             exact=exact,
             prefix=prefix,
@@ -195,17 +216,18 @@ def match_quote_in_sources(
             start_cut=source.start_cut,
             end_cut=source.end_cut,
         ):
-            occurrence = (
+            key = (
                 source.fragment_id,
                 source.base + candidate.raw_start,
                 source.base + candidate.raw_end,
             )
-            hits.setdefault(occurrence, (source, candidate))
-    if len(hits) > 1:
-        return OwnerQuoteMatch(QuoteStatus.ambiguous, None, None, None, "", "", None, None)
-    if not hits:
+            if occurrence is None:
+                occurrence, hit = key, (source, candidate)
+            elif key != occurrence:
+                return OwnerQuoteMatch(QuoteStatus.ambiguous, None, None, None, "", "", None, None)
+    if hit is None:
         return _NO_MATCH
-    source, candidate = next(iter(hits.values()))
+    source, candidate = hit
     context_prefix, context_suffix = context_window(
         source.normalized, start=candidate.normalized_start, end=candidate.normalized_end
     )
