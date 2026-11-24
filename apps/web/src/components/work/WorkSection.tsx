@@ -238,8 +238,9 @@ function WorkRow({resource:initial,retained,today,history,hold,completion,step,o
   recover():HTMLElement|null;
 }) {
   const read = useAuthoredQuery(retained ? {kind:"resource",ref:initial.ref} : null);
-  const resource = retained ? read.data?.items[0]?.resource ?? initial : initial;
-  const deleted = retained && read.data !== null && read.data.rows.length === 0;
+  const latest = read.data?.rows[0]?.resource;
+  const resource = useMemo(() => latest?.work ? {ref: latest.ref, label: localResourceLabel(latest), work: latest.work} : initial, [latest, initial]);
+  const deleted = retained && read.data !== null && latest === undefined;
   const overlay = useContext(WorkOverlayContext);
   const opened = useWritingDocument(resource.ref);
   const document = opened.document;

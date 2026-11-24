@@ -337,12 +337,13 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
   const embeddingOwner = useContext(OutlineEmbeddingOccurrence);
   const parentScope = useContext(ParentOutlineScope);
   const rememberScope = openScopes?.remember;
+  const enteringFact = incoming?.kind === "edge" ? incoming.edge_id : null;
   useLayoutEffect(() => {
     if (open && hasChildren && rememberScope) rememberScope(occurrenceKey, {
-      ref, label, owner: embeddingOwner, parent: parentScope, entering: incoming?.kind === "edge" ? incoming.edge_id : null,
+      ref, label, owner: embeddingOwner, parent: parentScope, entering: enteringFact,
       excluded: excludedEdgeIds,
     });
-  }, [open, hasChildren, rememberScope, occurrenceKey, ref, label, embeddingOwner, parentScope, excludedEdgeIds, incoming?.kind, enteringEdgeId]);
+  }, [open, hasChildren, rememberScope, occurrenceKey, ref, label, embeddingOwner, parentScope, excludedEdgeIds, enteringFact]);
   // one way, so a row flown past reads none of its children.
   const rested = useRef(false); rested.current ||= outline?.settled(occurrenceKey) ?? true;
   const childrenStarted = useRef(false);
