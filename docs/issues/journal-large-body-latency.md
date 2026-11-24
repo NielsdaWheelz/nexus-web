@@ -29,10 +29,25 @@ recorded zero boundary body bytes, roughly 31 mb of selected text for the
 adjacent day, and 414 mb of causal state reads for its nine unchanged notes.
 most came from direct resource subscriptions requerying on every corpus change.
 evidence is `takeover-d-focused-9aff45f-023234/authored.json`.
-the two-second save target remains open.
+
+at `6ea76e995`, the exact 39-character title survived an offline firefox process
+restart. the final durable acknowledgment took 25,647 ms. causal reads fell to
+7,991 bytes after direct resource invalidation was scoped by ref. the adjacent
+day still returned 66,239,936 bytes of legitimately selected prose across 64
+replies during the edit. evidence is `takeover-timing-6ea76e9-031736/authored.json`.
+`65517d936` removed the unrelated outline and index reads. the same replay
+recovered the exact durable title again and took 2,786 ms. it still queued 156
+unaffected work queries. evidence is `takeover-timing-65517d9-032643/authored.json`.
+`960637d09` removed those queries and took 2,364 ms with the same exact durable
+title. the app still reapplied local title updates when they arrived in its own
+server feed. evidence is `takeover-timing-960637d-033355/authored.json`.
+`d74a3b298` made those echoes cursor-only, yielding consecutive revisions 4–42
+for command sequence 1–39. the save still took 2,861 ms in that run. it queried
+the already-held target resource and its causal state 38 times in addition to
+fetching the target outline. evidence is `takeover-timing-d74a3b2-034522/authored.json`.
+the two-second target remains open until the same replay qualifies.
 
 proposed acceptance: the same real nine-body fixture saves the entire title
 within two seconds of final input, without repeated boundary-body transfer,
-while forward joins, append, coherent
-reads, native plan decoding and day-local history still pass. this is a separate
-performance follow-up; rich-body virtualization remains outside the journal cut.
+while forward joins, append, coherent reads, native plan decoding and day-local
+history pass.

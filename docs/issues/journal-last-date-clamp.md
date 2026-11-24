@@ -7,8 +7,8 @@ was in the local index but no longer mounted. scrolling to the live maximum
 made it visible. this observation covers direct workspace entry with a short
 last day.
 
-evidence is `takeover-d-focused-9aff45f-023234/authored.json` in the private
-journal rehearsal, including the initial and clamped landing records. check
-whether the explicit chooser has the same failure. resolve by keeping the
-intended measured date visible through this initial reflow while preserving
-cancellation on new travel and the live reading line on ordinary refresh.
+the same chooser failure was reproduced at `6ea76e995`. `15e15f096` kept its
+selected heading at 303.5 css px while the predecessor grew from 320 to 7,772
+css px. the chooser receipts are `takeover-clamp-red-v2-034121/clamp-chooser.json`
+and `takeover-clamp-green-034603/clamp-chooser.json`. direct entry under the
+nine-body fixture still needs the equivalent measured result.

@@ -29,3 +29,14 @@ close old browser tabs and use the existing update admission. an installed
 wire-`25` client must stop before its first local query against the new pair.
 verify pending local writing across replacement, offline open and reconnect.
 recover with a coherent web, worker and apk pair.
+
+packaged `d046d7575` reached native ready after real sign-in, returned the
+compact outline with the exact explicitly selected body, and refused the
+published wire `25`. replacing predecessor `d77bffa5c` preserved its exact
+pending sqlite bytes, rendered the title offline and uploaded the original
+sequence after reconnect. android back dismissed the chooser with its trigger
+focused. evidence is `takeover-android-reconnect-d046d75-033111/android.json`.
+at `15e15f096` a trusted native fling kept the active editor and made no
+programmatic scroll writes. native input continued in that editor and the
+exact body committed locally. `takeover-android-15e15f0-034630/android.json`
+records both. [spoken work-only marks](journal-android-talkback.md) remain open.
