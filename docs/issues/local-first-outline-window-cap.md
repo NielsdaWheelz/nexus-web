@@ -7,7 +7,11 @@ revision and leaves a readable structural slot for a projection too large by
 itself. android still refuses a single canonical writing state larger than
 one transfer, including one with a small projection and extensive causal history.
 
-resolve the outline change with a paired apk and an oversized window with
-independently verified child order, mounted row failure, unchanged writing and
-a successful neighboring edit. a fixture with many title reads establishes
-aggregate transport and framing but does not exercise a rich outline window.
+the paired api-34 byte replay at a567f96d9 read thirty-two durable rich
+siblings in two native answers of 16,239,066 and 3,004,466 encoded bytes.
+the order matched postgres and the separate writing admission retained the
+same revision. it exercised the transport with every individual row fitting.
+
+resolve the remaining individual limit with a paired apk that opens an
+oversized row alongside ordinary editable neighbors. verify the visible
+failure at the row, unchanged writing, and a successful neighboring edit.

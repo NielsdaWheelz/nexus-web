@@ -3,7 +3,10 @@
 a paired api-34 emulator at f7cb7f11f signed in, provisioned the authored
 store, reopened notes offline, read 96 long titles totaling over 16 mib through
 the real 24 kib frame protocol, and recorded trusted scrolling after touchend
-on the installed notes pane. the headless stock firefox drag separately
+on the installed notes pane. the proof replay at a567f96d9 counted 17,304,758
+title bytes and 768 native frames. movement continued from 86.86 to 969.52
+css pixels after touchend while the port remained 7,147 pixels high. the
+headless stock firefox drag separately
 preserved its landing line after a prepend.
 
 physical touch and assistive-input boundaries remain unrun. the emulator check
