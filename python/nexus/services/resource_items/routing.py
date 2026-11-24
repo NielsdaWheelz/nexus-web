@@ -161,12 +161,12 @@ def resource_activations_for_refs(
         refs=visible,
         reading_media_ids=reading_media_ids,
     )
-    return _activations_from_resolved_passages(
+    return activations_from_resolved_passages(
         db, viewer_id=viewer_id, refs=refs, missing_ref_uris=missing_ref_uris, scoped=scoped
     )
 
 
-def _activations_from_resolved_passages(
+def activations_from_resolved_passages(
     db: Session,
     *,
     viewer_id: UUID,

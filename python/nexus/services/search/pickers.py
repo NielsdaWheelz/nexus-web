@@ -207,6 +207,7 @@ def _targets(
             if exact is not None and (
                 item is None
                 or not isinstance(item.preview.body, PassageResourceBodyOut)
+                or item.preview.body.link_revision is None
                 or item.preview.body.link_revision
                 != passage_link_revision(
                     quote[0], quote[1], captured.target.locator.model_dump(mode="json")

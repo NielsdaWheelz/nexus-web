@@ -31,13 +31,14 @@ type ReadableNode = {
   position?: { start: { offset?: number }; end: { offset?: number } };
 };
 
-export function markdownReadingText(node: ReadableNode): string {
-  if (node.type === "html" || node.type.endsWith("Definition") || node.type === "definition") return "";
+export function markdownReadingText(node: ReadableNode, includeLiteralHtml = false): string {
+  if (node.type.endsWith("Definition") || node.type === "definition") return "";
+  if (node.type === "html" && !includeLiteralHtml) return "";
   if (node.type === "image" || node.type === "imageReference") return node.alt ?? "";
   if (node.type === "code") return `${node.value ?? ""} `;
   if (node.value !== undefined) return node.value;
   if (node.type === "break" || node.type === "thematicBreak") return " ";
-  const text = (node.children ?? []).map(markdownReadingText).join("");
+  const text = (node.children ?? []).map(child => markdownReadingText(child, includeLiteralHtml)).join("");
   return /^(paragraph|heading|blockquote|listItem|code|tableCell|tableRow)$/.test(node.type) ? `${text} ` : text;
 }
 
@@ -57,7 +58,8 @@ export function citedPassages(markdown: string): CitationPassages {
       const key = `${start}:${end}`;
       let block = blocks.get(key);
       if (!block) {
-        block = { start, end, text: markdownReadingText(owner).trim(), markers: [] };
+        // ReactMarkdown displays raw HTML tokens as literal text in the answer.
+        block = { start, end, text: markdownReadingText(owner, true).trim(), markers: [] };
         blocks.set(key, block);
       }
       block.markers.push(marker.start);

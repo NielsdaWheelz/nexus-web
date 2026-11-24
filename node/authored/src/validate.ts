@@ -57,7 +57,7 @@ function range(start: number, end: number): void {
 function literal(value: string | null): void {
   if (value !== null && typeof value !== "string") throw new TypeError("Expected literal text or null");
 }
-function validateLocatorCapture(locator: Locator, source_ref: string): void {
+export function validatePassageLocator(locator: Locator, source_ref: string): void {
   if (!locator || typeof locator !== "object") throw new TypeError("Expected typed locator");
   if (!isResourceRef(source_ref)) throw new TypeError("Invalid locator source");
   if ("media_id" in locator) {
@@ -113,10 +113,6 @@ function validateLocatorCapture(locator: Locator, source_ref: string): void {
     literal(locator.text_quote_selector.prefix); literal(locator.text_quote_selector.suffix);
   }
 }
-export function validateLocator(locator: Locator, source_ref: string): void {
-  validateLocatorCapture(locator, source_ref);
-  if ("media_id" in locator && source_ref !== `media:${locator.media_id}`) throw new TypeError("Locator media disagrees with immutable source");
-}
 function selection(value: SelectionCapture, source_ref: string): void {
   if (value.locator.type === "x_capture_offsets") {
     if (value.publication !== null && (value.publication.kind !== "x_capture" || value.publication.capture_id !== value.locator.capture_id)) throw new TypeError("Capture publication disagrees with locator");
@@ -133,7 +129,8 @@ function selection(value: SelectionCapture, source_ref: string): void {
   }
   validateExcerpt(value.excerpt);
   publication(value.publication);
-  validateLocator(value.locator, source_ref);
+  validatePassageLocator(value.locator, source_ref);
+  if ("media_id" in value.locator && source_ref !== `media:${value.locator.media_id}`) throw new TypeError("Locator media disagrees with immutable source");
   if (typeof value.quote_exact !== "string") throw new TypeError("Expected literal quote");
   literal(value.prefix); literal(value.suffix);
   if (value.passage_ref !== null && (!isResourceRef(value.passage_ref) || !value.passage_ref.startsWith("passage_anchor:"))) throw new TypeError("Invalid selection passage");
@@ -172,7 +169,7 @@ export function validateChange(change: Change): void {
     if (passage.capture.value.publication?.kind === "x_capture" && passage.capture.value.locator?.type !== "x_capture_offsets") throw new TypeError("Capture publication requires a capture locator");
     // A media passage keys its reading slice; placement must prove that slice's relation to the locator's physical source.
     if (passage.capture.value.locator !== null) {
-      validateLocatorCapture(passage.capture.value.locator, passage.source_ref);
+      validatePassageLocator(passage.capture.value.locator, passage.source_ref);
       const locator = passage.capture.value.locator;
       if (locator.type === "x_capture_offsets" && (passage.capture.value.publication?.kind !== "x_capture" || passage.capture.value.publication.capture_id !== locator.capture_id)) throw new TypeError("Capture publication disagrees with locator");
     }

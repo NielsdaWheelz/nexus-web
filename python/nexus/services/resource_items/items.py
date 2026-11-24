@@ -80,7 +80,7 @@ from nexus.services.resource_items.locations import (
     media_passages,
 )
 from nexus.services.resource_items.routing import (
-    _activations_from_resolved_passages,
+    activations_from_resolved_passages,
 )
 
 _VISIBLE = f"({requested_media_ids_cte_sql()})"
@@ -165,8 +165,14 @@ def _trim_excerpt(clipped: str, *, tail: bool) -> str:
     return clipped
 
 
-def passage_link_revision(owner: ResourceRef, quote: LocationQuote, locator: dict[str, Any]) -> str:
+def passage_link_revision(
+    owner: ResourceRef, quote: LocationQuote, locator: dict[str, Any] | None
+) -> str | None:
     """Seal full link evidence even when the visible excerpt is truncated."""
+    canonical = canonical_source_quote(quote, locator) if locator is not None else None
+    if canonical is None:
+        return None
+    quote, locator = canonical
     proof = [
         owner.uri,
         quote.exact,
@@ -243,7 +249,7 @@ def resource_items_out(
         if ref.scheme == "media" and ref.id not in summaries:
             rows.pop(ref.uri, None)
     missing = {ref.uri for ref in refs if ref.uri not in rows}
-    activations = _activations_from_resolved_passages(
+    activations = activations_from_resolved_passages(
         db, viewer_id=viewer_id, refs=refs, missing_ref_uris=missing, scoped=passages
     )
     owner_refs = [
@@ -260,7 +266,7 @@ def resource_items_out(
     )
     named_refs = [ref for ref in refs if ref.scheme == "podcast" and ref.uri not in missing]
     credits = _credits(db, [*named_refs, *(ref for ref in owner_refs if ref.uri in source_rows)])
-    source_activations = _activations_from_resolved_passages(
+    source_activations = activations_from_resolved_passages(
         db,
         viewer_id=viewer_id,
         refs=owner_refs,
@@ -436,7 +442,7 @@ def source_attributions(
     """Known current source metadata, only after the same viewer gate as resource rows."""
     rows, passages = _rows(db, viewer_id, refs)
     credits = _credits(db, [r for r in refs if r.uri in rows])
-    activations = _activations_from_resolved_passages(
+    activations = activations_from_resolved_passages(
         db,
         viewer_id=viewer_id,
         refs=refs,
@@ -666,14 +672,8 @@ def _rows(
         # The compact preview can omit the changed words. Bind the actual scoped
         # owner, quote and locator that this displayed occurrence can materialize.
         proof = passage or current.get(ref.uri)
-        if (
-            proof is not None
-            and proof.locator is not None
-            and capability(ref.scheme).link_mode == "materialize_passage"
-        ):
-            canonical = canonical_source_quote(proof.quote, proof.locator)
-            if canonical is not None:
-                row["link_revision"] = passage_link_revision(proof.owner, *canonical)
+        if proof is not None and capability(ref.scheme).link_mode == "materialize_passage":
+            row["link_revision"] = passage_link_revision(proof.owner, proof.quote, proof.locator)
         if passage is not None:
             supplied = (reading_media_ids or {}).get(ref.uri)
             row["reading_ref"] = (

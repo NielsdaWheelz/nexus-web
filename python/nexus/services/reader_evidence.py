@@ -67,10 +67,12 @@ from nexus.services.resource_items.evidence import resolve_source_target
 from nexus.services.resource_items.items import (
     excerpt,
     passage_label,
+    passage_link_revision,
     resource_items_out,
     source_attributions,
 )
-from nexus.services.resource_items.routing import resource_activations_for_refs
+from nexus.services.resource_items.locations import media_passages
+from nexus.services.resource_items.routing import activations_from_resolved_passages
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,13 +198,20 @@ def build_reader_evidence(
     if apparatus.status in ("ready", "partial") and apparatus.items:
         owner = ResourceRef("media", media_id)
         apparatus_source = source_attributions(db, viewer_id=viewer_id, refs=[owner]).get(owner.uri)
-        activations = resource_activations_for_refs(
+        refs = [ResourceRef("reader_apparatus_item", item.id) for item in apparatus.items]
+        passages = media_passages(
             db,
             viewer_id=viewer_id,
-            refs=[ResourceRef("reader_apparatus_item", item.id) for item in apparatus.items],
-            reading_media_ids={
-                f"reader_apparatus_item:{item.id}": media_id for item in apparatus.items
-            },
+            refs=refs,
+            reading_media_ids={ref.uri: media_id for ref in refs},
+            include_excerpts=False,
+        )
+        activations = activations_from_resolved_passages(
+            db,
+            viewer_id=viewer_id,
+            refs=refs,
+            missing_ref_uris=frozenset(),
+            scoped=passages,
         )
         for item in apparatus.items:
             resolution = apparatus_resolution(
@@ -213,6 +222,7 @@ def build_reader_evidence(
             )
             marker_anchor_id = item.source_ref.get("marker_id")
             selection = excerpt((item.body_text or "")[:601])
+            passage = passages.get(item.resource_ref)
             roots[item.resource_ref] = ReaderEvidenceRootOut(
                 ref=item.resource_ref,
                 content=ReaderEvidenceSourceReferenceOut(
@@ -225,6 +235,11 @@ def build_reader_evidence(
                     stable_key=item.stable_key,
                     apparatus_kind=item.kind,
                     confidence=item.confidence,
+                    link_revision=passage_link_revision(
+                        passage.owner, passage.quote, passage.locator
+                    )
+                    if passage is not None
+                    else None,
                     marker_anchor_id=marker_anchor_id
                     if isinstance(marker_anchor_id, str) and marker_anchor_id.strip()
                     else None,

@@ -152,7 +152,8 @@ export function useLibrarianReferences(input: {
       if (demanded.current && demanded.current.scrollTop !== port.scrollTop) demanded.current = null;
       const anchors = values.current.flatMap<MarginMeasurement["anchors"][number]>(occurrence => {
         const message = transcript.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(occurrence.message.id)}"]`);
-        const target = "target" in occurrence.value ? message?.querySelector<HTMLElement>(`[data-citation-id="${CSS.escape(occurrence.value.id)}"]`)
+        const marker = invokedUse?.key === occurrence.key ? `[data-citation-marker-start="${invokedUse.marker}"]` : "";
+        const target = "target" in occurrence.value ? message?.querySelector<HTMLElement>(`[data-citation-id="${CSS.escape(occurrence.value.id)}"]${marker}`)
           : message?.querySelector<HTMLElement>("[data-message-content]");
         if (!target) {
           if (message && "target" in occurrence.value) throw new Error("published citation has no rendered marker");
@@ -165,7 +166,7 @@ export function useLibrarianReferences(input: {
       });
       return { sourceIdentity: current.current.scope, positionKey: String(port.scrollTop), viewport: { top: viewport.top, bottom: viewport.bottom }, anchors };
     },
-  }), [input.scroll]);
+  }), [input.scroll, invokedUse]);
   const reveal = (messageId: string, trigger: HTMLElement, keyboard: boolean) => {
     const occurrence = occurrences.find(value => value.message.id === messageId);
     if (!occurrence) return;

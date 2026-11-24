@@ -4,7 +4,7 @@
 // freezes identity and placement; only the queue head seals its causal version.
 import { useEffect, useId, useRef } from "react";
 import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
-import { captureLocator } from "@nexus/authored/capture";
+import { capturePassageLocator } from "@nexus/authored/capture";
 import type { NoteBody } from "@nexus/authored/body";
 import type { TextEditBase } from "@/lib/notes/editorTypes";
 
@@ -47,7 +47,7 @@ type State = {
 export function pickedTarget(target: LinkTargetResult): LinkTarget {
   if (target.kind === "resource") return {kind: "resource", ref: target.item.ref};
   return {kind: "passage", candidate_ref: target.candidate_ref, passage_target: target.target,
-    capture: {...target.capture, locator: target.capture.locator === null ? null : captureLocator(target.capture.locator, target.target.owner_ref)}};
+    capture: {...target.capture, locator: target.capture.locator === null ? null : capturePassageLocator(target.capture.locator, target.target.owner_ref)}};
 }
 export function useReferenceQuery(input: {
   raw: string; source: string | null; excludeRef?: string; remoteSource?: string | null; label: string; enabled: boolean; open: boolean;

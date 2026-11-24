@@ -11367,6 +11367,8 @@ export interface components {
             kind: "SourceReference";
             /** Label */
             label: string;
+            /** Link Revision */
+            link_revision: string | null;
             /** Location Label */
             location_label: string | null;
             /** Marker Anchor Id */

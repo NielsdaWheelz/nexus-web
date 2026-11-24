@@ -116,6 +116,8 @@ export default function EvidenceRow({ entry, actions, active, presence, placed, 
   const content = root.content;
   const disclosureKey = sourceTextKey(entry);
   return <ResourceOutlineRow incoming={null} item={rootItem(root)} occurrenceKey={occurrenceKey} rowRef={attachRow} rootProps={rootProps} inSource={placed && content.kind === "Highlight"}
+    linkSource={content.kind === "SourceReference" ? {ref: root.ref, label: content.label,
+      passage: {revision: content.link_revision, readingMediaId: root.source.media_id}} : undefined}
     historical={root.direct_facts.some(fact => factFacet(fact) === "citations")}
     omitResourceActions={!actions.sourceContext && content.kind === "Highlight" ? ["Share"] : undefined}
     sourceContent={content.kind === "SourceReference" && disclosureKey !== null ? <SourceNote disclosureKey={disclosureKey} open={sourceText.has(disclosureKey)} onOpenChange={onSourceTextChange} occurrenceKey={occurrenceKey} reference={content} mediaId={root.source.media_id} identity={root.source.identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}

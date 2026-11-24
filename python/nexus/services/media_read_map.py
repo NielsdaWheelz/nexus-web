@@ -386,6 +386,10 @@ def read_page_range(
     start, end = int(bounds[0]), int(bounds[1])
     if end - start > READ_DOCUMENT_MAX_CHARS:
         raise DocumentTooLarge(str(media_id))
+    return _pdf_words(db, media_id, start, end)
+
+
+def _pdf_words(db: Session, media_id: UUID, start: int, end: int) -> str | None:
     return db.scalar(
         text("SELECT substring(plain_text FROM :start+1 FOR :size) FROM media WHERE id=:id"),
         {"id": media_id, "start": start, "size": end - start},
@@ -574,16 +578,18 @@ def ask_page_context(
         locator=PdfPageLocator(media_id=media_id, page_number=captured_page),
     )
     quote = LocationQuote(exact=exact, prefix=None, suffix=None, color=None)
-    located = current_locator(target, quote, location_reads(db, viewer_id, [target]))
+    reads = location_reads(db, viewer_id, [target])
+    located = current_locator(target, quote, reads)
     if located is None:
         return [("location", f"captured page {captured_page}")]
     page = located["page_number"]
     result = [("location", f"page {page} · page_range:{media_id}:{page}-{page}")]
-    try:
-        words = read_page_range(db, viewer_id, media_id, page, page)
-    except DocumentTooLarge:
-        # justify-ignore-error: a proved page reference is enough when its text exceeds the read limit.
+    span = next((span for span in reads.pages if span["page_number"] == page), None)
+    readable = _readable(db, viewer_id, media_id)
+    if span is None or readable is None or readable.kind != "pdf":
         return result
+    # Uniqueness requires the whole proved page. Only bounded slices enter the prompt.
+    words = _pdf_words(db, media_id, span["start_offset"], span["end_offset"])
     if not words:
         return result
     normalized = text_quote.normalize_for_match(exact).text.strip()

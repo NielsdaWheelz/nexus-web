@@ -1,8 +1,8 @@
 /** Capture the existing typed locator vocabulary with explicit nullable fields.
  * Literal quote selector extensions are retained; normalization belongs to identity. */
-import { validateLocator } from "./validate.ts";
+import { validatePassageLocator } from "./validate.ts";
 import type { Locator } from "./types.ts";
-export function captureLocator(value: unknown, source_ref: string): Locator {
+export function capturePassageLocator(value: unknown, source_ref: string): Locator {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Expected locator object");
   const raw = Object.fromEntries(Object.entries(value));
   const candidate = raw.text_quote_selector;
@@ -33,6 +33,6 @@ export function captureLocator(value: unknown, source_ref: string): Locator {
   })();
   // justify-type-assertion: the closed construction above and shared runtime
   // validator establish the locator fields and their source agreement.
-  validateLocator(locator as Locator, source_ref);
+  validatePassageLocator(locator as Locator, source_ref);
   return locator as Locator;
 }

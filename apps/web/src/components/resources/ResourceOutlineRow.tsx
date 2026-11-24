@@ -87,6 +87,7 @@ type Shared = {
   authoredByViewer?: boolean;
   historical?: boolean;
   readingRef?: string | null;
+  linkSource?: ItemLinkSource | null;
   /** Local note editing; terminal and historical occurrences never edit. */
   editable?: boolean;
   /** The owning flat editor settles or refuses removal of its disclosed fields. */
@@ -412,7 +413,9 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
 
         </div>
         <div className={styles.actions}><ContextualActionMenu omitResourceActions={props.omitResourceActions}
-          linkSource={item ? itemLinkSource(item, props.readingRef) : presentation.localLinkSource ?? null}
+          linkSource={props.linkSource === undefined
+            ? item ? itemLinkSource(item, props.readingRef) : presentation.localLinkSource ?? null
+            : props.linkSource}
           title={label} subjectKey={occurrenceKey} resourceRef={assumeCanonicalResourceRef(item?.action_ref ?? ref)}
           navigation={item === null ? null : {
             key: `${occurrenceKey}:${JSON.stringify(item.activation)}`,

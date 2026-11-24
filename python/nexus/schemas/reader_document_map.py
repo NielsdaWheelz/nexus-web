@@ -144,6 +144,7 @@ class ReaderEvidenceSourceReferenceOut(_ReaderMapOut):
     apparatus_kind: ReaderApparatusItemKind
     confidence: ReaderApparatusConfidence
     marker_anchor_id: str | None
+    link_revision: str | None
 
 
 class ReaderEvidenceResourceOut(_ReaderMapOut):

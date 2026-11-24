@@ -114,11 +114,13 @@ places retain their existing checks. captured pdf words come from the reader.
 the first provider request carries the authorized subject and its exact words.
 bibliography, attributed annotations and source text follow from independent
 current proofs. text context stays inside one permitted reading unit, up to 512
-codepoints on each side. pdf text requires a proved page and a unique normalized
-match on it. if no exact match exists, a proved page can contribute up to 1,024
-codepoints of whole page text. otherwise the reference names the proved page or
-the captured page, as supported. retries preserve the stored scope and recheck
-execution authority. a readable highlight can outlive access to its source.
+codepoints on each side. pdf text requires a proved page. the quote proof scans
+that page independently of the read tool's presentation limit. a unique normalized
+match supplies the raw surrounding words. without a unique match, a proved page
+can contribute its whole text if it fits within 1,024 codepoints. otherwise the
+reference names the proved page or the captured page, as supported. retries
+preserve the stored scope and recheck execution authority. a readable highlight
+can outlive access to its source.
 
 a settled assistant attachment joins complete markers within its attached range
 to its own published retrievals. reader citations join native occurrences within
@@ -309,13 +311,14 @@ the reason and offer remove quote; transport failures also offer retry.
 fresh visits start closed; publication never opens it. the first column view is
 margin, subsequent views retain the explicit margin/all choice. covering hosts
 show chronological message groups. user figures appear inline except beside an
-open column. citations anchor to their first rendered marker, attachments to their
-message content onset. occurrences use message+attachment index or
-message+retrieval uuid. repeated markers share one figure. `cited in` renders each
-distinct containing paragraph, heading, list-item paragraph or table cell in
-full, with the invoking use first. `show message` returns to that marker. a proved
-source backlink opens the same figure in document order. ordinary links create
-no figure. `references · n` reveals the message group. search withdraws this publication.
+open column. citations anchor to their invoked marker or their first use by
+default. attachments anchor to their message content onset. occurrences use
+message+attachment index or message+retrieval uuid. repeated markers share one
+figure. `cited in` renders each distinct containing paragraph, heading, list-item
+paragraph or table cell in full, with the invoking use first. `show message`
+returns to that marker. a proved source backlink opens the same figure in
+document order. ordinary links create no figure. `references · n` reveals the
+message group. search withdraws this publication.
 
 `lib/margin` owns shared packing, measured baselines and held controls. chat owns
 membership and the source adapter; packing never changes transcript height or
