@@ -451,9 +451,9 @@ function compileCapturedIndex(at: CapturedIndexDemand["at"], {
       const live = `FROM captured_index_orders o CROSS JOIN resources r ON r.ref=o.ref
         WHERE o.token=${token} AND ${visible}${matches}`;
       return {sql: `WITH eye(rank) AS (SELECT ${eye})
-        SELECT json_object('kind','successor','ref',coalesce(
-          (SELECT o.ref ${live} AND o.rank>=(SELECT rank FROM eye) ORDER BY o.rank LIMIT 1),
-          (SELECT o.ref ${live} AND o.rank<(SELECT rank FROM eye) ORDER BY o.rank DESC LIMIT 1))) AS register`,
+        SELECT json_object('kind','successor','from_rank',(SELECT rank FROM eye),'occurrence',json(coalesce(
+          (SELECT json_object('ref',o.ref,'rank',o.rank) ${live} AND o.rank>=(SELECT rank FROM eye) ORDER BY o.rank LIMIT 1),
+          (SELECT json_object('ref',o.ref,'rank',o.rank) ${live} AND o.rank<(SELECT rank FROM eye) ORDER BY o.rank DESC LIMIT 1)))) AS register`,
         params: [...params,at.token,at.kind === "landing" ? at.rank : at.ref]};
     }
     case "release": return {sql: "DELETE FROM captured_index_orders WHERE token=?", params: [at.token]};

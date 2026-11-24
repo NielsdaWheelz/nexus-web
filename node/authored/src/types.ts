@@ -115,7 +115,7 @@ export type CapturedIndexDemand =
 export type CapturedIndexResult<Row> =
   | {kind: "retained"}
   | {kind: "held"; start: number; items: (Row | null)[]}
-  | {kind: "successor"; ref: ResourceRef | null};
+  | {kind: "successor"; from_rank: number | null; occurrence: {ref: ResourceRef; rank: number} | null};
 export type CapturedIndexSource =
   | {kind: "page_register"; text: string}
   | {kind: "habits"}

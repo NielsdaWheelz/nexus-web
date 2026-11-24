@@ -4,10 +4,10 @@ import {useLayoutEffect, useMemo, useRef} from "react";
 import type {QueryResult, WorkIndexItem, WorkRegisterResult, WorkRegisterSource} from "@nexus/authored/types";
 import {useAuthoredAccountId} from "@/lib/authored/provider";
 import type {RankedIndex} from "@/lib/collections/measuredIndexWindow";
-import {useCapturedOrder} from "@/lib/notes/capturedIndex";
+import {useCapturedOrder, type CapturedOrder} from "@/lib/notes/capturedIndex";
 import {useAuthoredQuery} from "@/lib/notes/hooks";
 import {useRankedAuthoredWindow} from "@/lib/notes/rankedAuthoredWindow";
-import {usePaneScrollMotion} from "@/lib/workspace/paneReturnMemento";
+import {usePaneScrollMotion, type ReturnOrder} from "@/lib/workspace/paneReturnMemento";
 
 const selectOrder = (result: QueryResult) => {
   const work = result.work_index;
@@ -18,6 +18,9 @@ const select = (result: QueryResult) => {
   return work?.kind === "retained" || work?.kind === "held" || work?.kind === "successor" ? null : work;
 };
 type Placement = Extract<WorkRegisterResult, {kind: "placements"}>["items"][number];
+type WorkRanks = Omit<RankedIndex, "heads" | "returnOrder"> & {
+  returnOrder?: ReturnOrder & Pick<CapturedOrder<WorkIndexItem>, "find">;
+};
 
 export function useWorkRegister(kind: WorkRegisterSource["kind"], date: string | null) {
   const account = useAuthoredAccountId();
@@ -37,7 +40,7 @@ export function useWorkRegister(kind: WorkRegisterSource["kind"], date: string |
     [description, sparse, window.items]);
   const rows = useMemo(() => new Map([...items.values()].map(row => [row.ref, row])), [items]);
   const ranks = useMemo(() => new Map([...items].map(([rank, row]) => [row.ref, rank])), [items]);
-  const ranked: Omit<RankedIndex, "heads"> | undefined = !sparse ? undefined : {
+  const ranked: WorkRanks | undefined = !sparse ? undefined : {
     count, revision: revision ?? "", failed: window.error !== null,
     idAt: rank => items.get(rank)?.ref,
     rankOf: ref => ranks.get(ref) ?? window.positions?.get(ref),
@@ -54,7 +57,7 @@ export function useWorkRegister(kind: WorkRegisterSource["kind"], date: string |
 
 /** Local dwell, undo and focused editors are the only rows that can amend the
  * register. Their positions name gaps in one canonical revision. */
-export function useWorkOrder(base: Omit<RankedIndex, "heads"> | undefined, placements: readonly Placement[] | null,
+export function useWorkOrder(base: WorkRanks | undefined, placements: readonly Placement[] | null,
   retained: ReadonlyMap<string, WorkIndexItem>, expired: ReadonlySet<string>) {
   const overlay = useMemo(() => {
     if (placements === null || placements.length === 0) return null;
@@ -81,27 +84,37 @@ export function useWorkOrder(base: Omit<RankedIndex, "heads"> | undefined, place
       }
       return {original} as const;
     }
-    return {placed, placedAt, added, removed, events, shift, slotAt};
+    function displayedAt(rank: number) {
+      return rank + events.reduce((shift, event) => shift +
+        (event.rank < rank || event.rank === rank && !event.present ? event.present ? -1 : 1 : 0), 0);
+    }
+    return {placed, placedAt, added, removed, events, shift, slotAt, displayedAt};
   }, [placements, retained, expired]);
   const order = base?.returnOrder;
   const returnOrder = useMemo(() => {
     if (order === undefined || overlay === null || overlay.events.length === 0) return order;
-    const land: typeof order.land = async (rank, revision, present) => {
-      const slot = overlay.slotAt(rank);
-      if ("added" in slot) {
-        const next = overlay.events.find(event => !event.present && event.rank === slot.original &&
-          event.displayed >= rank && present(event.ref));
-        if (next !== undefined) return next.ref;
-      }
-      return order.land(slot.original, revision, present);
+    const resolve = async (anchor: Parameters<typeof order.find>[0], revision: string, present: (id: string) => boolean) => {
+      const displayed = "rank" in anchor ? anchor.rank : anchor.ref === null ? undefined : overlay.added.get(anchor.ref);
+      const proof = await order.find(displayed === undefined ? anchor : {rank: overlay.slotAt(displayed).original}, revision);
+      if (proof === undefined) return undefined;
+      const from = displayed ?? (proof.from_rank === null ? null : overlay.displayedAt(proof.from_rank));
+      if (from === null) return null;
+      const occurrence = proof.occurrence;
+      const canonical = occurrence === null ? null : {ref: occurrence.ref, rank: overlay.displayedAt(occurrence.rank)};
+      const live = overlay.events.filter(event => !event.present && present(event.ref));
+      const next = live.find(event => event.displayed >= from);
+      if (next !== undefined && (canonical === null || canonical.rank < from || next.displayed < canonical.rank)) return next.ref;
+      if (canonical !== null && canonical.rank >= from) return canonical.ref;
+      const previous = live.findLast(event => event.displayed < from);
+      return previous !== undefined && (canonical === null || previous.displayed > canonical.rank) ? previous.ref : canonical?.ref ?? null;
     };
-    return {...order, land, successor: (id, revision, present) => {
-      const rank = id === null ? undefined : overlay.added.get(id);
-      return rank === undefined ? order.successor(id, revision, present) : land(rank, revision, present);
-    }} satisfies typeof order;
+    return {...order,
+      land: (rank, revision, present) => resolve({rank}, revision, present),
+      successor: (ref, revision, present) => resolve({ref}, revision, present),
+    } satisfies typeof order;
   }, [order, overlay]);
   if (base === undefined || overlay === null) return base;
-  const {placed, placedAt, added, removed, events, shift, slotAt} = overlay;
+  const {placed, placedAt, added, removed, events, shift, slotAt, displayedAt} = overlay;
   return {
     ...base, count: base.count + shift,
     revision: events.length === 0 ? base.revision : JSON.stringify([base.revision, events.map(({ref, present}) => [ref, present])]),
@@ -114,8 +127,7 @@ export function useWorkOrder(base: Omit<RankedIndex, "heads"> | undefined, place
       if (added.has(ref)) return added.get(ref)!;
       const rank = placed.get(ref) ?? base.rankOf(ref);
       if (rank == null) return rank;
-      return rank + events.reduce((shift, event) => shift +
-        (event.rank < rank || event.rank === rank && !event.present ? event.present ? -1 : 1 : 0), 0);
+      return displayedAt(rank);
     },
     request(ranks: readonly number[], refs: readonly string[]) {
       base.request(ranks.flatMap(rank => {

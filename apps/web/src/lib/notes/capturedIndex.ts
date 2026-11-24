@@ -6,7 +6,10 @@ import {useAuthoredQuery} from "./hooks";
 import {useAuthoredAccountId, useAuthoredStore} from "@/lib/authored/provider";
 import {usePaneScrollMotion, type ReturnOrder} from "@/lib/workspace/paneReturnMemento";
 
-type CapturedOrder<Row> = Omit<ReturnOrder, "prefix"> & {
+type OrderAnchor = {ref: string | null} | {rank: number};
+type Successor = Extract<CapturedIndexResult<never>, {kind: "successor"}>;
+export type CapturedOrder<Row> = Omit<ReturnOrder, "prefix"> & {
+  find(anchor: OrderAnchor, revision: string): Promise<Successor | undefined>;
   range(start: number, limit: number, revision: string): Promise<(Row | null)[] | null>;
 };
 
@@ -26,13 +29,20 @@ export function useCapturedOrder<Row>(source: CapturedIndexSource, revision: str
     const release = () => {
       if (--references === 0) void store.query({...detailSource, at: {kind: "release", token}, expected_revision: null}).catch(() => {});
     };
-    const successor = async (at: Extract<CapturedIndexDemand["at"], {kind: "successor" | "landing"}>,
-      expected_revision: string) => {
+    const find: CapturedOrder<Row>["find"] = async (anchor, expected_revision) => {
+      const at: Extract<CapturedIndexDemand["at"], {kind: "successor" | "landing"}> = "rank" in anchor
+        ? {kind: "landing", token, rank: anchor.rank}
+        : {kind: "successor", token, ref: anchor.ref !== null && source.kind === "page_register" ? `page:${anchor.ref}` : anchor.ref};
       const result = await store.query({...source, at, expected_revision});
       const found = select(result);
       if (found?.kind === "changed") return undefined;
       if (found?.kind !== "successor") throw new Error("missing captured index successor");
-      return found.ref !== null && source.kind === "page_register" ? found.ref.slice(5) : found.ref;
+      return found;
+    };
+    const identity = (found: Successor | undefined) => {
+      if (found === undefined) return undefined;
+      const ref = found.occurrence?.ref ?? null;
+      return ref !== null && source.kind === "page_register" ? ref.slice(5) : ref;
     };
     const order: CapturedOrder<Row> = {
       retain() {
@@ -47,8 +57,9 @@ export function useCapturedOrder<Row>(source: CapturedIndexSource, revision: str
           throw new Error("incomplete held index range");
         return range.items;
       },
-      successor: (id, revision) => successor({kind: "successor", token, ref: id !== null && source.kind === "page_register" ? `page:${id}` : id}, revision),
-      land: (rank, revision) => successor({kind: "landing", token, rank}, revision),
+      find,
+      successor: (ref, revision) => find({ref}, revision).then(identity),
+      land: (rank, revision) => find({rank}, revision).then(identity),
     };
     void store.query({...source, at: {kind: "retain", token}, expected_revision: revision}).then(result => {
       if (live && select(result)?.kind === "retained") setState({key, data: order, error: null});
