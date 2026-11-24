@@ -40,8 +40,13 @@ import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
+import PeopleIndex from "./PeopleIndex";
 import styles from "./LibraryMembers.module.css";
 
+type Member = Awaited<ReturnType<typeof libraryMembersIndex>>["items"][number];
+type Invitation = Awaited<ReturnType<typeof libraryInvitationsIndex>>["items"][number];
+const memberKey = (row: Member) => `member:${row.user_id}`;
+const invitationKey = (row: Invitation) => `invitation:${row.id}`;
 const MEMBERS = definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof libraryMembersIndex>>>>("Library.Members");
 const INVITATIONS = definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof libraryInvitationsIndex>>>>("Library.Invitations");
 
@@ -274,8 +279,8 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
 
       <div className={styles.section}>
         <h4>People</h4>
-        {memberRows.map((member) => {
-          const key = `member:${member.user_id}`;
+        <PeopleIndex rows={memberRows} id={memberKey} pinned={question?.key ?? null} label="people" scope="library:people" render={member => {
+          const key = memberKey(member);
           const name = personLabel(member);
           const ask = (q: Omit<Question, "key">) => () => setQuestion({ key, ...q });
           return (
@@ -352,15 +357,15 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
               )}
             </div>
           );
-        })}
+        }}/>
         {footer(members, "members")}
       </div>
 
       <div className={styles.section}>
         <h4>Pending invitations</h4>
         {!denied && invitations.status === "ready" && invitations.error === null && invitationRows.length === 0 ? <Fact line={{ fact: "no pending invitations." }} /> : null}
-        {invitationRows.map((invitation) => {
-          const key = `invitation:${invitation.id}`;
+        <PeopleIndex rows={invitationRows} id={invitationKey} pinned={question?.key ?? null} label="pending invitations" scope="library:invitations" render={invitation => {
+          const key = invitationKey(invitation);
           const name = personLabel({
             display_name: invitation.invitee_display_name,
             email: invitation.invitee_email,
@@ -396,7 +401,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
               )}
             </div>
           );
-        })}
+        }}/>
         {footer(invitations, "pending invitations")}
       </div>
       <p className={styles.note}>

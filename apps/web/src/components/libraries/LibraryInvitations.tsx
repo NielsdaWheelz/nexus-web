@@ -22,8 +22,10 @@ import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
+import PeopleIndex from "./PeopleIndex";
 import styles from "./LibraryInvitations.module.css";
 
+const recipientKey = (row: ViewerInvitation) => row.id;
 const VISIT = definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof viewerInvitationsIndex>>>>("Libraries.Invitations");
 type Answer = { readonly invitation: ViewerInvitation; readonly accept: boolean };
 type Pending = { readonly command: Answer; readonly running: boolean; readonly unknown: number };
@@ -102,8 +104,7 @@ export default function LibraryInvitations({ state }: { state: ReturnType<typeof
         <h2 id={headingId}>invitations · {rows.length}</h2>
         <p>accepting adds the library here.</p>
       </div>
-      <div className={styles.rows}>
-        {rows.map((invitation) => (
+      <PeopleIndex rows={rows} id={recipientKey} pinned={declining ?? busy} label="invitations" scope="libraries:invitations" render={invitation => (
           <div className={styles.row} key={invitation.id}>
             <span>
               {invitation.library_name} · {invitation.role === "admin" ? "admin" : "member"} · from{" "}
@@ -154,8 +155,7 @@ export default function LibraryInvitations({ state }: { state: ReturnType<typeof
               )}
             </span>
           </div>
-        ))}
-      </div>
+      )}/>
     </section> : null}
     {list.status !== "loading" && list.error !== null ? <Failed error={list.error} noun="invitations"
       retry={{ run: list.refetch, busy: list.status === "ready" ? list.refreshing : list.retrying }} /> : null}
