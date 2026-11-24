@@ -1,20 +1,19 @@
-// The spine: a query's block and passage tail, what is armed and when, and what enter fires. Pure; the
-// controller supplies `now`. Ranking is rank.ts's and rows are rows.ts's.
-import type { FireTarget, NexusList, NexusRow } from "./model";
-import { ARM_WINDOW_MS, DO_CAP, PASSAGE_CAP, PERCEIVED_MS, PLACE_CAP, RESULT_CAP } from "./policy";
+// Stable row admission and selection within a query. The controller owns submission.
+import type { NexusList, NexusRow, NexusSelection } from "./model";
+import { ARM_WINDOW_MS, DO_CAP, PASSAGE_CAP, PLACE_CAP, RESULT_CAP } from "./policy";
 import { rowPrimaryText } from "./rowText";
-import { compareRank, nameTier } from "./rank";
+import { compareRank, compareTiers, nameTier } from "./rank";
 
-const TIERS = ["ExplicitIntent", "Latched", "Exact", "PrefixOrToken", "Abbreviation", "Substring", "Lexical", "Semantic"] as const;
+export const EMPTY: NexusList = { identity: "", rows: [], first: null, held: [], selection: { kind: "None" }, paintedAt: 0 };
 
-export const EMPTY: NexusList = { identity: "", rows: [], first: null, held: [], armed: null, armedAt: 0, deliberate: false, previous: null, paintedAt: 0 };
+export function selectedKey(selection: NexusSelection): string | null {
+  return "key" in selection ? selection.key : null;
+}
 
 /**
- * Law 1 at the keystroke: every previous row that still matches `identity` by name, or is the latched
- * row, is held at its tier for the new text; held and the synchronous candidates are ranked once, the
- * latched row first; the best row is armed with latency and the old armed row is remembered while it
- * is still shown. A held row is what the user sees: a synchronous candidate for the same key lends it
- * only its stream, frecency and recency.
+ * Retain rows that match the new text by name or latch, then rank once with synchronous
+ * candidates. The first row becomes the automatic choice. A synchronous candidate for
+ * a held key supplies its stream, frecency and recency.
  */
 export function keystroke(previous: NexusList, identity: string, sync: readonly NexusRow[], latchedKey: string | null, now: number): NexusList {
   // Blank context is not a query band: its pane keys have different typed ownership.
@@ -30,10 +29,10 @@ export function keystroke(previous: NexusList, identity: string, sync: readonly 
     byKey.set(row.key, shown ? { ...shown, rank: { ...row.rank, tier: shown.rank.tier }, frecency: row.frecency, recency: row.recency } : row);
   }
   const rows = arrange([...byKey.values()]);
-  const armed = rows[0]?.key ?? null;
+  const first = rows[0]?.key ?? null;
   return {
-    identity, rows, first: armed, held: rows.map(row => row.key), armed, armedAt: now, deliberate: false,
-    previous: previous.armed !== null && rows.some(row => row.key === previous.armed) ? previous.armed : null,
+    identity, rows, first, held: rows.map(row => row.key),
+    selection: first === null ? { kind: "None" } : { kind: "Automatic", key: first },
     paintedAt: now,
   };
 }
@@ -49,9 +48,10 @@ function arrange(rows: readonly NexusRow[]): NexusRow[] {
   return [first, ...band("Do", DO_CAP), ...band("Place", PLACE_CAP), ...rest.filter(row => row.class === "Resource")].slice(0, RESULT_CAP);
 }
 
-/** Shown rows stay put. A latch at capacity replaces the last unarmed resource;
- * passages have their own capacity. Only a named arrival may take the arm. */
+/** Shown rows stay put. A latch at capacity can replace an unselected resource.
+ * Passages have their own cap. Only a named arrival may change an automatic choice. */
 export function arrive(list: NexusList, rows: readonly NexusRow[], now: number): NexusList {
+  const chosen = selectedKey(list.selection);
   const updates = new Map(rows.map(row => [row.key, row] as const));
   const shown = list.rows.map(row => updates.get(row.key) ?? row);
   const present = new Set(list.rows.map(row => row.key));
@@ -63,46 +63,34 @@ export function arrive(list: NexusList, rows: readonly NexusRow[], now: number):
   for (const row of fresh.filter(row => row.class !== "Passage").sort(compareRank)) {
     if (block.length < cap) { block.push(row); admitted.push(row); continue; }
     if (row.rank.tier !== "Latched") continue;
-    const at = block.findLastIndex(old => old.class === "Resource" && old.key !== list.armed);
+    const at = block.findLastIndex(old => old.class === "Resource" && old.key !== chosen);
     if (at >= 0) { block[at] = row; admitted.push(row); }
   }
   const next = [...block, ...[...tail, ...fresh.filter(row => row.class === "Passage")].slice(0, PASSAGE_CAP)];
   const surviving = new Set(next.map(row => row.key));
-  const current = { ...list, rows: next, held: list.held.filter(key => surviving.has(key)),
-    previous: list.previous !== null && surviving.has(list.previous) ? list.previous : null };
-  const named = admitted.filter(row => surviving.has(row.key) && row.rank.tier !== "Lexical" && row.rank.tier !== "Semantic");
-  if (list.deliberate || now - list.paintedAt >= ARM_WINDOW_MS || named.length === 0) return current;
-  const armed = next.find(row => row.key === list.armed);
-  const best = named[0]!;
-  if (armed && TIERS.indexOf(best.rank.tier) >= TIERS.indexOf(armed.rank.tier)) return current;
-  return { ...current, armed: best.key, armedAt: now, previous: armed ? armed.key : null };
+  const current = { ...list, rows: next, held: list.held.filter(key => surviving.has(key)) };
+  if (list.identity === "" || list.selection.kind === "Deliberate" || list.selection.kind === "Withdrawn" ||
+    now - list.paintedAt >= ARM_WINDOW_MS) return current;
+  const best = admitted.find(row => surviving.has(row.key) && row.rank.tier !== "Lexical" && row.rank.tier !== "Semantic");
+  if (!best) return current;
+  const selected = next.find(row => row.key === chosen);
+  if (selected && compareTiers(best.rank.tier, selected.rank.tier) >= 0) return current;
+  return { ...current, selection: { kind: "Automatic", key: best.key } };
 }
 
-/** Drops rows; a dropped armed row arms nothing, a dropped previous is forgotten. */
+/** Confirmed loss of the chosen row clears it without choosing a replacement. */
 export function remove(list: NexusList, keys: ReadonlySet<string>): NexusList {
   if (list.rows.every(row => !keys.has(row.key))) return list;
-  const rows = list.rows.filter(row => !keys.has(row.key));
+  const chosen = selectedKey(list.selection);
   return {
-    ...list, rows, held: list.held.filter(key => !keys.has(key)),
+    ...list, rows: list.rows.filter(row => !keys.has(row.key)), held: list.held.filter(key => !keys.has(key)),
     first: list.first !== null && keys.has(list.first) ? null : list.first,
-    armed: list.armed !== null && keys.has(list.armed) ? null : list.armed,
-    previous: list.previous !== null && keys.has(list.previous) ? null : list.previous,
+    selection: chosen !== null && keys.has(chosen) ? { kind: "Withdrawn" } : list.selection,
   };
 }
 
-/** Deliberate arming (law 3): fixes the armed row and forgets the previous one. */
-export function select(list: NexusList, key: string, now: number): NexusList {
-  return { ...list, armed: key, armedAt: now, deliberate: true, previous: null };
-}
-
-/**
- * Law 2 for enter: the armed row when deliberate or seen for PERCEIVED_MS; else the remembered previous
- * row; else wait until the later of the two windows while something may still arm; else nothing.
- */
-export function fireTarget(list: NexusList, now: number): FireTarget {
-  if (list.armed !== null && (list.deliberate || now - list.armedAt >= PERCEIVED_MS)) return { kind: "Fire", key: list.armed };
-  if (list.previous !== null) return { kind: "Fire", key: list.previous };
-  const until = Math.max(list.armedAt + PERCEIVED_MS, list.paintedAt + ARM_WINDOW_MS);
-  if (list.armed !== null || now < list.paintedAt + ARM_WINDOW_MS) return { kind: "Wait", until };
-  return { kind: "None" };
+/** The caller has admitted the displayed choice, including continuations outside the bands. */
+export function select(list: NexusList, key: string): NexusList {
+  if (list.selection.kind === "Deliberate" && list.selection.key === key) return list;
+  return { ...list, selection: { kind: "Deliberate", key } };
 }

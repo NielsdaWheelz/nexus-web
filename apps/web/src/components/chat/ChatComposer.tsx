@@ -9,8 +9,8 @@ import type { ServerValue } from "@/lib/api/serverState";
 import { useChatDraft, type Draft } from "@/lib/chat/drafts";
 import { pendingReason, refusalOf, type CommandState, type LibrarianCommands } from "@/lib/chat/commands";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
-import { unavailability, type SelectionEditor } from "@/lib/chat/selection";
-import type { Catalog } from "@/lib/chat/wire";
+import type { ResolvedSelection } from "@/lib/chat/selection";
+import type { Catalog, Selection } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { requirePaneRuntime, usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -23,8 +23,8 @@ import styles from "./ChatComposer.module.css";
 
 /** Admission, not generation, gates send. Later questions remain editable and
  * append to the same server queue while the librarian is answering. */
-export default function ChatComposer({ catalog: catalogRead, command, owner, focusKey, autoSend, selection, reason, recall }: {
-  selection: SelectionEditor; reason: string | null;
+export default function ChatComposer({ catalog: catalogRead, command, owner, focusKey, autoSend, choice, refused, currentSelection, recall }: {
+  choice: ResolvedSelection; refused(value: Selection): boolean; currentSelection(): Selection | null;
   recall: string | null;
   catalog: ServerValue<Catalog>; command: CommandState; owner: LibrarianCommands; focusKey: string | null; autoSend: { id: string; draft: Draft } | null;
 }) {
@@ -34,38 +34,46 @@ export default function ChatComposer({ catalog: catalogRead, command, owner, foc
   const { platform } = useRenderEnvironment();
   const { draft, setText, setSelection, setQuote, getCaret, setCaret, entry, refusal, refuse } = useChatDraft(runtime.paneId);
   const memory = useChatSelection();
-  const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
+  const { value: selection, reason } = choice;
+  const recallError = memory.read.status === "loading" ? null : memory.read.error;
+  const recallPending = memory.read.status === "loading" || (memory.read.status === "failed" ? memory.read.retrying : memory.read.refreshing);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const mobile = useIsMobileViewport();
   useEffect(() => { if (active && focusKey) textarea.current?.focus({ preventScroll: true }); }, [active, focusKey]);
   useEffect(() => { const caret = getCaret(); if (caret) textarea.current?.setSelectionRange(caret.start, caret.end, caret.direction); }, [getCaret]);
-  const canSend = command.kind === "Idle" && catalog !== null && selection.kind === "Selected" && reason === null && draft.text.trim().length > 0;
+  const canSend = command.kind === "Idle" && catalogRead.status === "ready" && selection.kind === "Selected" && reason === null && draft.text.trim().length > 0;
   const submit = () => {
-    if (!canSend || catalog === null || entry.getSnapshot().draft !== draft) return false;
-    // Entry can invalidate recall after this render. Check its fence at dispatch.
-    const selected = draft.selection.kind === "Uninitialized" ? memory.fresh(catalog) : draft.selection;
-    if (selected?.kind !== "Selected" || unavailability(catalog, selected) !== null) return false;
+    if (!canSend || !owner.canExecute()) return false;
+    const selected = currentSelection();
+    if (!selected) return false;
     const submitted = draft;
     refuse(null);
     void owner.execute({ kind: "Send", runId: createRandomId(), viewId: runtime.paneId,
-      request: { content: submitted.text, selection: selected.selection, attachments: submitted.quote ? [submitted.quote.attachment] : [] } }, receipt => {
+      request: { content: submitted.text, selection: selected, attachments: submitted.quote ? [submitted.quote.attachment] : [] } }, receipt => {
       const visit = workspace().state.panes.find(pane => pane.id === runtime.paneId)?.current_visit;
       const currentVisit = visit?.id === runtime.visitId && new URL(visit.href, "https://nexus.invalid").pathname === "/librarian";
-      entry.accept(receipt, submitted, currentVisit, runtime.visitId); memory.enter();
+      entry.accept(receipt, submitted, currentVisit, runtime.visitId);
     }).then(outcome => { if (outcome.kind === "Failed") refuse(refusalOf(outcome)); }).catch(error => owner.reportDefect(error));
     return true;
   };
   const sentEntry = useRef<string | null>(null);
   useEffect(() => {
     if (!autoSend || sentEntry.current === autoSend.id) return;
-    if (entry.getSnapshot().draft !== autoSend.draft) { sentEntry.current = autoSend.id; return; }
+    if (reason !== null || catalogRead.status === "failed" || catalogRead.status === "ready" && catalogRead.error
+      || selection.kind === "Uninitialized" && recallError || entry.getSnapshot().draft !== autoSend.draft) { sentEntry.current = autoSend.id; return; }
     if (submit()) sentEntry.current = autoSend.id;
   });
   return <div className={styles.composer}>
     <div className={styles.rule} aria-hidden="true" />
     {draft.quote ? <DraftReferenceFigure quote={draft.quote} onRemove={() => { setQuote(null); textarea.current?.focus({ preventScroll: true }); }} /> : null}
     <Textarea bare autoGrow={{ minRows: 1, maxRows: 8 }} ref={textarea} className={styles.input} value={draft.text} aria-label="ask the librarian" placeholder={draft.quote ? "ask about this passage" : "ask the librarian"}
-      onChange={event => { setText(event.target.value); if (draft.selection.kind === "Uninitialized" && selection.kind === "Selected") setSelection(selection); }}
+      onChange={event => {
+        setText(event.target.value);
+        if (entry.getSnapshot().draft.selection.kind === "Uninitialized") {
+          const fresh = memory.fresh(catalogRead.status === "ready" ? catalogRead.data : null);
+          if (fresh?.kind === "Selected") setSelection(fresh);
+        }
+      }}
       onSelect={event => { const field = event.currentTarget; setCaret({ start: field.selectionStart, end: field.selectionEnd, direction: field.selectionDirection }); }}
       onKeyDown={event => {
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -84,9 +92,10 @@ export default function ChatComposer({ catalog: catalogRead, command, owner, foc
         event.preventDefault();
         if (!event.repeat) submit();
       }} />
-    {memory.read.status === "failed" ? <Failed error={memory.read.error} noun="saved model" retry={{ run: memory.read.refetch, busy: memory.read.retrying }} /> : null}
-    {refusal ? <Fact line={refusal.line} /> : reason ? <Fact line={{ fact: reason }} /> : null}
-    <div className={styles.row}><GenerationPicker catalogRead={catalogRead} value={selection} onChange={setSelection} waiting={selection.kind === "Uninitialized"} unavailable={reason} returnFocus={() => textarea.current?.focus({ preventScroll: true })} />
+    {recallError ? <Failed error={recallError} noun="saved model" retry={{ run: memory.read.refetch, busy: recallPending }} /> : null}
+    {refusal ? <Fact line={refusal.line} /> : null}
+    {reason && refusal?.line.reason !== reason ? <Fact line={{ fact: reason }} /> : null}
+    <div className={styles.row}><GenerationPicker catalogRead={catalogRead} choice={choice} refused={refused} recallPending={recallPending} onChange={setSelection} returnFocus={() => textarea.current?.focus({ preventScroll: true })} />
       <Button tone="accent" className={styles.send} disabled={!canSend} aria-busy={command.kind === "Busy" || undefined} title={pendingReason(command) ?? undefined} onClick={submit}>
         send{!mobile ? <span className={styles.hint} aria-hidden="true">↵</span> : null}
       </Button>

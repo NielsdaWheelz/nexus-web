@@ -164,7 +164,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const names = results.filter(row => row.class !== "Passage");
   const passages = results.filter(row => row.class === "Passage");
   const settled = controller.sources.device !== "Waiting" && controller.sources.names !== "Waiting" && controller.sources.texts !== "Waiting";
-  const passagesOpen = settled || names.length >= RESULT_CAP;
+  const passagesOpen = settled || names.length >= RESULT_CAP || controller.list.selection.kind === "Deliberate" && controller.submitRow?.class === "Passage";
   const [passageGate, setPassageGate] = useState({ identity: controller.list.identity, shown: passagesOpen });
   const passagesShown = passagesOpen || passageGate.identity === controller.list.identity && passageGate.shown;
   if (passageGate.identity !== controller.list.identity || passagesShown !== passageGate.shown) {
@@ -178,8 +178,9 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const accountId = isAccountDestinationId(section) ? section : null;
   const catchword = typed ? controller.continuations[0] ?? null : null;
   const search = typed && controller.parsed.intent.kind === "Search";
-  const armedRow = controller.rows.find(row => row.key === controller.armed);
-  const echo = typed && controller.armed !== null ? catchword?.key === controller.armed && !lookup ? "all results" : armedRow ? rowPrimaryText(armedRow) : null : null;
+  const { submitRow } = controller;
+  const echo = !typed || !submitRow ? null : submitRow.action.kind === "Unavailable" ? submitRow.action.reason
+    : `go · ${submitRow.key === catchword?.key && !lookup ? "all results" : rowPrimaryText(submitRow)}`;
   const earlier = controller.groups.filter(group => group.id === "Recent" || group.id === "Closed").flatMap(group => group.rows);
   const closedCount = earlier.filter(row => row.action.kind === "Available" && row.action.target.kind === "RestorePane").length;
   const selection = controller.groups.find(group => group.id === "Continuations")?.rows ?? [];
@@ -189,11 +190,11 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
     if (activation.kind === "Unowned") return;
     event.preventDefault();
     if (activation.kind === "Consume") return;
-    if (!(lookup && row.key === catchword?.key)) controller.arm(row.key);
+    controller.selectRow(row.key);
     controller.activate(row.action, { disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } }, row);
   };
   const beside = (row: NexusRow) => {
-    if (!(lookup && row.key === catchword?.key)) controller.arm(row.key);
+    controller.selectRow(row.key);
     controller.activate(row.action, { disposition: { kind: "Fork" } }, row);
   };
   // Admit only gestures begun inside this task; the opening pointer-up is not a row click.
@@ -212,7 +213,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
     const restores = item.action.kind === "Available" && item.action.target.kind === "RestorePane";
     const alias = nexusRowAlias(item, lookup);
     const name = rowName([pane ? paneCandidateName(controller, item) : nexusRowName(item, here, alias), marked ? "closed. activate to keep it open" : restores ? "closed" : null]);
-    const selected = item.key === controller.armed;
+    const selected = item.key === controller.selectedKey;
     const trailing = [sideHead, marked || restores ? "closed" : here ? "here" : null].filter(Boolean).join(" · ");
     const gesture = hold(() => beside(item));
     const excerpt = item.class === "Passage" && item.match ? windowed(item.match) : null;
@@ -221,8 +222,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
       data-drag-over={drag.isSorting && !drag.isDragging && drag.over?.id === (item.secondary?.kind === "ClosePane" ? item.secondary.paneId : item.key) ? drag.activeIndex < drag.overIndex ? "after" : "before" : undefined}
       role="row" aria-selected={selected} className={cx(collection.row, nexus.row, styles.row)}
       data-active={selected || undefined} data-marked={marked || undefined} data-passage={item.class === "Passage" || undefined}
-      data-band={listed.has(item.key) ? held.has(item.key) ? "held" : "arriving" : undefined}
-      onPointerDown={() => controller.arm(item.key)}>
+      data-band={listed.has(item.key) ? held.has(item.key) ? "held" : "arriving" : undefined}>
       <div id={candidateId(item.key)} role="gridcell" aria-label={name} className={nexus.cell}>
         <button type="button" ref={drag.setActivatorNodeRef}
           onPointerDown={pane ? drag.begin : gesture.onPointerDown}
@@ -234,7 +234,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
           className={cx(nexus.primary, styles.primary)} data-nexus-control={item.key}
           aria-labelledby={candidateId(item.key)} aria-current={here ? "page" : undefined}
           aria-disabled={item.action.kind === "Unavailable" || undefined}
-          onFocus={() => controller.arm(item.key)} onClick={event => activate(item, event)}
+          onClick={event => activate(item, event)}
           onKeyDown={event => { if (!pane) gesture.onKeyDown(event); activate(item, event); }}>
           {item.class === "Passage" ? <span className={styles.passage}>
             <span className={styles.excerpt}>{item.action.kind === "Unavailable" ? item.action.reason : excerpt ? <ExcerptText excerpt={excerpt.excerpt} match={excerpt} /> : item.label}</span>
@@ -326,8 +326,9 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               return "handled-destination-focus";
             }} /> : catchword ? <>
             <button type="button" className={cx(styles.sign, styles.catchword)} data-nexus-control={catchword.key}
-              aria-label={lookup ? catchword.label : `all results for “${controller.parsed.text}”`} data-active={controller.armed === catchword.key || undefined}
-              {...catchwordHold} onFocus={() => { if (!lookup) controller.arm(catchword.key); }} onClick={event => activate(catchword, event)}
+              aria-label={lookup ? catchword.label : `all results for “${controller.parsed.text}”`} data-active={controller.selectedKey === catchword.key || undefined}
+              aria-disabled={catchword.action.kind === "Unavailable" || undefined}
+              {...catchwordHold} onClick={event => activate(catchword, event)}
               onKeyDown={event => { catchwordHold?.onKeyDown(event); activate(catchword, event); }}><Icon.Search size="1.25rem" aria-hidden="true" /></button>
             {search ? <><button type="button" className={styles.key} aria-label="ask the librarian" onClick={() => controller.askLibrarian()}>ask</button>
               <button type="button" className={styles.key} aria-label="save note to today" onClick={() => controller.runLegend("Nexus.Quick.Note", { disposition: { kind: "Follow" } })}>note</button></> : null}
@@ -339,7 +340,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
       <span className={styles.star} aria-hidden="true" style={{ "--star-grace": `${STAR_GRACE_MS}ms`, "--star-onset": `${STAR_ONSET_MS}ms` } as CSSProperties}>
         <AsterismMark size="1.25rem" lit={[controller.sources.device === "Idle" || controller.sources.device === "Answered", controller.sources.names === "Idle" || controller.sources.names === "Answered", controller.sources.texts === "Idle" || controller.sources.texts === "Answered"]} />
       </span>
-      <input ref={inputRef} type="search" role="combobox" aria-label="find anything…" aria-autocomplete="list" aria-controls={GRID_ID} aria-expanded="true"
+      <input ref={inputRef} type="search" role="combobox" aria-label="find anything…" aria-autocomplete="list" aria-haspopup="grid" aria-controls={GRID_ID} aria-expanded="true"
         aria-describedby={`${ECHO_ID}${lookup ? ` ${NOTICE_ID}-guidance` : ""}`} value={controller.query} placeholder="find anything…" autoComplete="off" enterKeyHint="go"
         data-mobile-nexus-search data-nexus-control="Search"
         onChange={event => controller.setQuery(event.currentTarget.value)}
@@ -356,7 +357,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
             if (activation.kind === "Open") controller.submit({ disposition: { kind: activation.intent === "new_pane" ? "Fork" : "Follow" } });
           }
         }} />
-      <span id={ECHO_ID} className={styles.echo}>{echo === null ? null : `go · ${echo}`}</span>
+      <span id={ECHO_ID} className={styles.echo}>{echo}</span>
       {controller.query ? <Button iconOnly icon={<Icon.Dismiss aria-hidden="true" />} className={styles.clear} aria-label="clear search" onClick={() => { controller.setQuery(""); inputRef.current?.focus(); }} /> : <span />}
     </div>
   </>;

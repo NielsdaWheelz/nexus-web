@@ -4,7 +4,7 @@ import type { Catalog, Selection } from "./wire";
 // The exact generation a draft will run: chosen from the catalog, never
 // substituted. The browser owns no allowlist; the server rejects stale choices.
 
-export const MODEL_UNAVAILABLE = "this model isn’t available now.";
+export const CHOICE_UNAVAILABLE = "this choice isn’t available now.";
 
 export type Route = Schema<"CodexPersonalRoute"> | Schema<"ProviderApiRoute">;
 type CatalogRoute = Catalog["routes"][number];
@@ -15,15 +15,17 @@ type Unready = Exclude<ReasoningChoice["chat_state"], { kind: "Selectable" }> | 
 export type SelectionEditor =
   | { readonly kind: "Uninitialized" }
   | { readonly kind: "DefaultUnavailable"; readonly route: Route; readonly model_key: string; readonly mode: string | null }
-  | { readonly kind: "Selected"; readonly selection: Selection; readonly route: Route | null };
+  | { readonly kind: "Selected"; readonly selection: Selection; readonly route: Route };
 export type ModelVariant = {
   key: string;
   model: CatalogModel;
   mode: string | null;
   reasoning: ReasoningChoice[];
+  selectable: ReasoningChoice[];
+  unavailable: string | null;
 };
 
-export const modelKeyOf = (selection: Selection) =>
+const modelKeyOf = (selection: Selection) =>
   selection.route === "CodexPersonal" ? selection.model : selection.model_ref;
 
 export const routeKey = (route: Route) =>
@@ -31,62 +33,26 @@ export const routeKey = (route: Route) =>
     ? "CodexPersonal"
     : `ProviderApi:${route.provider}`;
 
-export function catalogRoute(
-  catalog: Catalog,
-  route: Route,
-): CatalogRoute | null {
-  return catalog.routes.find((row) => routeKey(row.route) === routeKey(route)) ?? null;
-}
+export const selectionKey = (selection: Selection) =>
+  JSON.stringify([selection.route, modelKeyOf(selection), selection.reasoning]);
 
 const variantKey = (modelKey: string, mode: string | null) =>
   JSON.stringify([modelKey, mode]);
 
 /** Only actual model/mode combinations become options, in source order. */
-export function modelVariants(row: CatalogRoute | null): ModelVariant[] {
-  return (row?.models ?? []).flatMap((model) =>
+export function modelVariants(row: CatalogRoute, refused: (selection: Selection) => boolean): ModelVariant[] {
+  return row.models.flatMap((model) =>
     [...new Set(model.reasoning.map((choice) => choice.mode))].flatMap((mode) => {
       const reasoning = model.reasoning
         .filter((choice) => choice.mode === mode)
         .sort((a, b) => a.effort_order - b.effort_order);
-      return [{ key: variantKey(model.key, mode), model, mode, reasoning }];
+      const selectable = row.readiness.kind === "Ready" ? reasoning.filter(choice =>
+        choice.chat_state.kind === "Selectable" && !refused(chooseThinking(row.route, model.key, choice.key).selection)) : [];
+      const unavailable = row.readiness.kind !== "Ready" ? unreadyReason(row.readiness)
+        : selectable.length > 0 ? null : choiceUnavailable(reasoning[0]) ?? CHOICE_UNAVAILABLE;
+      return [{ key: variantKey(model.key, mode), model, mode, reasoning, selectable, unavailable }];
     }),
   );
-}
-
-function lookup(catalog: Catalog, selection: Selection, route: Route | null = null) {
-  const model = catalog.routes
-    .filter((row) => route ? routeKey(row.route) === routeKey(route) : row.route.kind === selection.route)
-    .flatMap((row) => row.models.map((model) => ({ row, model })))
-    .find(({ model }) => model.key === modelKeyOf(selection)) ?? null;
-  const choice = model?.model.reasoning.find(
-    (row) => row.key === selection.reasoning,
-  );
-  return { row: model?.row ?? null, model: model?.model ?? null, choice: choice ?? null };
-}
-
-export function routeOf(catalog: Catalog, selection: Selection): Route | null {
-  if (selection.route === "CodexPersonal")
-    return { kind: "CodexPersonal" };
-  return lookup(catalog, selection).row?.route ?? catalog.routes.find((row) =>
-    row.route.kind === selection.route && row.default_model.model_key === modelKeyOf(selection))?.route ?? null;
-}
-
-export function editorRoute(value: SelectionEditor): Route | null {
-  if (value.kind === "Selected") return value.route;
-  return value.kind === "Uninitialized" ? null : value.route;
-}
-
-export function editorVariant(catalog: Catalog, value: SelectionEditor): ModelVariant | null {
-  const route = editorRoute(value);
-  if (!route) return null;
-  if (value.kind === "DefaultUnavailable")
-    return modelVariants(catalogRoute(catalog, route)).find((variant) =>
-      variant.model.key === value.model_key && variant.mode === value.mode) ?? null;
-  if (value.kind !== "Selected") return null;
-  const { choice } = lookup(catalog, value.selection, value.route);
-  if (!choice) return null;
-  return modelVariants(catalogRoute(catalog, route)).find((variant) =>
-    variant.model.key === modelKeyOf(value.selection) && variant.mode === choice.mode) ?? null;
 }
 
 /** Why a route or choice can't run, by kind and code. Closed: the server's explanation is
@@ -112,26 +78,11 @@ export function choiceUnavailable(choice: ReasoningChoice): string | null {
   return choice.chat_state.kind === "Selectable" ? null : unreadyReason(choice.chat_state);
 }
 
-export function isSelectable(catalog: Catalog, selection: Selection, route: Route | null = null): boolean {
-  return lookup(catalog, selection, route).choice?.chat_state.kind === "Selectable";
-}
-
-export function chooseModel(
-  catalog: Catalog,
-  route: Route,
-  modelKey: string,
-  mode: string | null,
-  current: SelectionEditor,
-): SelectionEditor {
-  const previousRoute = editorRoute(current);
-  const sameRoute = previousRoute !== null && routeKey(previousRoute) === routeKey(route);
-  const previousVariant = editorVariant(catalog, current);
-  if (current.kind === "Selected" && sameRoute && previousVariant?.key === variantKey(modelKey, mode)) return current;
-  const choice = catalogRoute(catalog, route)?.models.find((row) => row.key === modelKey)
-    ?.reasoning.find((row) => row.mode === mode && row.chat_default);
-  return choice
-    ? chooseThinking(route, modelKey, choice.key)
-    : { kind: "DefaultUnavailable", route, model_key: modelKey, mode };
+/** An explicit model activation chooses its declared runnable default or waits for effort. */
+export function chooseModel(route: Route, variant: ModelVariant): SelectionEditor {
+  const choice = variant.selectable.find(row => row.chat_default);
+  return choice ? chooseThinking(route, variant.model.key, choice.key)
+    : { kind: "DefaultUnavailable", route, model_key: variant.model.key, mode: variant.mode };
 }
 
 export function chooseThinking(
@@ -153,19 +104,28 @@ export function chooseThinking(
   };
 }
 
-/** Why this draft cannot be sent; null when it can. */
-export function unavailability(
-  catalog: Catalog,
-  draft: Exclude<SelectionEditor, { kind: "Uninitialized" }>,
-): string | null {
-  const route = editorRoute(draft);
-  const row = route ? catalogRoute(catalog, route) : null;
-  if (row && row.readiness.kind !== "Ready") return unreadyReason(row.readiness);
-  if (draft.kind === "DefaultUnavailable") {
-    if (!row) return "this provider isn’t available now.";
-    return editorVariant(catalog, draft) ? "your default effort isn’t available now." : "your default model isn’t available now.";
+/** Resolve saved identities at their own level. An absent opaque reasoning key
+ * supplies neither a mode nor a substitute effort. */
+export function resolveSelection(catalog: Catalog | null, value: SelectionEditor, refused: (selection: Selection) => boolean) {
+  const route = value.kind === "Uninitialized" ? null : value.route;
+  const row = route ? catalog?.routes.find(item => routeKey(item.route) === routeKey(route)) ?? null : null;
+  const modelKey = value.kind === "Selected" ? modelKeyOf(value.selection)
+    : value.kind === "DefaultUnavailable" ? value.model_key : null;
+  const model = row?.models.find(item => item.key === modelKey) ?? null;
+  const effort = value.kind === "Selected" ? model?.reasoning.find(item => item.key === value.selection.reasoning) ?? null : null;
+  const mode = value.kind === "DefaultUnavailable" ? value.mode : effort?.mode;
+  const variant = !row || mode === undefined ? null : modelVariants(row, refused).find(item => item.model.key === modelKey && item.mode === mode) ?? null;
+
+  let reason: string | null = null;
+  if (catalog && value.kind !== "Uninitialized") {
+    if (value.kind === "Selected" && refused(value.selection)) reason = CHOICE_UNAVAILABLE;
+    else if (!row) reason = "this provider isn’t available now.";
+    else if (row.readiness.kind !== "Ready") reason = unreadyReason(row.readiness);
+    else if (value.kind === "DefaultUnavailable") reason = variant ? variant.unavailable ?? "your default effort isn’t available now." : "your default model isn’t available now.";
+    else if (!model) reason = "this model isn’t available now.";
+    else if (!effort) reason = "this setting isn’t available for this model.";
+    else reason = choiceUnavailable(effort);
   }
-  const { model, choice } = lookup(catalog, draft.selection, route);
-  if (!model || !choice) return MODEL_UNAVAILABLE;
-  return choiceUnavailable(choice);
+  return { value, route, modelKey, model, effort, variant, reason };
 }
+export type ResolvedSelection = ReturnType<typeof resolveSelection>;

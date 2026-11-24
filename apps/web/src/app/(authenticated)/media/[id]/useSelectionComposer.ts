@@ -21,7 +21,6 @@ import { getInteractionGeneration, getInteractionOwner, type Layer } from "@/lib
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { convertReaderQuestion } from "@nexus/authored/markdown";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
-import { readCatalog } from "@/lib/chat/catalog";
 import { captureReaderQuote, launchReaderChat } from "@/lib/chat/readerIntent";
 import { type Catalog } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
@@ -68,8 +67,7 @@ export function useSelectionComposer(input: {
   const { ctx } = useActionRuntime();
   const pane = requirePaneRuntime(usePaneRuntime(), "useSelectionComposer");
   const writing = useWritingRuntime();
-  const catalogRead = useServerValue({ key: "/llm-catalog", stale: "", visit: CATALOG_VISIT, load: readCatalog });
-  const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
+  const catalogRead = useServerValue({ ...memory.catalog, visit: CATALOG_VISIT });
   const refreshCatalog = catalogRead.status === "ready" && !catalogRead.error ? () => catalogRead.revalidate() : catalogRead.refetch;
   const retained = useResourceDraft<ComposerDraft | null>("Reader.SelectionComposer", () => null,
     entry => ({changed: entry !== null && (bodyHasContent(entry.body) || entry.referenceActive || entry.linkInputActive), unconfirmed: false, stopsBrowserWork: entry?.attachmentActive ?? false}),
@@ -440,7 +438,6 @@ export function useSelectionComposer(input: {
       store.update(entry.id, value => ({...value, chatIssue: {kind: "Failed", line: {fact: "this question is too long.", reason: "the limit is 20,000 characters."}}}));
       return;
     }
-    const selection = memory.fresh(catalog) ?? {kind: "Uninitialized" as const};
     const quote = quoteFor(entry);
     if (!quote) {
       store.update(entry.id, value => ({...value, chatIssue: {kind: "Failed", line: {fact: "select the passage again.", reason: "your words are kept."}}}));
@@ -450,8 +447,7 @@ export function useSelectionComposer(input: {
     transferringChat.current = true;
     try {
       const result = launchReaderChat({ctx, guard, originPaneId: pane.paneId, question: text,
-        quote,
-        selection });
+        quote, catalog: catalogRead, readSelection: memory.fresh });
       if (result.kind === "Opened" && get(entry.id)?.revision === revision) close(entry.id);
     } finally { transferringChat.current = false; }
   };

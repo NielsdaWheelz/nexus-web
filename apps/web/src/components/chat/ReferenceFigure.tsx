@@ -104,7 +104,7 @@ function ResourceReferenceContent({ value, reference }: { value: ResolvedReferen
   </>;
 }
 
-/** Draft reads wait for committed writing, then use the same server projection as sent references. */
+/** Draft reads use the server projection. References may depend on committed authored writing. */
 export function DraftReferenceFigure({ quote, onRemove }: { quote: ReaderQuote; onRemove(): void }) {
   const writing = useWritingRuntime();
   const stale = useChangeStamp("Metadata", "Notes", "NoteBodies", "Chats");
@@ -112,7 +112,7 @@ export function DraftReferenceFigure({ quote, onRemove }: { quote: ReaderQuote; 
     key: `draft-reference:${quote.id}`,
     stale,
     load: async signal => {
-      await writing.whenUploaded(await writing.committedPrefix(), signal);
+      if (quote.attachment.kind === "Reference") await writing.whenUploaded(await writing.committedPrefix(), signal);
       const response = await apiFetch<ApiJson<"/librarian/attachments/resolve", "post">>("/api/librarian/attachments/resolve", {
         method: "POST", body: JSON.stringify({ attachments: [quote.attachment] }), signal,
       });

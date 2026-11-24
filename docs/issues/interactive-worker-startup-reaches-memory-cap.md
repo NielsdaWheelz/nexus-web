@@ -87,3 +87,39 @@ the staged lazy-provider composition has independent import evidence; its real
 production worker journeys and operating margin remain to be qualified.
 
 continued production observation, 12:21:56–13:17:16 utc: the same worker epoch added 19 limit events (6→25), with no oom, kill or restart. transient anonymous memory reached 314.0742 mib; peak charge was 319.4727 against 320 mib. current sampled anonymous memory later fell to about 299.9 mib, which must not replace the transient in capacity planning. all four SDKs warmed in the corrected import comparison show no permanent memory saving; selected cold codex imports alone save about 75.7 mib. the conservative mixed-time allowance arithmetic is 808.7534 mib against 832, a 23.2466-mib estimate rather than measured coincident reserve. historical native-host kernel composition remains uncertain. actual corrected production journeys remain pending. evidence: campaign `capacity-2g-reaudit-20261014/aggregate-control-31d69ff7/attempt4-evidence/` and host observer interval receipts.
+
+## 2026-11-24 production kill
+
+at 03:02:27 utc, the installed `e3d835268` interactive-worker cgroup hit
+its 320 mib cap and the kernel killed python. generation
+`b5626df2-6cac-4703-8867-0ce4c4c999dd` (`gemini-4-carbon`, `medium`)
+settled interrupted without usage. the worker restarted. the preceding
+native sol, metered sol, fable and astra runs completed. all five used
+`ChatReadAdditiveWrite` with capture off. at the kill the cgroup held
+333,414,400 anonymous bytes and 4,096 file bytes. delivery and the exact
+allocation remain unknown.
+
+on the macbook arm64 worker, cold carbon peaked at 273,379,328 bytes. at
+320 mib the metered sol and fable web reads reached the cap. observation
+stopped before astra. one 448 mib epoch completed all four warm-ups and three
+matched carbon sends. each used 25,522 assembled input bytes. the carbon
+peaks were 423,665,664, 437,116,928 and 436,834,304 bytes. anonymous charge
+settled at 337,969,152 bytes after each. the installed incident's assembled
+size is unknown.
+
+the 544 mib candidate covers the 416.9 mib observed peak, a provisional 80 mib
+platform/workload allowance and 32 mib operating reserve, rounded up to
+32 mib. the allowance uses an unpaired 65 mib native anonymous-charge
+difference between hosts as a sizing input. the reserve covers the 28.3 mib
+cross-epoch native peak difference and 12.8 mib warm carbon range.
+
+at 09:40–09:42 utc, installed `ad3288b03` completed all seven dedicated-account
+sends in one worker epoch. its peak was 375,664,640 bytes, leaving 194,760,704
+bytes of the 544 mib cap against the frozen 32 mib reserve. the restarted
+database retained at least 2,065,575,936 bytes of reserve. the lowest sampled
+host availability was 4,578,185,216 bytes. the connector ran during the sends.
+swap, oom events, kills and worker restarts stayed at zero. all seven used 25,522
+assembled input bytes and the incident's tool plan with capture off.
+
+the original generation's assembled size, provider delivery and allocation
+site remain unknown. closure requires evidence that explains that kill.
