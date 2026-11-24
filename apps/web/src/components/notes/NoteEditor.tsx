@@ -1516,7 +1516,11 @@ function NoteEditorContent(props: NoteEditorProps) {
             return edit.stepType !== "replace" || !field || field.row_id !== changed.row_id || edit.from < field.from || edit.to > field.to;
           })) {view.updateState(view.state); warn(ACROSS_FIELDS); return;}
         }
-        if (binding && tr.docChanged && !external && !referenceField && !editingQuery && !(composingField && (composition.reference || composition.returning !== null))) {
+        // Composed reference input can defer writes to an existing document.
+        // An unbound first bullet still needs its capacity check before display.
+        const composingDraft = composingField && (composition.reference || composition.returning !== null) &&
+          binding?.document(changed?.row_id ?? undefined) !== null;
+        if (binding && tr.docChanged && !external && !referenceField && !editingQuery && !composingDraft) {
           try { binding.apply(tr); }
           catch (error) {
             view.updateState(view.state);

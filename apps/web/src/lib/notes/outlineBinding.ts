@@ -247,10 +247,10 @@ export class OutlineBinding implements EditorBinding {
     const id = row_id ?? this.active()?.row_id;
     const entry = id ? this.fields.get(id) : null;
     if (!entry) throw new Error("there is no selected outline field");
-    const current = this.body(id);
-    if (sameBody(current, after)) return;
-    if (!sameBody(current, before)) throw new Error("the field changed. review this insertion before applying it.");
+    const current = this.body(id), applied = sameBody(current, after);
+    if (!applied && !sameBody(current, before)) throw new Error("the field changed. review this insertion before applying it.");
     if (!entry.baseline || !entry.field.document) {entry.field.checkFirstNote(after); return;}
+    if (applied) return;
     const old = docFromBody(before).firstChild!, next = docFromBody(after).firstChild!;
     const start = old.content.findDiffStart(next.content);
     this.updating = true;
