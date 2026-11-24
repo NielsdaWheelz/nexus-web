@@ -299,7 +299,7 @@ def capture_reader_selection(
                     suffix=None,
                     color=None,
                 ),
-                source=_reader_source(
+                source=reader_source(
                     db, viewer_id, owner, location_label=f"page {locator.page_number}"
                 ),
                 target=CapturedPassageTarget(
@@ -405,7 +405,7 @@ def capture_reader_selection(
             suffix=capture.suffix,
             color=None,
         ),
-        source=_reader_source(db, viewer_id, owner),
+        source=reader_source(db, viewer_id, owner),
         target=CapturedPassageTarget(
             owner_ref=owner.uri,
             field=None,
@@ -462,7 +462,7 @@ def _passage_reading(
     )
 
 
-def _reader_source(
+def reader_source(
     db: Session, viewer_id: UUID, owner: ResourceRef, *, location_label: str | None = None
 ) -> CapturedSource:
     """Attribution for an already authorized reader; captured fragments need no body."""
@@ -475,27 +475,28 @@ def _reader_source(
             c.payload->>'attribution_text' AS attribution
             FROM fragments f JOIN x_post_captures c ON c.id=f.x_post_capture_id WHERE f.id=:id"""),
             {"id": owner.id},
-        ).one()
-        return CapturedSource(
-            ref=owner.uri,
-            title=None,
-            media_kind=None,
-            contributors=[
-                ContributorCreditOut(
-                    contributor_handle=None,
-                    contributor_display_name=None,
-                    href=None,
-                    credited_name=row.author,
-                    role="author",
-                    raw_role=None,
-                    ordinal=0,
-                )
-            ]
-            if row.kind == "complete_post"
-            else None,
-            attribution_text=row.attribution,
-            location_label=location_label,
-        )
+        ).one_or_none()
+        if row is not None:
+            return CapturedSource(
+                ref=owner.uri,
+                title=None,
+                media_kind=None,
+                contributors=[
+                    ContributorCreditOut(
+                        contributor_handle=None,
+                        contributor_display_name=None,
+                        href=None,
+                        credited_name=row.author,
+                        role="author",
+                        raw_role=None,
+                        ordinal=0,
+                    )
+                ]
+                if row.kind == "complete_post"
+                else None,
+                attribution_text=row.attribution,
+                location_label=location_label,
+            )
     source = source_attributions(db, viewer_id=viewer_id, refs=[owner]).get(owner.uri)
     if source is None:
         raise NotFoundError(ApiErrorCode.E_READER_SELECTION_NOT_FOUND, "Reading not found")
@@ -725,7 +726,7 @@ def capture_prompt_evidence(
     if scoped_authority and locator is None:
         raise missing
     if owner.scheme in ("media", "fragment"):
-        source = _reader_source(db, viewer_id, owner, location_label=row.label)
+        source = reader_source(db, viewer_id, owner, location_label=row.label)
     else:
         source = CapturedSource(
             ref=owner.uri,
@@ -1129,7 +1130,7 @@ def _stored_reader_evidence(
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source passage not found")
     return admitted.model_copy(
         update={
-            "source": _reader_source(db, viewer_id, require_ref(admitted.target.owner_ref or ""))
+            "source": reader_source(db, viewer_id, require_ref(admitted.target.owner_ref or ""))
         }
     )
 
@@ -1549,7 +1550,7 @@ def _admitted_evidence(
                 target, quote = observation.target, observation.quote
                 attribution = observation.source
             else:
-                attribution = _reader_source(
+                attribution = reader_source(
                     db, viewer_id, assert_resource_ref(evidence.completion_ref)
                 )
             source = original.source.model_dump()

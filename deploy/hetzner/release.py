@@ -92,16 +92,8 @@ HOST_INPUTS = (
     ("docker-compose.inspect.yml", "/etc/nexus/docker-compose.inspect.yml", "0444"),
     ("runtime-role.sql", RUNTIME_ROLE_FILE, "0444"),
     (RESOURCE_SLICE, f"/etc/systemd/system/{RESOURCE_SLICE}", "0644"),
-    (
-        "codex-state-boot-guard.sh",
-        "/usr/local/sbin/nexus-codex-state-boot-guard",
-        "0755",
-    ),
-    (
-        "nexus-codex-state-boot-guard.service",
-        f"/etc/systemd/system/{BOOT_GUARD_SERVICE}",
-        "0644",
-    ),
+    ("codex-state-boot-guard.sh", "/usr/local/sbin/nexus-codex-state-boot-guard", "0755"),
+    ("nexus-codex-state-boot-guard.service", f"/etc/systemd/system/{BOOT_GUARD_SERVICE}", "0644"),
     (
         "docker-codex-state-guard.conf",
         "/etc/systemd/system/docker.service.d/20-nexus-codex-state-guard.conf",
@@ -325,17 +317,7 @@ def resolve_candidate(source_sha: str, workspace: Path) -> CandidateManifest:
             "candidate images are not from attempt 1 of a push for this exact SHA: "
             f"{provenance} differs from {expected}"
         )
-    download = (
-        "gh",
-        "run",
-        "download",
-        run_id,
-        "--repo",
-        REPOSITORY,
-        "--name",
-        name,
-        "--dir",
-    )
+    download = ("gh", "run", "download", run_id, "--repo", REPOSITORY, "--name", name, "--dir")
     run((*download, str(workspace)), timeout=300)
     candidate = load_candidate_manifest(workspace / "candidate-manifest.json")
     if candidate.source_sha != source_sha or candidate.repository != REPOSITORY:
@@ -588,10 +570,7 @@ def assert_backup_fresh(candidate: CandidateManifest) -> None:
             environment=f"NEXUS_BACKUP_CONFIG_FILE={BACKUP_CONFIG_FILE}",
         )
     )
-    if not isinstance(newest, dict) or newest.keys() != {
-        "newest_archive",
-        "last_modified",
-    }:
+    if not isinstance(newest, dict) or newest.keys() != {"newest_archive", "last_modified"}:
         raise Failure(f"the backup check reported {newest}, not the newest archive")
     timer = host(f"systemctl is-enabled {NIGHTLY_TIMER} || true").strip()
     if newest["newest_archive"] is None:
@@ -724,10 +703,7 @@ def assert_resource_limits(candidate: CandidateManifest) -> None:
 
     note("asserting owned memory caps and inherited no-swap")
     unit_path = f"/etc/systemd/system/{RESOURCE_SLICE}"
-    for name, destination in (
-        ("docker-compose.yml", COMPOSE_FILE),
-        (RESOURCE_SLICE, unit_path),
-    ):
+    for name, destination in (("docker-compose.yml", COMPOSE_FILE), (RESOURCE_SLICE, unit_path)):
         expected = run(
             (
                 "git",

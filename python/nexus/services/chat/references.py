@@ -40,6 +40,7 @@ from nexus.services.resource_items.evidence import (
     PromptEvidenceTooLarge,
     capture_prompt_evidence,
     capture_reader_selection,
+    reader_source,
 )
 from nexus.services.resource_items.items import resource_items_out
 
@@ -371,7 +372,7 @@ def surroundings(
     from nexus.services.live_references import from_evidence
     from nexus.services.media_read_map import ask_page_context
     from nexus.services.reader_document import ask_fragment_context
-    from nexus.services.resource_items.items import ref_visible, source_attributions
+    from nexus.services.resource_items.items import ref_visible
 
     reference = attachment.reference
     ref = require_ref(reference.resource_ref)
@@ -479,9 +480,43 @@ def surroundings(
         return result
     if locator is None and reading == ref and ref.scheme == "media":
         return result
-    source = source_attributions(db, viewer_id=viewer_id, refs=[reading]).get(reading.uri)
-    if source:
-        result.append(("work", " · ".join(filter(None, (source.title, reading.uri)))))
+    placed: list[tuple[str, str]] = []
+    if isinstance(locator, (PdfPageTarget, PdfPageGeometryTargetOut)) and reading.scheme == "media":
+        placed.extend(
+            ask_page_context(db, viewer_id, reading.id, locator.page_number, identity, exact)
+        )
+    elif isinstance(
+        locator, (WebTextOffsetsTargetOut, EpubTextOffsetsTargetOut, TranscriptTextOffsetsTargetOut)
+    ):
+        placed.extend(
+            ask_fragment_context(
+                db,
+                viewer_id=viewer_id,
+                reading=reading,
+                fragment_id=locator.fragment_id,
+                start=locator.start_offset,
+                end=locator.end_offset,
+                exact=exact,
+            )
+        )
+    elif (
+        locator is not None
+        and locator.kind == "TimeRange"
+        and resolve_location(db, reference, viewer_id=viewer_id)
+    ):
+        placed.append(("location", f"{locator.start_ms}–{locator.end_ms} ms"))
+    sources = [(reading, "work")]
+    if attachment.capture_scope is not None and ref.scheme == "fragment" and reading != ref:
+        sources = [(ref, "selected post")]
+        if placed:
+            sources.append((reading, "work"))
+    for owner, label in sources:
+        try:
+            source = reader_source(db, viewer_id, owner)
+        except NotFoundError:
+            # justify-ignore-error: a visible subject can lack separate current attribution.
+            continue
+        result.append((label, " · ".join(filter(None, (source.title, owner.uri)))))
         if source.contributors:
             result.append(
                 (
@@ -493,26 +528,4 @@ def surroundings(
             )
         elif source.attribution_text:
             result.append(("attribution", source.attribution_text))
-    if locator is None:
-        return result
-    if isinstance(locator, (PdfPageTarget, PdfPageGeometryTargetOut)) and reading.scheme == "media":
-        result.extend(
-            ask_page_context(db, viewer_id, reading.id, locator.page_number, identity, exact)
-        )
-    elif isinstance(
-        locator, (WebTextOffsetsTargetOut, EpubTextOffsetsTargetOut, TranscriptTextOffsetsTargetOut)
-    ):
-        result.extend(
-            ask_fragment_context(
-                db,
-                viewer_id=viewer_id,
-                reading=reading,
-                fragment_id=locator.fragment_id,
-                start=locator.start_offset,
-                end=locator.end_offset,
-                exact=exact,
-            )
-        )
-    elif locator.kind == "TimeRange" and resolve_location(db, reference, viewer_id=viewer_id):
-        result.append(("location", f"{locator.start_ms}–{locator.end_ms} ms"))
-    return result
+    return [*result, *placed]
