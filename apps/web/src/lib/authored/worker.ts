@@ -17,6 +17,7 @@ import { syncStatus } from "./status";
 interface WorkerScope { onconnect: ((event: MessageEvent) => void) | null; close(): void }
 const scope = self as unknown as WorkerScope;
 const ports = new Set<MessagePort>();
+const pageOrders = new WeakMap<MessagePort, Set<string>>();
 let persistence: Persistence | null = null;
 let sync: Sync | null = null;
 let account: string | null = null;
@@ -94,7 +95,15 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
     }
     return { wire_revision: WIRE_REVISION, format_revision: FORMAT_REVISION, status: syncStatus(sync!.facts), detail: sync!.detail, failure: sync!.facts.failure };
   }
-  if (op === "close") { ports.delete(port); port.close(); return null; }
+  if (op === "close") {
+    ports.delete(port);
+    port.close();
+    const orders = pageOrders.get(port);
+    pageOrders.delete(port);
+    if (orders?.size) await persistence?.db.run(
+      "DELETE FROM page_register_orders WHERE token IN (SELECT value FROM json_each(?))", [JSON.stringify([...orders])]);
+    return null;
+  }
   if (!persistence || retired) throw new Error("authored account is closed");
   switch (op) {
     case "pause_commands": {
@@ -120,7 +129,20 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
     case "states": return persistence.states(input.selection as unknown as StateSelection);
     case "query": {
       if (!(await persistence.replica()).provisioning_complete) throw new Error("authored corpus is still preparing");
-      return persistence.query(input.query as unknown as AuthoredQuery);
+      const query = input.query as unknown as AuthoredQuery;
+      if (query.kind !== "page_register" || !("token" in query.at)) return persistence.query(query);
+      const {kind, token} = query.at;
+      const orders = pageOrders.get(port) ?? new Set<string>();
+      if (kind === "retain") {
+        pageOrders.set(port, orders);
+        orders.add(token);
+      } else if (!orders.has(token)) {
+        if (kind === "release") return null;
+        throw new Error("page register observation has retired");
+      }
+      const result = await persistence.query(query);
+      if (kind === "release" || kind === "retain" && result.page_register?.kind !== "retained") orders.delete(token);
+      return result;
     }
     case "commit": {
       const held = (await navigator.locks.query()).held?.find(lock => lock.name === `nexus-authored-command-${account}`);

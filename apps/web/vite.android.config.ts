@@ -64,7 +64,7 @@ export default defineConfig({
             {kind: "page_register", text, at: {kind: "range", start: 0, limit: 1}, expected_revision: "0"},
             {kind: "page_register", text, at: {kind: "locate", refs: []}, expected_revision: "0"},
             {kind: "page_register", text, at: {kind: "retain", token: ""}, expected_revision: "0"},
-            {kind: "page_register", text, at: {kind: "successor", token: "", ref: null}, expected_revision: null},
+            {kind: "page_register", text, at: {kind: "successor", token: "", ref: null}, expected_revision: "0"},
             {kind: "page_register", text, at: {kind: "release", token: ""}, expected_revision: null},
           ]),
           register_label: [{kind: "register_label", ref: ""}],

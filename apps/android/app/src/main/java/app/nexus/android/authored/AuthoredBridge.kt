@@ -47,6 +47,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
     private val requests = mutableMapOf<Long, Job>()
     private val uploads = mutableMapOf<String, Pair<Int, ByteArrayOutputStream>>()
     private val outputs = mutableMapOf<String, ByteArray>()
+    private val pageOrders = mutableSetOf<String>()
     private var snapshot: File? = null
     private var lease: String? = null
     private var documentOwner: Pair<OwnedWebMessage, UUID>? = null
@@ -75,6 +76,12 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
     fun onPageStarted() {
         for (request in requests.values.toList()) request.cancel()
         requests.clear()
+        val account = boundAccount
+        val tokens = pageOrders.toList()
+        pageOrders.clear()
+        if (account != null && tokens.isNotEmpty()) orderRetirement.launch {
+            commands.withLock { store?.takeIf { it.account == account }?.releasePageOrders(tokens) }
+        }
         boundAccount = null
         documentOwner = null
         framing.onDocumentStarted(); uploads.clear(); outputs.clear()
@@ -143,6 +150,14 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                             if (!request.isNull("account_id") && request.getString("account_id") != account.toString())
                                 throw NexusOriginError(403, "E_ACCOUNT_MISMATCH")
                         }
+                        val query = if (operation == "query") request.optJSONObject("query") else null
+                        val order = query?.takeIf { it.optString("kind") == "page_register" }?.optJSONObject("at")
+                        val token = order?.takeIf { it.has("token") }?.getString("token")
+                        val orderOperation = order?.optString("kind")
+                        if (token != null) when (orderOperation) {
+                            "retain" -> pageOrders.add(token)
+                            "successor", "release" -> require(token in pageOrders)
+                        }
                         remoteOperation = operation in setOf("register", "push", "pull", "snapshot", "scope_inputs", "scope_text_remote")
                         if (remoteOperation && foreground && session.remoteAdmission == "Unavailable") {
                             // The foreground sync retry owns reachability retry too: a server
@@ -183,6 +198,8 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                             }
                         }
                         require(current(message, account))
+                        if (token != null && (orderOperation == "release" || orderOperation == "retain" &&
+                                result.optJSONObject("page_register")?.optString("kind") == "changed")) pageOrders.remove(token)
                         if (operation == "hello") { boundAccount = account; documentOwner = message to account; result.put("wire_revision", BuildConfig.NEXUS_WIRE).put("foreground", foreground).put("foreground_revision", foregroundRevision.toString()) }
                         val bytes = result.toString().toByteArray(Charsets.UTF_8)
                         require(bytes.size <= AUTHORED_TRANSFER_BYTES && outputs.size < 8)
@@ -282,6 +299,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
         private var foregroundOwner: AuthoredBridge? = null
         private val preparations = Mutex()
         private val commands = Mutex()
+        private val orderRetirement = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         private var store: AuthoredStore? = null
         private fun bound(context: android.content.Context, account: UUID): AuthoredStore {
             val current = store

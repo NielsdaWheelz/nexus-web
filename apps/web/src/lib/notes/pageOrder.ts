@@ -1,14 +1,14 @@
 "use client";
 
 import {useCallback, useEffect, useState} from "react";
-import {useAuthoredStore} from "@/lib/authored/provider";
+import {useAuthoredAccountId, useAuthoredStore} from "@/lib/authored/provider";
 import type {ReturnOrder} from "@/lib/workspace/paneReturnMemento";
 
 type PageOrder = Omit<ReturnOrder, "prefix">;
 
 export function usePageOrder(text: string, revision: string | null) {
   const store = useAuthoredStore();
-  const key = JSON.stringify([text, revision]);
+  const key = JSON.stringify([useAuthoredAccountId(), text, revision]);
   const [state, setState] = useState<{key: string; data: PageOrder | null; error: unknown | null} | null>(null);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -24,9 +24,10 @@ export function usePageOrder(text: string, revision: string | null) {
         references++;
         return release;
       },
-      async successor(id) {
-        const result = await store.query({kind: "page_register", text, at: {kind: "successor", token, ref: id === null ? null : `page:${id}`}, expected_revision: null});
+      async successor(id, expectedRevision) {
+        const result = await store.query({kind: "page_register", text, at: {kind: "successor", token, ref: id === null ? null : `page:${id}`}, expected_revision: expectedRevision});
         const successor = result.page_register;
+        if (successor?.kind === "changed") return undefined;
         if (successor?.kind !== "successor") throw new Error("missing page register successor");
         return successor.ref?.slice(5) ?? null;
       },

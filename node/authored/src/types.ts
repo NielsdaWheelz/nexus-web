@@ -108,7 +108,7 @@ export type RankedIndexResult<Row, Description extends object = object> =
   | {kind: "locations"; items: (Row & {rank: number})[]};
 export type PageRegisterRequest = {kind: "page_register"; text: string} & (RankedIndexRequest |
   {at: {kind: "retain"; token: string}; expected_revision: Counter} |
-  {at: {kind: "successor"; token: string; ref: ResourceRef | null}; expected_revision: null} |
+  {at: {kind: "successor"; token: string; ref: ResourceRef | null}; expected_revision: Counter} |
   {at: {kind: "release"; token: string}; expected_revision: null});
 /** Groups are consecutive run lengths in register order. Each slice owns its labels. */
 export type PageRegisterResult = RankedIndexResult<RegisterItem, {source_total: number}> |

@@ -144,6 +144,19 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
   }
   status = hello.status; detail = hello.detail; failure = hello.failure;
   replication = scheduleReplication(refresh => call<SyncStep>("sync_step", { refresh, online: navigator.onLine }), () => failPort("the local notes store stopped responding. keep this page open and copy unfinished writing before restarting nexus."));
+  const leaving = (event: PageTransitionEvent) => {if (!event.persisted) close();};
+  function close() {
+    window.removeEventListener("pagehide", leaving);
+    if (closed) return;
+    replication?.close();
+    port.postMessage({id: ++sequence, op: "close"});
+    closed = true;
+    for (const pending of waiting.values()) pending.reject(new Error("authored store closed"));
+    waiting.clear();
+    for (const cancel of closedWaiters) cancel();
+    closedWaiters.clear(); queries.clear(); statuses.clear(); evidence.clear(); port.close();
+  }
+  window.addEventListener("pagehide", leaving);
   return {
     withCommand: work => navigator.locks.request(`nexus-authored-command-${accountId}`, async () => {
       if (closed) throw new Error("authored store closed");
@@ -180,13 +193,6 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
     },
     evidence_changed: listener => { evidence.add(listener); return () => { evidence.delete(listener); }; },
     sync_status: listener => { statuses.add(listener); listener(status, detail, failure); return () => { statuses.delete(listener); }; },
-    close: async () => {
-      if (closed) return;
-      replication?.close();
-      port.postMessage({ id: ++sequence, op: "close" });
-      closed = true;
-      for (const pending of waiting.values()) pending.reject(new Error("authored store closed"));
-      waiting.clear(); for (const cancel of closedWaiters) cancel(); closedWaiters.clear(); queries.clear(); statuses.clear(); evidence.clear(); port.close();
-    },
+    close: async () => close(),
   };
 }

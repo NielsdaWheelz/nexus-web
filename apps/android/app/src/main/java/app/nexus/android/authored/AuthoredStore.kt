@@ -457,6 +457,9 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             record
         }
     }
+    fun releasePageOrders(tokens: List<String>) {
+        run("DELETE FROM page_register_orders WHERE token IN (SELECT value FROM json_each(?))", JSONArray(tokens).toString())
+    }
     fun query(query: JSONObject, plans: JSONArray): JSONObject {
         val replica = replica()
         require(replica.getBoolean("provisioning_complete"))

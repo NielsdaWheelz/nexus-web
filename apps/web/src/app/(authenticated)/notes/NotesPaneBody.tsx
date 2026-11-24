@@ -109,13 +109,15 @@ export default function NotesPaneBody() {
     }
     return {rows, heads, long, ids, ranks};
   }, [description?.items, items, opened, shift, sparse]);
+  const returnOrder = useMemo(() => shownOrder === null ? undefined
+    : {...shownOrder, prefix: opened.map(item => `recent:${item.ref.slice(5)}`)}, [shownOrder, opened]);
   const ranked = useMemo(() => {
     if (!sparse || description === null || revision === null) return undefined;
     const source: RankedIndex = {
       count: description.total + shift,
       revision: JSON.stringify([revision, opened.map(item => item.ref)]),
       heads: groups.heads,
-      returnOrder: shownOrder === null ? undefined : {...shownOrder, prefix: opened.map(item => `recent:${item.ref.slice(5)}`)},
+      returnOrder,
       failed: rangeError !== null,
       idAt: rank => list.ids.get(rank),
       rankOf(id) {
@@ -134,11 +136,11 @@ export default function NotesPaneBody() {
       const label = items.get(rank - shift)?.group;
       return <h3 className={styles.letter} aria-hidden={label === undefined || undefined}>{label ?? "\u00a0"}</h3>;
     }};
-  }, [description, groups, items, list, opened, positions, rangeError, request, revision, shift, shownOrder, sparse]);
+  }, [description, groups, items, list, opened, positions, rangeError, request, revision, shift, returnOrder, sparse]);
   const error = read.error ?? order.error;
   const ready = (admittedRead !== null || error !== null) && (text !== "" || recent.snapshot !== null || recent.readFailure) &&
     (!sparse || refs.length === 0 || recentRead.data !== null || recentRead.error !== null);
-  usePaneReturnReady(ready);
+  usePaneReturnReady(ready, revision);
   const admitted = admittedRead?.page_register;
   const count = admitted?.kind === "description" ? admitted.total : 0;
   const total = admitted?.kind === "description" ? admitted.source_total : 0;
