@@ -7,8 +7,7 @@ revision and leaves a readable structural slot for a projection too large by
 itself. android still refuses a single canonical writing state larger than
 one transfer, including one with a small projection and extensive causal history.
 a record that is too large to stage can stop provisioning for the whole
-account. a feed merge can also exceed a transfer when its records fit
-individually. the read-side slot does not resolve either write-side limit.
+account. the read-side slot leaves that canonical write limit in place.
 
 the paired api-34 byte replay at a567f96d9 read thirty-two durable rich
 siblings in two native answers of 16,239,066 and 3,004,466 encoded bytes.
