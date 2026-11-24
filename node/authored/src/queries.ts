@@ -23,6 +23,7 @@ const WORK_HABIT_CHECKS = "json_extract(state_json,'$.work.habit_checks')";
 export const WORK_OPEN_TASK = `${WORK_REGISTER_MEMBERSHIP} AND ${WORK_ENABLED} AND ${WORK_KIND}='task' AND ${WORK_TASK_DAY} IS NULL`;
 export const WORK_TASK_HISTORY = `${WORK_REGISTER_MEMBERSHIP} AND ${WORK_TASK_DAY} IS NOT NULL`;
 export const WORK_ACTIVE_HABIT = `${WORK_REGISTER_MEMBERSHIP} AND ${WORK_ENABLED} AND ${WORK_KIND}='habit'`;
+export const WORK_DESIGNATED_HABIT = `${WORK_REGISTER_MEMBERSHIP} AND ${WORK_KIND}='habit'`;
 export const WORK_HABIT_HISTORY = `${WORK_REGISTER_MEMBERSHIP} AND ${WORK_HABIT_CHECKS}<>'{}'`;
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
 const COMPLETE_REGISTER_ROWS = 200;
@@ -581,35 +582,40 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
     }
     case "habits": {
       const enabled = `${WORK_KIND}='habit' AND ${WORK_ENABLED}`;
-      const visible = `${WORK_REGISTER_MEMBERSHIP}
-        AND (${WORK_KIND}='habit' OR EXISTS(SELECT 1 FROM json_each(state_json,'$.work.habit_checks') day WHERE json_extract(day.value,'$.value')=1))`;
-      const selected = `FROM resources INDEXED BY resources_work_capture WHERE ${visible}`;
+      const checked = "EXISTS(SELECT 1 FROM json_each(state_json,'$.work.habit_checks') day WHERE json_extract(day.value,'$.value')=1)";
+      const visible = `${WORK_REGISTER_MEMBERSHIP} AND (${WORK_KIND}='habit' OR ${checked})`;
+      const keys = `ref,${WORK_CAPTURE_LAMPORT} AS lamport,${WORK_CAPTURE_REPLICA} AS replica`;
+      const members = `FROM (SELECT ${keys} FROM resources INDEXED BY resources_designated_habits WHERE ${WORK_DESIGNATED_HABIT}
+        UNION ALL SELECT ${keys} FROM resources INDEXED BY resources_habit_history
+          WHERE ${WORK_HABIT_HISTORY} AND ${WORK_KIND} IS NOT 'habit' AND ${checked})`;
+      const order = "lamport,replica,ref";
       const details = `${WORK_LABEL_SQL} AS label,CASE WHEN ${enabled} THEN 'true' ELSE 'false' END AS enabled`;
-      const columns = `ref,${details}`;
       const item = "'ref',ref,'label',CASE WHEN length(CAST(json_quote(label) AS BLOB))<=512 THEN label END,'enabled',json(enabled)";
+      const slice = (bounds: string) => `SELECT r.ref,${details}
+        FROM (SELECT * ${members} ORDER BY ${order} ${bounds}) k CROSS JOIN resources r ON r.ref=k.ref
+        ORDER BY k.lamport,k.replica,k.ref`;
       if ("token" in query.at) return compileCapturedIndex(query.at, {
-        members: selected, order: WORK_CAPTURE_ORDER, group: "''", visible, details, item, matches: "", params: [],
+        members, order, group: "''", visible, details, item, matches: "", params: [],
       });
       switch (query.at.kind) {
         case "describe":
-          return {sql: `WITH extent AS (SELECT count(*) AS total ${selected}),
-            slice AS (SELECT ${columns} ${selected} ORDER BY ${WORK_CAPTURE_ORDER}
-              LIMIT (SELECT CASE WHEN total<=${COMPLETE_REGISTER_ROWS} THEN total ELSE 24 END FROM extent))
+          return {sql: `WITH extent AS (SELECT count(*) AS total ${members}),
+            slice AS (${slice(`LIMIT (SELECT CASE WHEN total<=${COMPLETE_REGISTER_ROWS} THEN total ELSE 24 END FROM extent)`)})
             SELECT json_object('kind','description','total',total,'groups',json('[]'),
               'items',json((SELECT json_group_array(json_object(${item})) FROM slice))) AS register FROM extent`, params: []};
         case "range": {
           const {start,limit} = query.at;
           if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > AUTHORED_INDEX_RANGE)
             throw new RangeError("Invalid habit range");
-          return {sql: `WITH slice AS (SELECT ${columns} ${selected} ORDER BY ${WORK_CAPTURE_ORDER} LIMIT ?1 OFFSET ?2)
+          return {sql: `WITH slice AS (${slice("LIMIT ?1 OFFSET ?2")})
             SELECT json_object('kind','range','start',?2,'items',json_group_array(json_object(${item}))) AS register FROM slice`,
             params: [limit,start]};
         }
         case "locate": {
           if (query.at.refs.length > 100) throw new RangeError("Too many habit locations");
-          return {sql: `WITH targets AS (SELECT ${columns},${WORK_CAPTURE_LAMPORT} AS lamport,${WORK_CAPTURE_REPLICA} AS replica
-              ${selected} AND ref IN (SELECT value FROM json_each(?1))),
-            ranked AS (SELECT targets.*, (SELECT count(*) ${selected} AND (${WORK_CAPTURE_ORDER}) <
+          return {sql: `WITH targets AS (SELECT ${keys},${details} FROM resources
+              WHERE ref IN (SELECT value FROM json_each(?1)) AND ${visible}),
+            ranked AS (SELECT targets.*, (SELECT count(*) ${members} WHERE (${order}) <
               (targets.lamport,targets.replica,targets.ref)) AS rank FROM targets)
             SELECT json_object('kind','locations','items',json_group_array(json_object(${item},'rank',rank))) AS register FROM ranked`,
             params: [JSON.stringify(query.at.refs)]};
