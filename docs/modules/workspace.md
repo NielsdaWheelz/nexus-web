@@ -1260,38 +1260,36 @@ synchronously before its visit leaves the screen: push and traverse capture the
 navigated pane, and any command that moves activation captures the pane losing
 it (mobile unmounts it). Keyboard-ness is read at capture: the focused element
 is inside the pane, matches `:focus-visible` and is not editable. A new visit's
-registration restores: it places the eye-line row (else the clamped offset) at
-once and twice more over two frames after the body reports ready
-(`usePaneReturnReady`, and every `usePaneReturnDescendantReady` inside the
-content), then focuses the row's `[data-row-focusable]` (else the pane
-landmark). Wheel, touch, pointer and scroll keys cancel a pending restore.
+registration restores the measured eye-line occurrence once, then focuses the
+row's `[data-row-focusable]` or the pane landmark with `preventScroll`.
+named returns and reveals can demand their target and its enclosing subtree.
+a numeric return waits for the settled extent. newer input, native scroll
+displacement or foreground departure revokes pending placement.
 Visit data is written on every commit and tagged with its routeKey, so a replace
 to another route never restores stale data; a list's snapshot carries the change
 stamp it was read under. complete value readers paint the visit snapshot and
 reread; paged readers retain their stamp-based return policy (architecture §8.12).
-`PaneRefreshAnchor` captures same-query row replacement before mutation and
-restores one shared pane eye-line after layout, unless newer input intent wins.
-at scroll zero, the pane's top owns position instead of a visible row below it;
-visit return, refresh and measurement changes retain that absolute top.
-large eligible indices register their complete ordered ids and measured row
-geometry through `usePaneCollectionGeometry`. the same memento owns return,
-refresh and measurement-change scroll writes; the row window owns measurement
-and mounted demand only. restoration waits for affected descendants to finish
-measurement, including sibling lists sharing this scrollport. logical ranks
-locate unmounted anchors and choose the next full-order survivor after removal;
-bounded row demand mounts a needed target before focus recovery. a connected
-unrelated focus destination wins over a pending return.
+`PaneRefreshAnchor` and `usePaneBeforeLayout` capture the current reading line
+before layout changes. the first readable start in the port wins, or a clipped
+occurrence when no start is visible. nested captures share one commit correction.
+a pending child can yield to its measured parent's displacement. a measured
+successor can take a deleted occurrence's line. the correction is relative to
+the live offset and accounts for native clamping. at scroll zero the pane keeps
+its origin. the correction never admits rows or becomes a visit restore.
 
 `AnchorGeometry` is the common committed-frame contract for uniform collections
-and variable journal days/rows: ordered identities, visible anchor, position
-proof, mounted element and owner-safe demand. pending differs from missing and
-failed. nested geometry refines only its actual enclosing logical anchor.
-`usePaneBeforeLayout` captures before imperative editor/binding mutations;
-placement waits until measured extents reach the committed frame. geometry
-owners never compete with the memento by writing scroll offsets.
-restoration rebases committed row offsets onto each root's live document origin;
-a sibling may move that root without rerendering it. moved origins refresh the
-existing measured ranges even when the scroll offset is clamped.
+and variable journal days and rows. it gives the pane ordered identities,
+position proof and scoped demand. a day can prove its heading while its subtree
+opens. offset commits rebase logical windows on their live roots so an agenda
+shift and an outline shift contribute once. the pane disables native anchoring
+on ports it corrects. unwindowed flow uses native anchoring.
+
+`usePaneScrollMotion` reports native displacement and settlement to the
+journal's reservation owner. the pane accounts for its own placements and
+clamps separately. settlement samples the offset after native scroll end and
+waits for a held mouse pointer to release. while travelling the pane discards
+passive corrections, and the journal retains any changing reservation above
+the line. deferred measurements publish against the line visible at rest.
 
 `CollectionView` keeps the most recently interacted row and its neighbours
 mounted in a large index; an active menu or drag adds scoped demand. this preserves

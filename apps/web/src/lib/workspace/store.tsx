@@ -277,7 +277,7 @@ function createWorkspaceStore(
       const departed = current && (current.current_visit.id !== pane.current_visit.id || routeKeyOf(current) !== routeKeyOf(pane));
       if ((pane.id === data.state.active_primary_pane_id && next.active_primary_pane_id !== pane.id) ||
         departed) {
-        memento.capture(pane.id);
+        memento.captureDeparture(pane.id);
       }
       if (departed) memento.write(pane.current_visit.id, routeKeyOf(pane), COMPANION_VISIT, { secondary: pane.secondary });
     }
@@ -513,14 +513,14 @@ function createWorkspaceStore(
     navigatePane(
       paneId: string,
       href: string,
-      options: { replace?: boolean; activate?: boolean; labelHint?: string; discardOwnerIds?: readonly string[]; entry?: WorkspacePaneEntry } = {},
+      options: { replace?: boolean; activate?: boolean; labelHint?: string; discardOwnerIds?: readonly string[]; entry?: WorkspacePaneEntry; newVisit?: true } = {},
     ): WorkspaceNavigationResult {
       const resolved = resolveTodayHref(href, timeZone());
       if (resolved === null) { calendarUnavailable(); return "cancelled"; }
       const target = normalizeWorkspaceHref(resolved);
       const pane = find(paneId);
       if (!target || !pane) return "unchanged";
-      if (pane.current_visit.href === target) {
+      if (pane.current_visit.href === target && options.newVisit !== true) {
         if (!guard.confirmLoss({scopes: [], ownerIds: options.discardOwnerIds ?? []})) return "cancelled";
         const entry = options.entry ?? (resolvePaneRouteModel(target).id === "dailyDate" ? { kind: "RevealDailyDate" as const } : null);
         if (entry === null) {

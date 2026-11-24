@@ -1,183 +1,263 @@
 "use client";
 
-/** Date geometry and admission only. Outline sessions own their writing and rows. */
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { flushSync } from "react-dom";
-import { defaultRangeExtractor, observeElementOffset, useVirtualizer } from "@tanstack/react-virtual";
-import { usePaneBeforeLayout, type AnchorGeometry, type AnchorGeometryFrame } from "@/lib/workspace/paneReturnMemento";
+import { paneVisibleBand } from "@/lib/panes/paneScroll";
+import { usePaneBeforeLayout, usePaneScrollMotion, type AnchorGeometry, type AnchorGeometryFrame } from "@/lib/workspace/paneReturnMemento";
 
-export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLDivElement | null>, indexState: "pending" | "ready" | "failed", overscan: 0 | 1) {
+export const JOURNAL_DAY_ESTIMATE = 320;
+
+function before(tops: readonly number[], offset: number): number {
+  let lo = 0, hi = tops.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (tops[mid] <= offset) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo - 1;
+}
+
+/** Reservations determine the archive's positions. The same prefix serves
+ * mounting, the reading date and the pane's explicit return geometry. */
+export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLDivElement | null>, index: "pending" | "ready" | "failed", overscan: 0 | 1, typography: object) {
   const beforeLayout = usePaneBeforeLayout();
-  const [, changed] = useState(0);
-  const revision = useRef(0);
-  const heights = useRef(new Map<string, number>());
-  const elements = useRef(new Map<string, HTMLElement>());
-  const admissions = useRef(new Map<string, "pending" | "ready" | "failed">());
-  const demands = useRef(new Map<symbol, string>());
+  const motion = usePaneScrollMotion();
+  const [sizes, setSizes] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const prefix = useMemo(() => {
+    const ranks = new Map<string, number>();
+    let height = 0;
+    const tops = dates.map((date, rank) => {
+      ranks.set(date, rank);
+      const top = height;
+      height += sizes.get(date) ?? JOURNAL_DAY_ESTIMATE;
+      return top;
+    });
+    return { ranks, tops, height };
+  }, [dates, sizes]);
+  const nodes = useRef(new Map<string, HTMLElement>());
+  const natural = useRef(new Map<HTMLElement, { date: string; complete: boolean }>());
   const observer = useRef<ResizeObserver | null>(null);
-  const syncOffset = useRef<(() => void) | null>(null);
+  const deferred = useRef(new Map<string, number>());
+  const style = useRef(typography);
   const frame = useRef<AnchorGeometryFrame | null>(null);
-  const committed = useRef({ dates, tops: [] as number[], port: null as HTMLElement | null, origin: 0, revision: 0 });
-  const scrollport = useCallback(() => root.current?.closest<HTMLElement>("[data-pane-content]") ?? null, [root]);
-  const key = useCallback((index: number) => dates[index]!, [dates]);
-  const virtualizer = useVirtualizer<HTMLElement, HTMLElement>({
-    count: dates.length, getScrollElement: scrollport, getItemKey: key,
-    estimateSize: index => heights.current.get(dates[index]) ?? 320,
-    overscan,
-    scrollMargin: committed.current.origin,
-    rangeExtractor: range => [...new Set([...defaultRangeExtractor(range), ...[...demands.current.values()]
-      .map(date => dates.indexOf(date)).filter(index => index >= 0)])].sort((a, b) => a - b),
-    observeElementOffset: (instance, receive) => {
-      const release = observeElementOffset(instance, receive);
-      const sync = () => { const element = instance.scrollElement; if (element !== null) receive(element.scrollTop, false); };
-      syncOffset.current = sync;
-      return () => { if (syncOffset.current === sync) syncOffset.current = null; release?.(); };
-    },
-    // All explicit positioning and size compensation belong to the pane memento.
-    scrollToFn: () => {},
-  });
-  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
-  virtualizer.getTotalSize();
-  const slots = virtualizer.getVirtualItems();
-  const tops: number[] = [];
-  let height = 0;
-  for (const date of dates) { tops.push(height); height += heights.current.get(date) ?? 320; }
-  const port = scrollport();
-  const origin = root.current && port
-    ? root.current.getBoundingClientRect().top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop : 0;
-  const epoch = revision.current;
-  const day = [...elements.current.values()].find(element => !element.hidden);
-  const trailing = day === undefined ? 0 : parseFloat(getComputedStyle(day).paddingBottom);
-  // Day spacing occupies layout, but cannot be the reader's eye-line anchor.
-  const firstVisible = (top: number, bottom: number) => {
-    const index = dates.findIndex((_, index) => (tops[index + 1] ?? height) - trailing > top && tops[index] < bottom);
-    return index < 0 ? null : { id: dates[index], offset: tops[index] };
-  };
+  const [demands, setDemands] = useState<ReadonlyMap<symbol, { date: string; descendant: boolean }>>(() => new Map());
+  const descendants = useRef(new Map<string, "pending" | "ready" | "failed">());
+  const [viewport, setViewport] = useState({ origin: 0, from: 0, until: 0 });
+  const [opening, setOpening] = useState<string | null>(null);
+  const started = useRef(new Set<string>());
+  const current = useRef({ prefix, sizes });
+  const geometryRevision = useRef(0);
 
-  const measure = useCallback((date: string, element: HTMLElement | null) => {
-    const previous = elements.current.get(date);
-    if (previous === element) return;
-    if (previous) observer.current?.unobserve(previous);
-    if (element === null) elements.current.delete(date);
-    else { elements.current.set(date, element); observer.current?.observe(element); }
-  }, []);
-  const admit = useCallback((date: string, state: "pending" | "ready" | "failed") => {
-    if (admissions.current.get(date) === state) return;
-    admissions.current.set(date, state); changed(value => value + 1);
-  }, []);
+  const readViewport = useCallback(() => {
+    const feed = root.current;
+    const port = feed?.closest<HTMLElement>("[data-pane-content]");
+    if (!feed || !port) return;
+    const box = feed.getBoundingClientRect(), band = paneVisibleBand(port);
+    const origin = box.top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop;
+    const from = band.top - box.top, until = band.bottom - box.top;
+    setViewport(old => old.origin === origin && old.from === from && old.until === until ? old : { origin, from, until });
+  }, [root]);
   const geometry = useMemo<AnchorGeometry>(() => ({
     read: () => frame.current,
-    layoutReady() {
-      // A changed article and its new date prefix are one pane layout change.
-      if (committed.current.revision !== revision.current) return false;
-      for (const [date, element] of elements.current) {
-        if (element.hidden) continue;
-        const height = element.getBoundingClientRect().height;
-        if (height > 0 && heights.current.get(date) !== height) return false;
-      }
-      return true;
+    layoutReady: () => true,
+    demand(date, descendant = false) {
+      const token = Symbol();
+      setDemands(old => new Map(old).set(token, { date, descendant }));
+      return () => setDemands(old => {
+        const next = new Map(old);
+        next.delete(token);
+        return next;
+      });
     },
-    demand(date) {
-      const owner = Symbol();
-      demands.current.set(owner, date);
-      changed(value => value + 1);
-      return () => { if (demands.current.delete(owner)) changed(value => value + 1); };
-    },
-    element: date => elements.current.get(date) ?? null,
-    // The pane writes before scroll delivery; admit dates from its actual offset.
-    refreshRange: () => { syncOffset.current?.(); changed(value => value + 1); },
-  }), []);
+    descendantState: date => descendants.current.get(date) ?? "pending",
+    element: date => nodes.current.get(date) ?? null,
+    refreshRange: readViewport,
+  }), [readViewport]);
+  const article = useCallback((date: string, element: HTMLElement | null) => {
+    if (element === null) nodes.current.delete(date);
+    else nodes.current.set(date, element);
+  }, []);
+  const measure = useCallback((date: string, element: HTMLElement, complete: boolean) => {
+    natural.current.set(element, { date, complete });
+    observer.current?.observe(element);
+    return () => { natural.current.delete(element); observer.current?.unobserve(element); };
+  }, []);
+  const begin = useCallback((date: string) => { started.current.add(date); }, []);
+  const release = useCallback((date: string) => {
+    started.current.delete(date);
+    descendants.current.delete(date);
+  }, []);
+  const descendant = useCallback((date: string, state: "pending" | "ready" | "failed") => {
+    descendants.current.set(date, state);
+  }, []);
+
+  const settle = useCallback((date: string) => { setOpening(old => old === date ? null : old); }, []);
 
   useLayoutEffect(() => {
-    if (!port || !root.current) return;
-    const origin = root.current.getBoundingClientRect().top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop;
-    const mounted = new Set([...elements.current].filter(([, element]) => !element.hidden).map(([date]) => date));
-    const proof = new Map(admissions.current);
-    const byDate = new Map(dates.map((date, index) => [date, index]));
-    frame.current = { revision: epoch, root: root.current, scrollport: port, origin, anchors: dates,
-      firstVisible,
+    const feed = root.current;
+    const port = feed?.closest<HTMLElement>("[data-pane-content]");
+    if (!feed || !port) return;
+    if (current.current.prefix !== prefix) geometryRevision.current++;
+    current.current = { prefix, sizes };
+    const origin = feed.getBoundingClientRect().top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop;
+    frame.current = {
+      revision: geometryRevision.current, root: feed, scrollport: port, origin, anchors: dates,
+      firstVisible(top, bottom) {
+        const rank = Math.max(0, before(prefix.tops, top));
+        return rank < dates.length && top < prefix.height && prefix.tops[rank] < bottom
+          ? { id: dates[rank], offset: prefix.tops[rank] }
+          : null;
+      },
       position(date) {
-        if (indexState === "failed") return { kind: "failed" };
-        if (indexState === "pending") return { kind: "pending", estimate: null };
-        const index = byDate.get(date);
-        if (index === undefined) return { kind: "missing" };
-        if (proof.get(date) === "failed") return { kind: "failed" };
-        return mounted.has(date) && proof.get(date) === "ready" ? { kind: "ready", offset: tops[index] } : { kind: "pending", estimate: tops[index] };
+        const rank = prefix.ranks.get(date);
+        if (rank === undefined) {
+          if (index === "pending") return { kind: "pending", estimate: null };
+          return { kind: index === "failed" ? "failed" : "missing" };
+        }
+        const offset = prefix.tops[rank];
+        const node = nodes.current.get(date);
+        return node && !node.hidden ? { kind: "ready", offset } : { kind: "pending", estimate: offset };
       },
     };
-    committed.current = { dates, tops, port, origin, revision: epoch };
+    readViewport();
   });
+
   useLayoutEffect(() => {
-    let width: number | null = null;
-    let typography: string | null = null, writingTypography = "";
-    const font = (element: Element) => {
-      const style = getComputedStyle(element);
-      return [style.fontFamily, style.fontSize, style.fontWeight, style.lineHeight, style.letterSpacing];
-    };
-    const readTypography = () => {
-      const node = root.current;
-      if (node === null) return null;
-      const heading = node.querySelector("h2"), writing = node.querySelector('[data-reference-editor^="outline:"]');
-      if (writing !== null) writingTypography = JSON.stringify(font(writing));
-      return JSON.stringify([font(node), heading === null ? null : font(heading), writingTypography]);
-    };
-    const invalidate = () => {
-      typography = readTypography();
+    const feed = root.current;
+    const port = feed?.closest<HTMLElement>("[data-pane-content]");
+    if (!feed || !port) return;
+    let width = feed.getBoundingClientRect().width;
+    let resetOnRest = false;
+    const publish = (updates: ReadonlyMap<string, number>, reset = false) => {
       const finish = beforeLayout();
       flushSync(() => {
-        heights.current.clear(); revision.current += 1;
-        const measured: { index: number; height: number }[] = [];
-        for (const [date, element] of elements.current) {
-          if (element.hidden) continue;
-          const index = committed.current.dates.indexOf(date), height = element.getBoundingClientRect().height;
-          if (index >= 0 && height > 0) { heights.current.set(date, height); measured.push({ index, height }); }
-        }
-        virtualizer.measure();
-        for (const { index, height } of measured) virtualizer.resizeItem(index, height);
-        changed(value => value + 1);
+        setSizes(old => {
+          const next = reset ? new Map<string, number>() : new Map(old);
+          for (const [date, height] of updates) next.set(date, height);
+          return next;
+        });
       });
       finish();
     };
-    const size = (entries: ResizeObserverEntry[]) => {
-      const nextTypography = readTypography();
-      if (typography !== null && nextTypography !== typography) invalidate();
-      typography = nextTypography;
-      const { dates } = committed.current;
-      const updates: { index: number; date: string; height: number }[] = [];
-      for (const entry of entries) {
-        if (entry.target === root.current) {
-          const next = entry.contentRect.width;
-          if (width !== null && width !== next) invalidate();
-          width = next;
-          continue;
+    const update = (entries: Iterable<HTMLElement>, reset = false) => {
+      const { prefix, sizes } = current.current;
+      const line = paneVisibleBand(port).top - feed.getBoundingClientRect().top;
+      const moving = motion.moving();
+      const updates = new Map<string, number>();
+      if (reset && moving) { resetOnRest = true; return; }
+      if (reset) deferred.current.clear();
+      for (const element of entries) {
+        const measurement = natural.current.get(element);
+        if (measurement === undefined) continue;
+        const { date, complete } = measurement;
+        const rank = prefix.ranks.get(date);
+        if (rank === undefined) continue;
+        const measured = element.getBoundingClientRect().height;
+        if (measured <= 0) continue;
+        const height = complete ? measured : Math.max(measured, sizes.get(date) ?? JOURNAL_DAY_ESTIMATE);
+        if (moving && prefix.tops[rank] < line) {
+          deferred.current.set(date, height);
+        } else {
+          deferred.current.delete(date);
+          if (reset || (sizes.get(date) ?? JOURNAL_DAY_ESTIMATE) !== height) updates.set(date, height);
         }
-        const element = entry.target as HTMLElement;
-        const date = element.dataset.journalDate;
-        if (!date || element.hidden) continue;
-        const index = dates.indexOf(date), height = element.getBoundingClientRect().height;
-        if (index >= 0 && height > 0 && heights.current.get(date) !== height) updates.push({ index, date, height });
       }
-      if (updates.length === 0) return;
-      const finish = beforeLayout();
-      flushSync(() => {
-        for (const update of updates) {
-          heights.current.set(update.date, update.height);
-          virtualizer.resizeItem(update.index, update.height);
-        }
-        revision.current += 1;
-        changed(value => value + 1);
-      });
-      finish();
+      if (reset || updates.size) publish(updates, reset);
     };
-    observer.current = new ResizeObserver(size);
-    if (root.current) observer.current.observe(root.current);
-    for (const element of elements.current.values()) observer.current.observe(element);
-    document.fonts.addEventListener("loadingdone", invalidate);
+    const resize = new ResizeObserver(entries => {
+      const next = feed.getBoundingClientRect().width;
+      const changed = width !== next;
+      width = next;
+      update(changed ? natural.current.keys() : entries.map(entry => entry.target as HTMLElement), changed);
+      readViewport();
+    });
+    observer.current = resize;
+    resize.observe(feed);
+    resize.observe(port);
+    if (feed.parentElement) resize.observe(feed.parentElement);
+    for (const element of natural.current.keys()) resize.observe(element);
+    const fonts = () => update(natural.current.keys(), true);
+    const restyle = style.current === typography ? null : requestAnimationFrame(fonts);
+    style.current = typography;
+    document.fonts.addEventListener("loadingdone", fonts);
+    port.addEventListener("scroll", readViewport, { passive: true });
+    const onRest = motion.onRest(() => {
+      if (resetOnRest) {
+        resetOnRest = false;
+        fonts();
+        return;
+      }
+      if (!deferred.current.size) return;
+      const updates = new Map(deferred.current);
+      deferred.current.clear();
+      publish(updates);
+    });
     return () => {
-      observer.current?.disconnect(); observer.current = null;
-      document.fonts.removeEventListener("loadingdone", invalidate);
+      onRest();
+      if (restyle !== null) cancelAnimationFrame(restyle);
+      resize.disconnect();
+      observer.current = null;
+      document.fonts.removeEventListener("loadingdone", fonts);
+      port.removeEventListener("scroll", readViewport);
     };
-  }, [beforeLayout, root, virtualizer, port]);
-  const visible = port === null ? null : firstVisible(port.scrollTop - origin, port.scrollTop - origin + port.clientHeight)?.id ?? null;
-  return { geometry, measure, admit, dates: slots.map(slot => dates[slot.index]!), tops, height, visible };
+  }, [root, motion, beforeLayout, readViewport, typography]);
+
+  const first = Math.max(0, before(prefix.tops, viewport.from));
+  let last = Math.max(first, before(prefix.tops, viewport.until));
+  if (prefix.tops[last] === viewport.until) last--;
+  const visible = viewport.until > 0 && viewport.from < prefix.height ? dates.slice(first, last + 1) : [];
+  const reading = viewport.from >= 0 ? visible[0] ?? null : null;
+  const requested = useMemo(() => new Set([...demands.values()].map(({ date }) => date)), [demands]);
+  const bodies = useMemo(() => new Set([...demands.values()].filter(request => request.descendant).map(({ date }) => date)), [demands]);
+  const mounted = new Set(dates.slice(Math.max(0, first - overscan), last + 1 + overscan));
+  for (const date of requested) if (prefix.ranks.has(date)) mounted.add(date);
+  const openingPresent = opening !== null && prefix.ranks.has(opening);
+  if (openingPresent) mounted.add(opening);
+  useLayoutEffect(() => {
+    if (opening !== null && !openingPresent) settle(opening);
+  }, [opening, openingPresent, settle]);
+
+  // Re-sample the live coordinates rather than chasing a queue of past dates.
+  // The second frame runs even if no more scroll events arrive.
+  const nudge = useRef<(() => void) | null>(null);
+  useLayoutEffect(() => {
+    if (opening !== null) return;
+    const candidate = () => {
+      const feed = root.current;
+      if (!feed) return null;
+      const port = feed.closest<HTMLElement>("[data-pane-content]");
+      if (!port) return null;
+      const box = feed.getBoundingClientRect(), band = paneVisibleBand(port);
+      const from = band.top - box.top, until = band.bottom - box.top;
+      if (until <= 0 || from >= prefix.height) return null;
+      for (let rank = Math.max(0, before(prefix.tops, from)); rank < dates.length && prefix.tops[rank] < until; rank++) {
+        const date = dates[rank];
+        if (nodes.current.has(date) && !started.current.has(date)) return date;
+      }
+      return null;
+    };
+    let sample: number | null = null;
+    const schedule = () => {
+      if (sample !== null) return;
+      sample = requestAnimationFrame(() => {
+        sample = null;
+        const date = candidate();
+        if (date === null) return;
+        sample = requestAnimationFrame(() => {
+          sample = null;
+          if (candidate() === date) setOpening(date);
+          else schedule();
+        });
+      });
+    };
+    nudge.current = schedule;
+    schedule();
+    return () => {
+      if (sample !== null) cancelAnimationFrame(sample);
+      nudge.current = null;
+    };
+  }, [opening, dates, prefix, root]);
+  useLayoutEffect(() => { nudge.current?.(); }, [viewport]);
+
+  return { ...prefix, sizes, viewport, visible, reading, mounted, requested, bodies, opening, geometry, article, measure, begin, release, settle, descendant };
 }

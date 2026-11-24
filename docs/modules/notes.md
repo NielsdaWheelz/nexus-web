@@ -15,32 +15,31 @@ completion-only dates have a null page ref; empty authored pages remain indexed.
 only the requested unwritten date adds a presentation section. reading, focus and scrolling create or restore nothing; canonical daily
 bindings, including historical refs, remain authoritative.
 
-one pane coordinates dates, one controller owns each day, and one memento owns
-programmatic scrolling. the journal's variable-height date geometry composes
-immutable outline row frames. resize, projection and binding reconciliation
-capture the prior eye line before publishing geometry; user input cancels stale
-restoration. a child frame refines only its enclosing logical date; placement
-waits for measured extents to reach the committed geometry. explicit date
-activation reveals; back/resume restore the saved visit. workspace labels and
-recents describe the arrival date without title
-reads or rewriting the destination to a standalone page.
+one pane coordinates date geometry and explicit placement. each day owns its
+writing and work. one article and heading keep their identity while its local
+reads open, succeed or fail. date geometry uses a measured extent or a 320 px
+reservation. native travel can freeze reservations above the reading line
+until it settles. idle changes preserve the live measured occurrence.
+explicit reveals need the band or date heading. back can also demand the
+previously held outline row. workspace recents describe the arrival date.
 
-programmatic scroll positions reach the date virtualizer through its offset
-observer before range planning. geometry and admission use the same scroll
-position; ordinary scroll events keep the library's existing observer.
-day heights include their spacing, but trailing inter-day spacing is not readable
-content when choosing the eye line or visible date.
+one passive cold day opens at a time per visit, selected at the reading edge
+across two frames. the completed-work read can start alongside binding and
+outline bootstrap. each portion appears with its own first result. a departed
+opening can finish issued reads. the next opening uses the live viewport.
+available prose stays visible during travel. passing shells show dates.
+a cold outline initially admits one row. standalone roots keep their 32-row
+bootstrap. compound results contain full root and selected raw rows. before,
+after and tail carry links only. selected bodies keep their actual size.
 
-a cold journal day first admits one row and its existing boundary proof, then
-fills through ordinary viewport demand. standalone roots keep their 32-row
-bootstrap. boundary resources remain complete; the row limit is not a byte cap.
-
-the band above the agenda names the account's current date, when known. if
-today is the first day, its accessible heading stays in the leaf and its menu
-moves to the band. a later-dated first page leaves today's leaf heading in view.
-all day headings share metrics while their inner date names can change size. the
-navigation row names the day under the scroll edge and yields while its date is
-in the scrollport. pressing the name opens the calendar. `today` returns to the band. dates use weekday, day and month, adding the year outside this year.
+the band above the agenda names today when the account clock is available.
+every today action goes there. if today is the first day, its accessible
+heading stays in the leaf and the band lends its visible date line.
+`dates` stays in pane chrome beside the date at the reading edge. the duplicate
+date text yields while its heading is visible. the chooser freezes that date,
+marks known indexed days and accepts any civil date. a choice that moves
+reading creates one visit in this pane, even at an identical address. aligned
+choices leave history alone.
 
 inline journal titles are italic and keep the content editor's six-line extent.
 empty titles hide after settled blur. trailing space holds a break between days.
@@ -60,7 +59,8 @@ may revisit a live preview. fresh admission follows the captured neighbor's
 identity, or its surviving order after deletion. concurrent insertions or moves
 may require revisiting the day; a reading hold is not an archive snapshot.
 
-the complete index and visited geometry cost `o(days)`. unseen heights are
+the complete index and visited geometry cost `o(days)`. a viewport lookup
+costs `o(log days + mounted)`. unseen heights are
 estimates; active selections and rich bodies have no hard total-memory bound.
 android's existing 16-mib result cap applies to the compact index and compound
 windows. the ui, worker and packaged native plans share the same closed query

@@ -2,11 +2,10 @@
 
 import { useContext, useLayoutEffect, useRef, useState } from "react";
 import { WorkUnavailableError } from "@nexus/authored/types";
-import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import Button from "@/components/ui/Button";
 import { formatDay } from "@/lib/localDate";
 import { useAccountToday } from "@/lib/notes/accountDay";
-import { useAuthoredPages } from "@/lib/notes/hooks";
+import type { useAuthoredPages } from "@/lib/notes/hooks";
 import type { OutlineHistory } from "@/lib/notes/structure";
 import { WorkHistoryContext, workCommand } from "@/lib/notes/work";
 import { localResourceLabel } from "@/lib/resources/localResource";
@@ -14,10 +13,9 @@ import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import styles from "./dailyWork.module.css";
 
 /** A day's completed work as one run-in line. Nothing is drawn until the read has settled with rows. */
-export default function CompletedWork({date}:{date:string}) {
-  const read = useAuthoredPages({kind:"work_completed",local_date:date,cursor:null,limit:100});
+export default function CompletedWork({date,read}:{date:string; read:ReturnType<typeof useAuthoredPages>}) {
   const history = useContext(WorkHistoryContext);
-  if (!history || (read.data?.rows.length ?? 0) === 0 && read.error === null) return null;
+  if (!history || !read.data?.rows.length) return null;
   return <CompletedLine date={date} read={read} history={history} />;
 }
 
@@ -35,7 +33,6 @@ function CompletedLine({date,read,history}:{date:string; read:ReturnType<typeof 
   const rows = read.data?.rows ?? [];
   const day = formatDay(date, today);
   return <section ref={root} className={styles.completed} aria-label={`completed on ${day}`}>
-    <AuthoredReadFailure {...read} noun="completed work" />
     {rows.length === 0 ? null : <div>
       <span className={styles.completedLabel}>completed</span>
       <ul className={styles.completedList}>

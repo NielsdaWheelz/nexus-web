@@ -17,3 +17,15 @@ web, shared worker and android must retain the same compound query contract.
 preserve pending writing through updates; recover with a coherent pair rather
 than the retired query interface. resolve when the remaining observations or
 explicit owner dispositions are recorded in the release pr.
+
+## date navigation and compact outline reads
+
+pair the web package, authored shared worker and android apk. the published
+android `0.3.17` used wire `25`. main already advanced to wire `26` for the
+next pair. the compound outline reply changes within that bump. the authored
+format and database schema stay at their current revisions.
+
+close old browser tabs and use the existing update admission. an installed
+wire-`25` client must stop before its first local query against the new pair.
+verify pending local writing across replacement, offline open and reconnect.
+recover with a coherent web, worker and apk pair.

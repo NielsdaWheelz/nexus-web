@@ -41,7 +41,7 @@ export interface PaneRouterOptions {
 }
 export interface PaneScopedRouter {
   readonly canGoBack: boolean;
-  push(href: string, options?: PaneRouterOptions): WorkspaceNavigationResult;
+  push(href: string, options?: PaneRouterOptions & { newVisit?: true }): WorkspaceNavigationResult;
   replace(href: string, options?: PaneRouterOptions): WorkspaceNavigationResult;
   back(options: PaneHistoryOptions): WorkspaceNavigationResult;
   forward(options: PaneHistoryOptions): WorkspaceNavigationResult;
@@ -125,17 +125,17 @@ export function PaneRuntimeProvider(props: {
 
   const commands = useMemo(() => {
     const now = () => latest.current;
-    const go = (target: string, replace: boolean, options: PaneRouterOptions = {}) => {
+    const go = (target: string, replace: boolean, options: PaneRouterOptions = {}, newVisit?: true) => {
       const next = normalizeWorkspaceHref(target);
       if (!next) return "unchanged" as const;
       const { labelHint, activate, discardOwnerIds, entry } = options;
-      return now().store.navigatePane(pane.id, next, { replace, activate, labelHint, discardOwnerIds, entry });
+      return now().store.navigatePane(pane.id, next, { replace, activate, labelHint, discardOwnerIds, entry, newVisit });
     };
     const router: PaneScopedRouter = {
       get canGoBack() {
         return now().pane.history.back.length > 0;
       },
-      push: (target, options) => go(target, false, options),
+      push: (target, options) => go(target, false, options, options?.newVisit),
       replace: (target, options) => go(target, true, options),
       back: (options) => now().store.goBackPane(pane.id, options),
       forward: (options) => now().store.goForwardPane(pane.id, options),
