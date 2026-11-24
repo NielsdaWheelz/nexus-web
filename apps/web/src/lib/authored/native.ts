@@ -204,7 +204,37 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       }
     },
     resetProvisioning: async () => { await call("reset_provisioning"); },
-    stage: async (states: MergeResult) => { await call("stage", { states }, undefined, states.projections); },
+    stage: async (states: MergeResult) => {
+      const ceiling = 16 * 1024 * 1024 - 1024;
+      const encoder = new TextEncoder();
+      const empty: MergeResult = {resources: [], links: [], passages: [], source_stubs: [], projections: []};
+      const byRef = new Map(states.projections.map(projection => [projection.ref, projection]));
+      // Each stage is unpublished until finishProvisioning commits its exact counts.
+      const stage = async <T,>(records: readonly T[], corpus: (rows: T[]) => MergeResult,
+        project: (row: T) => MergeResult["projections"][number] | undefined) => {
+        let rows: T[] = [], projections: MergeResult["projections"] = [], size = 0;
+        const flush = async () => {
+          if (rows.length === 0) return;
+          await call("stage", {states: {...corpus(rows), projections}}, undefined, projections);
+          rows = []; projections = []; size = 0;
+        };
+        for (const row of records) {
+          const projection = project(row);
+          const bytes = encoder.encode(JSON.stringify(row)).byteLength +
+            (projection === undefined ? 0 : encoder.encode(JSON.stringify(projection)).byteLength) + 2;
+          if (bytes > ceiling) throw new RangeError("authored snapshot record exceeds the native transfer limit");
+          if (size + bytes > ceiling) await flush();
+          rows.push(row);
+          if (projection !== undefined) projections.push(projection);
+          size += bytes;
+        }
+        await flush();
+      };
+      await stage(states.resources, resources => ({...empty, resources}), row => byRef.get(row.ref));
+      await stage(states.passages, passages => ({...empty, passages}), row => byRef.get(`passage_anchor:${row.anchor_id}`));
+      await stage(states.source_stubs, source_stubs => ({...empty, source_stubs}), () => undefined);
+      await stage(states.links, links => ({...empty, links}), () => undefined);
+    },
     finishProvisioning: async (cursor: string, counts: Record<string, number>, lamport: string) => { await call("finish_provisioning", { cursor, counts, lamport }); },
     scopeProgress: () => call<ScopeProgress>("scope_progress"),
     scopeRefs: async (after: string | null) => (await call<{refs: string[]}>("scope_refs", {after})).refs,
