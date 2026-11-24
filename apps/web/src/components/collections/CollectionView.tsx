@@ -24,6 +24,14 @@ import { IndexRowWindow } from "@/lib/collections/indexRowWindow";
 import { usePaneCollectionGeometry } from "@/lib/workspace/paneReturnMemento";
 import styles from "./CollectionView.module.css";
 
+const ROW_FOCUS = "[data-row-focusable]:not([disabled])";
+
+function rowControl(row: HTMLElement | null, selector: string): HTMLElement | null {
+  const control = row?.querySelector<HTMLElement>(selector);
+  return (control?.hasAttribute("data-row-primary-control") ? focusableElements(control)[0] : control)
+    ?? row?.querySelector<HTMLElement>(ROW_FOCUS) ?? null;
+}
+
 export interface CollectionViewRowRenderProps<Row extends CollectionRowView = CollectionRowView> {
   readonly afterRemoval: () => HTMLElement | null;
   readonly row: Row;
@@ -167,19 +175,22 @@ export default function CollectionView<Row extends CollectionRowView>({
     }
     if (heldSizes === null || measured.size !== heldSizes.size) setSizes({ scopeKey, heights: measured });
   }, [shown, liveIds, holding, heldSizes, plan, scopeKey, sizes]);
-  const pendingFocus = useRef<{ id: string; selector: string; fallback: HTMLElement | null; release: () => void } | null>(null);
+  const pendingFocus = useRef<{ id: string; selector: string; previous: readonly string[] | null; fallback: HTMLElement | null; release: () => void } | null>(null);
   const fallbackTarget = useCallback(() => {
     const root = returnScopeRef.current;
     const paneId = root?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
     return root?.closest<HTMLElement>('section[aria-label][tabindex="-1"], [role="region"][aria-label][tabindex="-1"]')
       ?? findPaneLandmarkFocusTarget(paneId) ?? findPaneChromeFocusTarget(paneId);
   }, []);
-  const recover = useCallback((id: string, previous: readonly string[], sameRow = false) => {
-    const selector = "[data-row-focusable]:not([disabled])";
+  const recover = useCallback((id: string, previous: readonly string[], controlSelector?: string | null) => {
     const root = returnScopeRef.current;
     const latest = new Set(committedIds.current);
-    const next = sameRow && latest.has(id) ? id : previous.slice(previous.indexOf(id) + 1).find(candidate => latest.has(candidate));
-    const mounted = next ? rowElement(next)?.querySelector<HTMLElement>(selector) : null;
+    const sparse = committed.current.ranked?.source;
+    // A sparse revision can still contain a row that its current window hasn't loaded.
+    const sameRow = controlSelector !== undefined && (sparse === undefined ? latest.has(id) : sparse.rankOf(id) !== null);
+    const next = sameRow ? id : previous.slice(previous.indexOf(id) + 1).find(candidate => latest.has(candidate));
+    const selector = sameRow ? controlSelector ?? ROW_FOCUS : ROW_FOCUS;
+    const mounted = next ? rowControl(rowElement(next), selector) : null;
     if (mounted?.isConnected) return mounted;
     const fallback = fallbackTarget();
     if (next && root && windowed) {
@@ -190,7 +201,7 @@ export default function CollectionView<Row extends CollectionRowView>({
         if (pendingFocus.current?.release === release) pendingFocus.current = null;
       };
       const release = () => { unpin(); fallback?.removeEventListener("blur", cancel); };
-      pendingFocus.current = { id: next, selector, fallback, release };
+      pendingFocus.current = { id: next, selector, previous: sameRow && sparse !== undefined ? previous : null, fallback, release };
       fallback?.addEventListener("blur", cancel);
     }
     return fallback;
@@ -203,8 +214,14 @@ export default function CollectionView<Row extends CollectionRowView>({
       if (active !== document.body && active !== pending.fallback) {
         pending.release(); pendingFocus.current = null;
       } else {
-        const target = rowElement(pending.id)?.querySelector<HTMLElement>(pending.selector);
-        if (target) { target.focus({ preventScroll: true }); pending.release(); pendingFocus.current = null; }
+        const target = rowControl(rowElement(pending.id), pending.selector);
+        const sparse = shown.ranked?.source;
+        const missing = sparse === undefined ? !committedIds.current.includes(pending.id) : sparse.rankOf(pending.id) === null;
+        const previous = missing ? pending.previous : null;
+        if (target !== null || previous !== null) {
+          pending.release(); pendingFocus.current = null;
+          (target ?? (previous === null ? null : recover(pending.id, previous)))?.focus({ preventScroll: true });
+        }
       }
     }
     const focus = ownedFocusRef.current;
@@ -216,14 +233,9 @@ export default function CollectionView<Row extends CollectionRowView>({
     }
     if (document.activeElement !== document.body || root.closest("[inert]")) return;
     ownedFocusRef.current = null;
-    const remaining = Array.from(root.querySelectorAll<HTMLElement>("[data-collection-row-id]"));
-    const sameRow = remaining.find(item => item.dataset.collectionRowId === focus.rowId && item.getAttribute("role") !== "presentation");
-    const control = sameRow?.querySelector<HTMLElement>(focus.controlSelector ?? "[data-row-focusable]:not([disabled])");
-    const sameControl = control?.hasAttribute("data-row-primary-control")
-      ? focusableElements(control)[0] : control;
     const paneId = root.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
-    const target = sameControl ?? sameRow?.querySelector<HTMLElement>("[data-row-focusable]:not([disabled])") ??
-      recover(focus.rowId, focus.orderedIds, true) ?? findPaneLandmarkFocusTarget(paneId);
+    const target = rowControl(rowElement(focus.rowId), focus.controlSelector ?? ROW_FOCUS) ??
+      recover(focus.rowId, focus.orderedIds, focus.controlSelector) ?? findPaneLandmarkFocusTarget(paneId);
     target?.focus({ preventScroll: true });
   });
   const renderCollectionRow = useCallback((
@@ -328,7 +340,7 @@ export default function CollectionView<Row extends CollectionRowView>({
         const href = target.getAttribute("href");
         let controlSelector: string | null = null;
         if (target.matches("[data-row-focusable]")) {
-          controlSelector = "[data-row-focusable]:not([disabled])";
+          controlSelector = ROW_FOCUS;
         } else if (target.matches("[data-row-actions-control]")) {
           controlSelector = "[data-row-actions-control]";
         } else if (target.closest("[data-row-primary-control]")) {
