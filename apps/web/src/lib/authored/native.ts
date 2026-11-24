@@ -179,7 +179,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
         if (windows.length === plans.length && revision !== null) return {
           store_revision: revision, rows: [], children: [], positions: [], binding_id: null, scope_available: true,
           next_cursor: null, previous_cursor: null, canonical_source_ref: null, outline_windows: windows,
-          page_register: null, page_label: null, outline_filter: null, work_index: null, mentions: null,
+          page_register: null, page_label: null, outline_filter: null, work_index: null, habits: null, mentions: null,
           habit_days: null, latest_habit_date: null, daily_index: null,
         };
       }

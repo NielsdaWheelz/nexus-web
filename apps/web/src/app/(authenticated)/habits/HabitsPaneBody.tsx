@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AUTHORED_INDEX_RANGE, type QueryResult, type WorkIndexItem } from "@nexus/authored/types";
+import { AUTHORED_INDEX_RANGE, type QueryResult, type HabitIndexItem } from "@nexus/authored/types";
 import { Ruling } from "@/components/feedback/Ruling";
 import PaneSurface from "@/components/ui/PaneSurface";
 import ResourceList from "@/components/ui/ResourceList";
@@ -23,7 +23,7 @@ import { readerType } from "@/lib/reader/typography";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./habits.module.css";
 
-const habits = (result: QueryResult) => result.work_index;
+const habits = (result: QueryResult) => result.habits;
 
 export default function HabitsPaneBody() {
   const today = useAccountToday();
@@ -88,7 +88,7 @@ export default function HabitsPaneBody() {
 }
 
 function HabitRow({item, today, year, history}: {
-  item: WorkIndexItem; today: string | null; year: number | null; history: ReturnType<typeof useWorkHistory>["history"];
+  item: HabitIndexItem; today: string | null; year: number | null; history: ReturnType<typeof useWorkHistory>["history"];
 }) {
   const marker = useRef<HTMLSpanElement>(null);
   const [visible, setVisible] = useState(false);
@@ -113,7 +113,7 @@ function HabitRow({item, today, year, history}: {
   return <ResourceRow as="div" primary={{kind: "link", href: `/notes/${item.ref.slice(11)}`}} title={title}
     content={{kind: "Details", body: <>
       <span ref={marker} hidden/>
-      {!item.work.designation.enabled || item.work.designation.kind !== "habit" ? <p className={styles.muted}>daily repetition is off</p> : null}
+      {!item.enabled ? <p className={styles.muted}>daily repetition is off</p> : null}
       <AuthoredReadFailure {...read} noun="this habit’s dates"/>
       {today !== null && year !== null ? <div className={styles.calendar} aria-busy={read.pending}>
         {resolved ? <HabitYear year={year} today={today} dates={dates} onOpen={date => {if (history) open(item.ref, date, history);}}/> : null}

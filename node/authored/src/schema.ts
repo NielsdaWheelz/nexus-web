@@ -1,6 +1,6 @@
 /** One device schema. Canonical JSON and derived columns commit together; projections
  * are never an independent authority. Both hosts require FTS5 and synchronous FULL. */
-import { PAGE_TITLE_SQL } from "./queries.ts";
+import { PAGE_TITLE_SQL, WORK_CAPTURE_ORDER, WORK_REGISTER_MEMBERSHIP } from "./queries.ts";
 /** Both outboxes read the server's maximum 64 changes in immutable source order;
  * each host then takes the prefix fitting the existing upload byte budget. */
 export const PENDING_CHANGES_SQL = "SELECT change_json,byte_length FROM pending_changes ORDER BY command_seq LIMIT 64";
@@ -33,6 +33,7 @@ export const DEVICE_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS resources (ref TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('note','page','highlight')), state_json TEXT NOT NULL, merge_bytes BLOB NOT NULL, projection_json TEXT NOT NULL, visible INTEGER NOT NULL, body_text TEXT, title TEXT, local_date TEXT UNIQUE, source_ref TEXT)`,
   `CREATE INDEX IF NOT EXISTS resources_annotations ON resources(source_ref,ref) WHERE visible=1`,
   `CREATE INDEX IF NOT EXISTS resources_register ON resources(${PAGE_TITLE_SQL} COLLATE NOCASE,ref) WHERE kind='page' AND visible=1 AND local_date IS NULL`,
+  `CREATE INDEX IF NOT EXISTS resources_work_capture ON resources(${WORK_CAPTURE_ORDER}) WHERE ${WORK_REGISTER_MEMBERSHIP}`,
   `CREATE TABLE IF NOT EXISTS links (link_id TEXT PRIMARY KEY, endpoint_a TEXT NOT NULL, endpoint_b TEXT NOT NULL, position_a TEXT, position_b TEXT, visible INTEGER NOT NULL, state_json TEXT NOT NULL, UNIQUE(endpoint_a,endpoint_b), CHECK(endpoint_a<endpoint_b))`,
   `CREATE INDEX IF NOT EXISTS links_a ON links(endpoint_a,position_a,link_id)`,
   `CREATE INDEX IF NOT EXISTS links_b ON links(endpoint_b,position_b,link_id)`,

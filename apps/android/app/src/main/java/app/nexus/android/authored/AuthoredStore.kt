@@ -471,9 +471,9 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             .put("binding_id", JSONObject.NULL).put("canonical_source_ref", JSONObject.NULL)
             .put("scope_available", true).put("daily_index", JSONObject.NULL).put("outline_windows", JSONObject.NULL)
             .put("page_register", JSONObject.NULL).put("page_label", JSONObject.NULL).put("outline_filter", JSONObject.NULL)
-            .put("work_index", JSONObject.NULL).put("mentions", JSONObject.NULL).put("habit_days", JSONObject.NULL).put("latest_habit_date", JSONObject.NULL)
+            .put("work_index", JSONObject.NULL).put("habits", JSONObject.NULL).put("mentions", JSONObject.NULL).put("habit_days", JSONObject.NULL).put("latest_habit_date", JSONObject.NULL)
         if (kind in listOf("page_register", "outline_filter", "work_pending", "work_completed", "habits", "mentions")) {
-            val field = if (kind in listOf("work_pending", "work_completed", "habits")) "work_index" else kind
+            val field = if (kind in listOf("work_pending", "work_completed")) "work_index" else kind
             if (!query.isNull("expected_revision") && replica.getString("store_revision") != query.getString("expected_revision")) return result.put(field, JSONObject().put("kind", "changed"))
             if (!literalsComplete && (kind == "page_register" || kind == "outline_filter") && query.getString("text").isNotBlank()) {
                 if (rows(sql("literal_missing")).length() > 0) return JSONObject().put("literal_repair", true)

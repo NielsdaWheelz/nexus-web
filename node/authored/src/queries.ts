@@ -9,6 +9,8 @@ import { normalizeQuote } from "./identity.ts";
 import { validateLocalDate } from "./work.ts";
 import { foldFilterText } from "./filter.ts";
 import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, SEARCH_FAMILIES, type ScopeInterval, type ScopeReading } from "./scope.ts";
+export const WORK_CAPTURE_ORDER = `CAST(json_extract(state_json,'$.work.captured.lamport') AS INTEGER),json_extract(state_json,'$.work.captured.replica_id'),ref`;
+export const WORK_REGISTER_MEMBERSHIP = `kind='note' AND visible=1 AND json_type(state_json,'$.work')='object'`;
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
 const HIGHLIGHT_TEXT_FIELDS = ["prefix", "quote_exact", "suffix"] as const;
 /** Literal stored capture; search supplies its authorized excerpt separately. */
@@ -445,13 +447,17 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       const where = query.kind === "habits" ? `(${kind}='habit' OR ${anyHabitDay})` : query.kind === "work_completed"
         ? `(${task}=?3 OR ${habitDay})` : `json_extract(state_json,'$.work.designation.value.enabled')=1 AND ((${kind}='task' AND ${task} IS NULL) OR (${kind}='habit' AND NOT ${habitDay}))`;
       if (query.kind !== "habits") validateLocalDate(query.local_date);
-      return {sql: `WITH admitted AS (SELECT ref,body_text,projection_json,state_json FROM resources WHERE kind='note' AND visible=1 AND ${where}),
-        slice AS (SELECT ref,projection_json,trim(substr(COALESCE(body_text,'')||char(10),1,instr(COALESCE(body_text,'')||char(10),char(10))-1)) AS label FROM admitted
-          ORDER BY CAST(json_extract(state_json,'$.work.captured.lamport') AS INTEGER),json_extract(state_json,'$.work.captured.replica_id'),ref
-          LIMIT ?1 OFFSET ?2)
-        SELECT (SELECT count(*) FROM admitted) AS total,json_group_array(json_object('ref',ref,
+      const selection = `FROM resources INDEXED BY resources_work_capture WHERE ${WORK_REGISTER_MEMBERSHIP} AND ${where}`;
+      const habits = query.kind === "habits";
+      const facts = habits
+        ? `json(iif(${kind}='habit' AND json_extract(state_json,'$.work.designation.value.enabled')=1,'true','false')) AS enabled`
+        : `json_extract(projection_json,'$.work') AS work`;
+      return {sql: `WITH slice AS (SELECT ref,${facts},
+          trim(substr(COALESCE(body_text,'')||char(10),1,instr(COALESCE(body_text,'')||char(10),char(10))-1)) AS label
+          ${selection} ORDER BY ${WORK_CAPTURE_ORDER} LIMIT ?1 OFFSET ?2)
+        SELECT (SELECT count(*) ${selection}) AS total,json_group_array(json_object('ref',ref,
           'label',CASE WHEN length(CAST(json_quote(label) AS BLOB))<=512 THEN label END,
-          'work',json_set(json_extract(projection_json,'$.work'),'$.habit_dates',json('[]')))) AS items FROM slice`,
+          ${habits ? "'enabled',json(enabled)" : "'work',json_set(work,'$.habit_dates',json('[]'))"})) AS items FROM slice`,
         params: [query.limit, query.start, ...(query.kind === "habits" ? [] : [query.local_date])]};
     }
     case "habit_days": {
@@ -503,12 +509,12 @@ type PassageMembership = { activation_ref: string | null } | false;
 /** Active published source identity only; this proves no reading permission. */
 export async function sourceAliasQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "source_alias"}>): Promise<Omit<QueryResult, "store_revision">> {
   const rows = await read(compileQuery(query));
-  return {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: rows[0] ? String(rows[0].canonical_source_ref) : null, positions: [], children: [], scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, work_index: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null};
+  return {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: rows[0] ? String(rows[0].canonical_source_ref) : null, positions: [], children: [], scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, work_index: null, habits: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null};
 }
 
 /** Exact capture identity is loaded first. Reading aliases prove admission only, never substitute a capture. */
 export async function excerptQuery(read: QueryRead, query: Extract<AuthoredQuery,{kind:"excerpt"}>): Promise<Omit<QueryResult,"store_revision">> {
-  const result: Omit<QueryResult,"store_revision"> = {rows:[],next_cursor:null,previous_cursor:null,binding_id:null,canonical_source_ref:null,positions:[],children:[],scope_available:true,daily_index:null,page_register:null,page_label:null,outline_filter:null,work_index:null,mentions:null,habit_days:null,latest_habit_date:null,outline_windows:null};
+  const result: Omit<QueryResult,"store_revision"> = {rows:[],next_cursor:null,previous_cursor:null,binding_id:null,canonical_source_ref:null,positions:[],children:[],scope_available:true,daily_index:null,page_register:null,page_label:null,outline_filter:null,work_index:null,habits:null,mentions:null,habit_days:null,latest_habit_date:null,outline_windows:null};
   const rows = await read({sql:EXCERPT_ROW_SQL,params:[query.ref]});
   if (!rows.length) return result;
   const row = rows[0]!, resource: ResourceProjection = JSON.parse(String(row.projection_json));
@@ -605,7 +611,7 @@ export async function excerptQuery(read: QueryRead, query: Extract<AuthoredQuery
  * derived scope inputs never replace the canonical authored projection. */
 export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "search" | "search_preview" | "search_admission"}>,
   score: (text: string, expression: string) => Promise<number | null>): Promise<Omit<QueryResult, "store_revision">> {
-  const result: Omit<QueryResult, "store_revision"> = {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, work_index: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null};
+  const result: Omit<QueryResult, "store_revision"> = {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, work_index: null, habits: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null};
   const preview = query.kind !== "search";
   const admission = query.kind === "search_admission";
   if (query.kind === "search_preview" && !Number.isFinite(query.limit)
