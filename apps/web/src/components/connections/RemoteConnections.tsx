@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
+import {useVariableIndex} from "@/lib/collections/variableIndex";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import ResourceOutlineList, { ResourceBranch } from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
@@ -33,38 +33,12 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
   const order = filtering ? filtered : list.status === "ready" ? list.data.edge_ids : null;
   const ids = useMemo(() => order?.filter(id => !branch.traversedEdgeIds.has(id)) ?? [], [order, branch]);
   const element = useRef<HTMLUListElement | null>(null);
-  const [margin, setMargin] = useState(0);
   const [pinned, setPinned] = useState<string | null>(null);
-  const getPort = useCallback(() => {
-    const node = element.current;
-    for (let ancestor = node?.parentElement; ancestor; ancestor = ancestor.parentElement) {
-      if (/^(auto|scroll)$/u.test(getComputedStyle(ancestor).overflowY)) return ancestor;
-    }
-    return null;
-  }, []);
-  useLayoutEffect(() => {
-    const root = element.current, port = getPort();
-    if (!root || !port) return;
-    const read = () => setMargin(root.getBoundingClientRect().top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop);
-    read();
-    const resize = new ResizeObserver(read);
-    resize.observe(port);
-    resize.observe(root);
-    return () => resize.disconnect();
-  }, [getPort, ids.length]);
-  const index = useVirtualizer({
-    count: ids.length, getScrollElement: getPort, getItemKey: rank => ids[rank]!,
-    estimateSize: () => 80, scrollMargin: margin, overscan: 4,
-    rangeExtractor(range) {
-      const pin = pinned === null ? -1 : ids.indexOf(pinned);
-      const visible = defaultRangeExtractor(range);
-      return pin < 0 || visible.includes(pin) ? visible : [...visible, pin].sort((a, b) => a - b);
-    },
-    scrollToFn: () => {},
-  });
-  index.shouldAdjustScrollPositionOnItemSizeChange = () => false;
-  const slots = index.getVirtualItems();
-  const wanted = slots.slice(0, 100).map(slot => ids[slot.index]!);
+  const pins = useMemo(() => new Set(pinned === null ? [] : [pinned]), [pinned]);
+  const scope = `remote:${occurrencePrefix}`;
+  const index = useVariableIndex({scope, ids, list: element, estimate: 80, pinned: pins, windowed: true});
+  const current = useMemo(() => new Set(ids), [ids]);
+  const wanted = index.slots.filter(slot => current.has(slot.id)).slice(0, 100).map(slot => slot.id);
   const key = JSON.stringify([ownerRef, wanted]);
   const load = (signal: AbortSignal) => resolveConnections({...remoteConnectionScope(ownerRef), edge_ids: wanted}, signal);
   const details = usePaneFreeServerValue({key: wanted.length ? key : null,
@@ -82,22 +56,22 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
     {match?.kind === "failed" ? <Fact line={{fact: `couldn’t search links in ${label ?? "this item"}.`}}
       verbs={[{label: "retry", commandKey: "RetryOutlineLinks", run: () => search?.retry(occurrencePrefix)}]}/> : null}
     {!filtering && list.status === "failed" ? <Failed error={list.error} noun="other connections" retry={{run: list.refetch, busy: list.retrying}}/> : null}
-    {ids.length > 0 ? <section aria-label="other connections">
+    {index.count > 0 ? <section aria-label="other connections">
       <h3 className={styles.subtitle}>other connections</h3>
       {details.status === "failed" ? <Failed error={details.error} noun="visible connections"
         retry={{run: details.refetch, busy: details.retrying}}/> : null}
       <PaneRefreshAnchor identity={occurrencePrefix} value={order} ready>
-        <ResourceOutlineList scope={`remote:${occurrencePrefix}`} ariaLabel="other connections" ancestorRef={ownerRef}
-          listProps={{ref: element, style: {height: index.getTotalSize()}, onBlur: event => {
+        <ResourceOutlineList scope={scope} ariaLabel="other connections" ancestorRef={ownerRef}
+          listProps={{ref: element, style: {height: index.height}, onBlur: event => {
             if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setPinned(null);
           }}}>
-          {slots.map(slot => {
-            const id = ids[slot.index]!, connection = items.get(id);
-            const style = {position: "absolute", insetInline: 0, top: slot.start - margin} as const;
+          {index.slots.map(({id, rank, top, size}) => {
+            const connection = items.get(id);
+            const style = {position: "absolute", insetInline: 0, top, blockSize: size, overflow: size === undefined ? undefined : "clip"} as const;
             return connection === undefined ? <li key={id} aria-hidden="true" role="presentation" style={style}/>
-              : <ResourceOutlineRow key={id} item={connection.other} rowRef={index.measureElement}
+              : <ResourceOutlineRow key={id} item={connection.other} rowRef={index.measure}
                 occurrenceKey={`${occurrencePrefix}/${id}`} connection={connection}
-                rootProps={{style, "data-index": slot.index, "aria-posinset": slot.index + 1, "aria-setsize": ids.length,
+                rootProps={{style, "data-index": rank, "aria-posinset": rank + 1, "aria-setsize": index.count,
                   "data-collection-row-id": id, onFocus: () => setPinned(id)}}
                 incoming={{kind: "edge", edge_id: id, origin: connection.origin, mutation: connection.mutation, creation: connection.creation}}
                 historical={connection.origin === "citation" && connection.ordinal !== null} onChanged={onChanged}/>;

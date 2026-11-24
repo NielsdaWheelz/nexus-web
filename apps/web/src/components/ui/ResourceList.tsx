@@ -16,6 +16,7 @@ export default function ResourceList({
   windowed = false,
   measuring = false,
   held = false,
+  height,
 }: {
   ariaLabel: string;
   busy?: boolean;
@@ -24,10 +25,11 @@ export default function ResourceList({
   windowed?: boolean;
   measuring?: boolean;
   held?: boolean;
+  height?: number;
 }) {
   return (
     <ul ref={ref} className={styles.list} aria-label={ariaLabel} aria-busy={busy} data-index-window={windowed || undefined} data-index-held={held || undefined}
-      inert={measuring || undefined} aria-hidden={measuring || undefined} style={measuring ? { visibility: "hidden" } : undefined}>
+      inert={measuring || undefined} aria-hidden={measuring || undefined} style={{height, visibility: measuring ? "hidden" : undefined}}>
       {children}
     </ul>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Ref } from "react";
 import type { QueryResult, WorkIndexItem } from "@nexus/authored/types";
 import { useOutcome } from "@/components/feedback/Feedback";
 import AccountCalendarUnavailable from "@/components/notes/AccountCalendarUnavailable";
@@ -12,6 +12,8 @@ import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import Input from "@/components/ui/Input";
 import ResourceList from "@/components/ui/ResourceList";
+import {INDEX_WINDOW_THRESHOLD} from "@/lib/collections/measuredIndexWindow";
+import {useVariableIndex} from "@/lib/collections/variableIndex";
 import { IndexRowWindow } from "@/lib/collections/indexRowWindow";
 import { useAccountToday } from "@/lib/notes/accountDay";
 import { captureTaskToday } from "@/lib/notes/api";
@@ -115,19 +117,22 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
   }, []);
   const layout = useMemo(() => ({rows:read.data?.items ?? null,held,completions,open,adding}),[read.data?.items,held,completions,open,adding]);
   if (failure) throw failure.error;
-  const pending = new Map((read.data?.items ?? []).map(resource => [resource.ref, resource] as const));
-  const visible = new Map([...held, ...pending]);
-  for (const [ref, completion] of completions) {
-    if (completion.phase === "expired") visible.delete(ref);
-    else if (!visible.has(ref)) visible.set(ref, completion.snapshot);
-  }
-  const rows = [...visible.values()];
-  rows.sort((a,b) => {
-    if (!a.work || !b.work) throw new Error("work list lacks capture state");
-    const left=BigInt(a.work.captured.lamport), right=BigInt(b.work.captured.lamport);
-    return left < right ? -1 : left > right ? 1 : a.work.captured.replica_id.localeCompare(b.work.captured.replica_id) || a.ref.localeCompare(b.ref);
-  });
-  const refs = rows.map(row => row.ref);
+  const {pending, visible, refs, pins} = useMemo(() => {
+    const pending = new Map((read.data?.items ?? []).map(resource => [resource.ref, resource] as const));
+    const visible = new Map([...held, ...pending]);
+    for (const [ref, completion] of completions) {
+      if (completion.phase === "expired") visible.delete(ref);
+      else if (!visible.has(ref)) visible.set(ref, completion.snapshot);
+    }
+    const rows = [...visible.values()];
+    rows.sort((a, b) => {
+      const left = BigInt(a.work.captured.lamport), right = BigInt(b.work.captured.lamport);
+      return left < right ? -1 : left > right ? 1 : a.work.captured.replica_id.localeCompare(b.work.captured.replica_id) || a.ref.localeCompare(b.ref);
+    });
+    return {pending, visible, refs: rows.map(row => row.ref), pins: new Set([...held.keys(), ...completions.keys()])};
+  }, [read.data, held, completions]);
+  const windowed = refs.length > INDEX_WINDOW_THRESHOLD;
+  const index = useVariableIndex({scope: "work", ids: refs, list, estimate: 48, pinned: pins, windowed});
   // Focus after a row: the next live sign, else the nearest before it, else `add a task`.
   const around = (index:number) => [...refs.slice(index+1), ...refs.slice(0,index).reverse()];
   // A completing press, in its own event. The write is sent first; nothing it does reaches the pending query before
@@ -151,15 +156,20 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
     <div id={contentId} hidden={!open}>
       {today === null ? <AccountCalendarUnavailable /> : null}
       <AuthoredReadFailure {...read} noun="unfinished work" />
-      <ResourceList ref={list} ariaLabel="unfinished work" busy={read.pending && read.data === null}>
-        {rows.map((resource, index) => {
+      <ResourceList ref={list} ariaLabel="unfinished work" busy={read.pending && read.data === null} windowed={windowed} height={index.height}>
+        {index.slots.map(({id, rank, top, size}) => {
+          const resource = visible.get(id);
+          const slot = {ref: index.measure, "data-index": rank, "aria-posinset": rank + 1, "aria-setsize": index.count,
+            style: top === undefined ? undefined : {position: "absolute", insetInline: 0, top, blockSize: size, overflow: size === undefined ? undefined : "clip"} as CSSProperties};
+          if (!resource) return <li key={id} aria-hidden="true" role="presentation" style={slot.style}/>;
           const completion = completions.get(resource.ref);
+          const position = refs.indexOf(id);
           return completion?.phase === "receipt"
-            ? <Receipt key={resource.ref} completion={completion} history={history} step={step} fail={fail}
-              recover={() => signOf([resource.ref, ...around(index)])} />
-            : <WorkRow key={resource.ref} resource={resource} retained={!pending.has(resource.ref)} today={today} history={history} hold={hold}
-              completion={completion} step={step} onComplete={press => complete(resource, index, press)}
-              recover={() => list.current?.querySelector<HTMLElement>(`[data-work-ref="${CSS.escape(resource.ref)}"] [data-receipt-undo]`) ?? signOf(around(index))} />;
+            ? <Receipt key={resource.ref} slot={slot} completion={completion} history={history} step={step} fail={fail}
+              recover={() => signOf([resource.ref, ...around(position)])} />
+            : <WorkRow key={resource.ref} slot={slot} resource={resource} retained={!pending.has(resource.ref)} today={today} history={history} hold={hold}
+              completion={completion} step={step} onComplete={press => complete(resource, position, press)}
+              recover={() => list.current?.querySelector<HTMLElement>(`[data-work-ref="${CSS.escape(resource.ref)}"] [data-receipt-undo]`) ?? signOf(around(position))} />;
         })}
       </ResourceList>
       {adding ? <TaskCapture history={history} onClose={() => {refocusAdd.current = true; setAdding(false);}} />
@@ -170,7 +180,16 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
   </section></PaneRefreshAnchor>;
 }
 
-function Receipt({completion, history, step, fail, recover}:{
+type WorkSlot = {
+  ref?: Ref<HTMLLIElement>;
+  style?: CSSProperties;
+  "data-index": number;
+  "aria-posinset": number;
+  "aria-setsize": number;
+};
+
+function Receipt({slot, completion, history, step, fail, recover}:{
+  slot: WorkSlot;
   completion:Extract<Completion, {phase:"receipt"}>; history:OutlineHistory; step:Step; fail(error:unknown):void; recover():HTMLElement | null;
 }) {
   const {say} = useOutcome();
@@ -195,7 +214,7 @@ function Receipt({completion, history, step, fail, recover}:{
         : undone === null ? {...current, undoing:false} : {phase:"restored", press, snapshot:current.snapshot, undo:undone}),
       error => {step(ref, press, current => current.phase === "receipt" ? {...current, undoing:false} : current); fail(error);});
   };
-  return <li ref={root} className={styles.receipt} data-work-ref={ref} data-collection-row-id={ref}>
+  return <li {...slot} ref={node => {root.current = node; if (typeof slot.ref === "function") slot.ref(node);}} className={styles.receipt} data-work-ref={ref} data-collection-row-id={ref}>
     <span className={styles.receiptLine}>completed<span aria-hidden="true"> · </span>{line}</span>
     <Button className={styles.undo} data-receipt-undo="" aria-label={`undo: ${line}`} aria-busy={undoing} onClick={undo}>undo</Button>
   </li>;
@@ -230,7 +249,8 @@ function TaskCapture({history,onClose}:{history:OutlineHistory;onClose():void}) 
   </form>;
 }
 
-function WorkRow({resource:initial,retained,today,history,hold,completion,step,onComplete,recover}:{
+function WorkRow({slot,resource:initial,retained,today,history,hold,completion,step,onComplete,recover}:{
+  slot: WorkSlot;
   resource:WorkIndexItem;retained:boolean;today:string|null;history:OutlineHistory;
   hold(resource:WorkIndexItem,keep:boolean):void;completion:Completion | undefined;step:Step;
   onComplete(completion:WorkCompletion):void;
@@ -288,7 +308,7 @@ function WorkRow({resource:initial,retained,today,history,hold,completion,step,o
   }, [ref, press, dwelt, retaining, step]);
   // The journal's paint of a completion until a projection at or after its commit is in hand: then the row is canonical.
   const presentDone = dwell !== null && !(dwell.commit !== null && retained && read.data !== null && reached(read.data.store_revision, dwell.commit));
-  return <IndexRowWindow window={rowWindow} id={resource.ref}><li ref={root} className={styles.row} data-work-ref={resource.ref} data-collection-row-id={resource.ref}
+  return <IndexRowWindow window={rowWindow} id={resource.ref}><li {...slot} ref={node => {root.current = node; if (typeof slot.ref === "function") slot.ref(node);}} className={styles.row} data-work-ref={resource.ref} data-collection-row-id={resource.ref}
     onFocusCapture={event => {if (event.currentTarget.contains(event.target)) setFocus(event.target.closest('[role="checkbox"]') ? "sign" : "other");}}
     onBlurCapture={event => {
       if (event.relatedTarget instanceof Node && root.current?.contains(event.relatedTarget)) return;
