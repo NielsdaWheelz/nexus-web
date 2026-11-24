@@ -2,7 +2,8 @@
 
 // Controlled suggestion bindings. Admission and active identity belong to the
 // feature; this module owns no query, request, selection or mutation lifetime.
-import { useLayoutEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent } from "react";
+import { useLayoutEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent } from "react";
+import { discoveryViewport, nearDiscoveryTail } from "@/lib/search/discoveryBoundary";
 import { revealCollectionItem } from "./collection";
 
 export type SearchOption = {
@@ -38,7 +39,7 @@ export function reconcileSearchActive({ context, admitted, options, initialKey, 
 }
 
 export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
-  listId, label, open, options, activeKey, onActiveChange, onActivate, allowShiftEnter = false,
+  listId, label, open, options, activeKey, onActiveChange, onActivate, onForward, allowShiftEnter = false,
 }: {
   readonly listId: string;
   readonly label: string;
@@ -48,6 +49,7 @@ export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
   readonly onActiveChange: (key: string | null) => void;
   readonly onActivate: (key: string, event: SearchActivationEvent) => void;
   readonly allowShiftEnter?: boolean;
+  readonly onForward?: () => void;
 }) {
   const listRef = useRef<T | null>(null);
   const latest = useRef({ open, options, onActiveChange, onActivate });
@@ -56,7 +58,8 @@ export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
     readonly key: string; readonly pointerId: number;
     readonly x: number; readonly y: number; moved: boolean;
   } | null>(null);
-  const active = open ? options.find(option => option.key === activeKey) ?? null : null;
+  const byKey = useMemo(() => new Map(options.map(option => [option.key, option])), [options]);
+  const active = open && activeKey !== null ? byKey.get(activeKey) ?? null : null;
   const activeItemKey = active?.key ?? null;
   const activeIndex = active === null ? null : options.findIndex(option => option.key === active.key);
   useLayoutEffect(() => {
@@ -91,6 +94,8 @@ export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
         ? event.key === "ArrowDown" ? 0 : options.length - 1
         : Math.max(0, Math.min(options.length - 1, activeIndex + (event.key === "ArrowDown" ? 1 : -1)));
       const key = options[next]?.key ?? null;
+      const list = listRef.current;
+      if (onForward && event.key === "ArrowDown" && (next >= options.length - 1 || list && nearDiscoveryTail(discoveryViewport(list)))) onForward();
       onActiveChange(key);
       if (key !== null && key === activeItemKey) {
         const list = listRef.current;
@@ -100,7 +105,7 @@ export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
       return true;
     },
     optionProps(key: string) {
-      const option = options.find(option => option.key === key);
+      const option = byKey.get(key);
       if (!option) throw new Error("search option is not in the current collection");
       return {
         id: searchOptionId(listId, key), role: "option", "aria-selected": active?.key === key,

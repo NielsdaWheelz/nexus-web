@@ -91,6 +91,7 @@ export function useReferenceInput(
       if (value && value === state) set({ ...value, active: { context, key } });
     },
     onActivate(key) { accept(search.items.find(item => targetKey(item) === key)); },
+    onForward: search.fetchAhead,
   });
   const activeHost = useRef(host);
   activeHost.current = host;

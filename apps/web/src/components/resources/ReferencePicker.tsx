@@ -6,7 +6,9 @@ import ResourceBody from "./ResourceBody";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
-import Button from "@/components/ui/Button";
+import { AuthoredContinuationCursorError } from "@/lib/notes/hooks";
+import DiscoveryTail from "@/components/collections/DiscoveryTail";
+import { useOptionForwardTravel } from "@/lib/search/discoveryBoundary";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { itemMediaKind, resourceType, resourceTypeName } from "@/lib/resources/type";
 import { targetKey } from "@/lib/resourceGraph/useLinkTargets";
@@ -16,12 +18,13 @@ import collection from "@/components/ui/Collection.module.css";
 import styles from "./ReferencePicker.module.css";
 export default function ReferencePicker({ input, onReviewPosition, returnFocus }: { input: ReferenceInput; onReviewPosition(): void; returnFocus: () => HTMLElement | null }) {
   const { state, search, bindings } = input;
+  useOptionForwardTravel(bindings.listRef, state !== null, search.fetchAhead);
   if (!state) return null;
   return <div className={cx(collection.surface, styles.picker)}>
     {search.minimum ? <Fact line={{ fact: "type 2 or more characters." }} speak />
       : search.items.length ? null
       : search.loading ? <Ruling />
-      : !search.error && !search.localError ? <Fact line={{ fact: "no matches." }} /> : null}
+      : search.complete ? <Fact line={{ fact: "no matches." }} /> : null}
     <div {...bindings.listProps} ref={bindings.listRef} aria-busy={search.loading} className={collection.compactViewport}>
       {search.items.map(target => {
         const key = targetKey(target), type = resourceType(parseResourceRef(target.item.ref)!.scheme, itemMediaKind(target.item));
@@ -32,9 +35,15 @@ export default function ReferencePicker({ input, onReviewPosition, returnFocus }
       })}
     </div>
     <ExcerptDisclosure item={search.items.find(target => targetKey(target) === input.selected)?.item ?? null} returnFocus={returnFocus} />
-    {search.error ? <Failed error={search.error} noun="library matches" retry={{ run: search.retry, busy: search.list.running !== null }} /> : null}
-    <AuthoredReadFailure error={search.localError} pending={search.localPending} retry={search.retryLocal} noun="notes"/>
-    {!search.localComplete ? <Button aria-busy={search.localPending} onClick={search.moreLocal}>show more notes</Button> : null}
+    {search.error?.code === "E_REPEATED_CURSOR" ? <Fact line={{ fact: "couldn’t load more library matches.", reason: "the source repeated its continuation." }} />
+      : search.error ? <Failed error={search.error} noun="library matches" retry={{ run: search.retry, busy: search.list.running !== null }} /> : null}
+    {search.localError instanceof AuthoredContinuationCursorError
+      ? <Fact line={{ fact: "couldn’t load more notes.", reason: "the source repeated its continuation." }} />
+      : <AuthoredReadFailure error={search.localError} pending={search.localPending} retry={search.retryLocal} noun="notes" />}
+    <DiscoveryTail label="continue searching notes" action={search.localCanContinue ? search.moreLocal : null}
+      busy={search.localPending} show={search.items.length === 0 || search.localNeedsAction} />
+    <DiscoveryTail label="continue searching library matches" action={search.remoteCanContinue ? search.list.more : null}
+      busy={search.list.running !== null} show={search.items.length === 0 || search.list.continuationNeedsAction} />
     {state.message ? <Fact line={{ fact: state.message, reason: "your search is kept." }} speak
       verbs={state.context.replacement === null ? [{ label: "use new destination", commandKey: "Reference.reviewDestination", run: onReviewPosition }] : undefined} /> : null}
   </div>;

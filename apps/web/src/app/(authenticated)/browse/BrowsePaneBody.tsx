@@ -20,15 +20,18 @@ import {
 import { feedActionFacts } from "@/lib/actions/inlineActions";
 import { useFeedActionFacts } from "@/lib/feeds/useFeedActionFacts";
 import CollectionView from "@/components/collections/CollectionView";
+import DiscoveryTail from "@/components/collections/DiscoveryTail";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import PaneSurface from "@/components/ui/PaneSurface";
+import ButtonLink from "@/components/ui/ButtonLink";
 import type { PaneCollation } from "@/lib/panes/collation";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import type { ApiError } from "@/lib/api/client";
 import { transportOf } from "@/lib/api/failure";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
+import { nearDiscoveryTail, useInitialDiscoveryDemand } from "@/lib/search/discoveryBoundary";
 import { fetchBrowsePage, type BrowseCandidate, type BrowseKind } from "@/lib/browse/api";
 import {
   BROWSE_KIND_LABELS,
@@ -47,14 +50,16 @@ import {
 import { presentBrowseCandidate } from "@/lib/collections/presenters/browse";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
-import { usePaneIsActive, usePaneRouter, usePaneSearchParams, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { usePaneIsVisible, usePaneRouter, usePaneSearchParams, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
+  usePaneForwardTravel,
 } from "@/lib/workspace/paneReturnMemento";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { providerRefusal } from "./providerRefusal";
 import styles from "./browse.module.css";
 import FeedBrowse from "@/components/feeds/FeedBrowse";
@@ -62,6 +67,7 @@ import FeedBrowse from "@/components/feeds/FeedBrowse";
 /** A section's cold read, as far as the body's rule needs it. */
 interface SectionStatus {
   readonly settled: boolean;
+  readonly empty: boolean;
   /** A failed cold read the transport speaks for: neither the provider's refusal nor a refused query. */
   readonly failure: ApiError | null;
   /** The server refused the query itself; the body replaces the pane. */
@@ -131,29 +137,35 @@ function useBrowseCollation(query: BrowseQuery | null, onQuery: (query: BrowseQu
 
 /** Each kind/source keeps its own visit snapshot and its own failure. `quiet` while the body may
  * yet speak, or speaks, for every section at once. */
-function BrowseSourceSection({ queryKey, text, section, quiet, onStatus }: {
+function BrowseSourceSection({ queryKey, text, section, scoped, quiet, onStatus }: {
   readonly queryKey: string;
   readonly text: string;
   readonly section: BrowseSection;
+  readonly scoped: boolean;
   readonly quiet: boolean;
   readonly onStatus: (key: string, status: SectionStatus) => void;
 }) {
-  const active = usePaneIsActive();
+  const active = usePaneIsVisible();
+  const runtime = usePaneRuntime();
   const display = useRenderEnvironment();
   const headingId = useId();
   const sectionRef = useRef<HTMLElement | null>(null);
+  const tail = useRef<HTMLDivElement>(null);
   const sectionKey = keyOf(section);
   const visit = useMemo(
     () => definePaneVisitDataKey<ListSnapshot<BrowseCandidate>>(`Browse.Section.${sectionKey}`),
     [sectionKey],
   );
-  const readKey = JSON.stringify(["browse", text, section.kind, section.source, section.sort]);
+  const scopedHref = browseHref({ text, ...section });
+  const readKey = JSON.stringify(["browse", queryKey, section.kind, section.source, section.sort]);
   const list = useServerList<BrowseCandidate>({
     key: readKey,
     visit,
     stale: "",
     pageSize: 20,
     active,
+    continuation: item => item.resolution.kind !== "InNexusMedia" || summaries.resolve(item.resolution.media_summary) !== null,
+    cursorRecovery: "manual",
     id: (item) => item.kind === "OwnedMedia" ? item.resolution.action_ref : item.target,
     fetchPage: (cursor, limit, signal) => fetchBrowsePage({ q: text, ...section, cursor, limit, signal }),
   });
@@ -165,9 +177,6 @@ function BrowseSourceSection({ queryKey, text, section, quiet, onStatus }: {
   const failure = refusal !== null || invalid ? null : cold;
   const settled = list.current || cold !== null;
   const { refetch } = list;
-  useEffect(() => {
-    onStatus(sectionKey, { settled, failure, invalid, running, refetch });
-  }, [queryKey, onStatus, sectionKey, settled, failure, invalid, running, refetch]);
   const summaries = useMediaSummaries(list.items.flatMap((item) =>
     item.resolution.kind === "InNexusMedia" ? [item.resolution.media_summary] : [],
   ));
@@ -190,16 +199,32 @@ function BrowseSourceSection({ queryKey, text, section, quiet, onStatus }: {
       ...item, resolution: { ...resolution, media_summary: summary },
     })];
   });
+  const empty = list.complete && rows.length === 0 && list.failure === null;
+  useEffect(() => {
+    onStatus(sectionKey, { settled, empty, failure, invalid, running, refetch });
+  }, [queryKey, onStatus, sectionKey, settled, empty, failure, invalid, running, refetch]);
   const label = BROWSE_SOURCE_LABELS[section.source];
+  const canContinue = scoped && list.current && !list.complete && list.failure === null;
+  usePaneForwardTravel(port => { if (canContinue && nearDiscoveryTail(port, tail.current)) list.fetchAhead(); });
+  useInitialDiscoveryDemand({ key: scoped ? readKey : null, current: list.current, active: canContinue && list.active,
+    viewport: () => sectionRef.current?.closest<HTMLElement>("[data-pane-content]") ?? null, run: list.fetchAhead });
+  const boundary = list.current && !list.complete && list.failure === null;
+  const continuedFailure = list.failure?.op === "More" ? list.failure.error : null;
+  const badCursor = continuedFailure?.code === "E_REPEATED_CURSOR" || continuedFailure?.code === "E_INVALID_CURSOR";
+  const continuedRefusal = continuedFailure === null ? null : providerRefusal(continuedFailure, display);
   const noun = `${KIND_NOUNS[section.kind]} from ${label.toLowerCase()}`;
-  const feedback = useCollectionReadFeedback({ list, unit: { singular: "result", plural: "results" }, waiting: false, outcome: null });
-  return <section ref={sectionRef} tabIndex={-1} className={styles.sourceSection} aria-labelledby={headingId}>
+  const feedback = useCollectionReadFeedback({ list: badCursor || continuedRefusal !== null ? { ...list, failure: null } : list, unit: { singular: "result", plural: "results" }, waiting: false, outcome: null });
+  return <section ref={sectionRef} tabIndex={-1} className={styles.sourceSection} aria-labelledby={headingId}
+    onKeyDownCapture={event => {
+      if (event.key !== "Tab" || event.shiftKey || !canContinue) return;
+      const port = sectionRef.current?.closest<HTMLElement>("[data-pane-content]");
+      if (port && nearDiscoveryTail(port, tail.current)) list.fetchAhead();
+    }}>
     <h3 id={headingId} className={styles.sourceHeading}>{label}</h3>
     {list.status === "loading" || (!list.current && running) ? <Ruling />
       : refusal !== null ? <Fact line={{ fact: `couldn’t load ${noun}.`, reason: refusal.reason }}
         verbs={refusal.retry ? [{ label: "retry", commandKey: `retry ${noun}`, run: list.retry, busy: running }] : undefined} />
       : failure !== null ? quiet ? <Ruling /> : <Failed error={failure} noun={noun} retry={{ run: list.retry, busy: running }} />
-      : list.complete && rows.length === 0 ? <Fact line={{ fact: "no results." }} />
       : null}
     <CollectionView
       returnScope={`Browse.${section.kind}.${section.source}`}
@@ -210,8 +235,17 @@ function BrowseSourceSection({ queryKey, text, section, quiet, onStatus }: {
       empty={null}
       surface={false}
     />
-    {feedback.notice}
+    {badCursor ? <Fact line={{ fact: "couldn’t load more results.", reason: "the source repeated or refused its continuation." }}
+      verbs={continuedFailure?.code === "E_INVALID_CURSOR" ? [{ label: "refresh results", commandKey: "refresh browse source", run: () => { void list.refetch().catch(() => {}); } }] : undefined} />
+      : continuedRefusal === null ? feedback.notice : <Fact line={{ fact: `couldn’t load more ${noun}.`, reason: continuedRefusal.reason }}
+        verbs={continuedRefusal.retry ? [{ label: "retry", commandKey: `retry more ${noun}`, run: list.retry, busy: running }] : undefined} />}
     {feedback.announcement}
+    {scoped ? <DiscoveryTail boundary={tail} label={`continue searching ${label}`}
+      action={canContinue ? list.more : null} busy={running} show={rows.length === 0 || list.continuationNeedsAction} />
+      : boundary ? <ButtonLink href={scopedHref} data-workspace-rich-target="true"
+        onClick={event => activateTargetLink({ event, runtime, target: { href: scopedHref },
+          onDefault: () => { runtime?.router.push(scopedHref); } })}
+      >{ `all results from ${label}` }</ButtonLink> : null}
   </section>;
 }
 
@@ -254,6 +288,7 @@ function DirectoryBrowse() {
     && failures.every((failure) => transportOf(failure) === transportOf(failures[0]));
   const shared = oneCause && failures.length === sections.length && failures.length > 0 ? failures[0] : null;
   const awaiting = oneCause && settled < sections.length;
+  const empty = statuses.length > 0 && statuses.length === sections.length && statuses.every(status => status.empty);
   useLayoutEffect(() => {
     if (shared !== null && chapters.current?.contains(document.activeElement)) {
       const paneId = chapters.current.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
@@ -303,12 +338,13 @@ function DirectoryBrowse() {
       busy: statuses.some((status) => status.running),
     }} />}
   >
+    {empty ? <Fact line={{ fact: "no results." }} /> : null}
     {!text ? <SuggestionsSection destination={{ kind: "Browse" }} suggestions={selection} returnScope="Browse.Selection" /> : null}
     <div ref={chapters}>{text ? [...new Set(sections.map((section) => section.kind))].map((kind) => (
       <section key={kind} className={styles.chapter} hidden={shared !== null}>
         <h2 className={styles.chapterHeading}>{BROWSE_KIND_LABELS[kind]}</h2>
         {sections.filter((section) => section.kind === kind).map((section) => (
-          <BrowseSourceSection key={keyOf(section)} queryKey={queryKey} text={text} section={section} quiet={awaiting || shared !== null} onStatus={onStatus} />
+          <BrowseSourceSection key={keyOf(section)} queryKey={queryKey} text={text} section={section} scoped={sections.length === 1} quiet={awaiting || shared !== null} onStatus={onStatus} />
         ))}
       </section>
     )) : null}</div>

@@ -172,6 +172,6 @@ export default function ResourceIndexRow({
         </>}
       />
     </>}
-    rootProps={{ "data-resource-ref": item.ref }}
+    rootProps={{ "data-resource-ref": item.ref, "data-collection-row-id": presentation.kind === "Search" ? occurrenceKey : undefined }}
   />;
 }

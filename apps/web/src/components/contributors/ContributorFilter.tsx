@@ -6,7 +6,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
-import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
+import DiscoveryTail from "@/components/collections/DiscoveryTail";
+import { discoveryViewport, nearDiscoveryTail, useInitialDiscoveryDemand, useOptionForwardTravel } from "@/lib/search/discoveryBoundary";
+import collection from "@/components/ui/Collection.module.css";
 import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -64,7 +66,8 @@ export default function ContributorFilter({
 }) {
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const q = query.trim();
+  const viewport = useRef<HTMLDivElement>(null);
+  const q = query.trim().normalize("NFC");
   // The disclosure owns activity; only this exact settled query can supply choices.
   const settled = useSettled(q, 180);
   const live = q !== "" && settled === q;
@@ -73,50 +76,49 @@ export default function ContributorFilter({
     stale: "",
     pageSize: 10,
     active: active && live,
+    cursorRecovery: "manual",
+    continuation: item => !selectedHandles.includes(item.handle),
     id: (item) => item.handle,
     fetchPage: (cursor, limit, signal) => searchContributors({ q, cursor, limit, signal }),
   });
   const suggestions = live && search.current
     ? search.items.filter((item) => !selectedHandles.includes(item.handle))
     : [];
-  const failure = live && !search.current ? search.failure : null;
-  const readFeedback = useCollectionReadFeedback({ list: search, unit: { singular: "author", plural: "authors" }, waiting: live && !search.current && failure === null, outcome: null });
+  const failure = live ? search.failure?.error ?? null : null;
+  const repeated = failure?.code === "E_REPEATED_CURSOR";
+  const canContinue = live && search.current && !search.complete && failure === null;
+  const run = () => { if (canContinue) search.fetchAhead(); };
+  useOptionForwardTravel(viewport, live, run);
+  useInitialDiscoveryDemand({ key: search.requestedKey, current: search.current, active: canContinue && search.active,
+    viewport: () => viewport.current === null ? null : discoveryViewport(viewport.current), run });
   return (
     <div className={styles.filter}>
       <label className={styles.label}>
         <span>authors</span>
-        <Input
-          ref={inputRef}
-          type="search"
-          value={query}
-          placeholder="find an author"
-          onChange={(event) => setQuery(event.target.value)}
-        />
+        <Input ref={inputRef} type="search" value={query} placeholder="find an author"
+          onChange={event => setQuery(event.target.value)}
+          onKeyDown={event => {
+            if (event.key === "ArrowDown" && viewport.current !== null && nearDiscoveryTail(discoveryViewport(viewport.current))) run();
+          }} />
       </label>
-      {failure !== null ? <Failed error={failure.error} noun="authors" retry={{ run: search.retry, busy: search.running !== null }} />
-        : live && search.failure === null && (!search.current || suggestions.length === 0 && !search.complete) ? <Ruling />
-        : null}
-      {suggestions.length > 0 ? (
-        <div className={styles.suggestions}>
-          {suggestions.map((item) => (
-            <Button
-              key={item.handle}
-              className={styles.suggestion}
-              onClick={() => {
-                inputRef.current?.focus({ preventScroll: true });
-                onAdd(item);
-                setQuery("");
-              }}
-            >
-              {item.display_name}
-            </Button>
-          ))}
-        </div>
-      ) : null}
-      {live && search.complete && failure === null && suggestions.length === 0
-        ? <Fact line={{ fact: "no other authors match this search." }} speak={active} /> : null}
-      {live ? readFeedback.notice : null}
-      {readFeedback.announcement}
+      {live ? <div ref={viewport} className={`${collection.compactViewport} ${styles.suggestions}`} data-collection-viewport=""
+        onKeyDownCapture={event => {
+          if (event.key === "Tab" && !event.shiftKey && viewport.current !== null && nearDiscoveryTail(discoveryViewport(viewport.current))) run();
+        }}>
+        {suggestions.map(item => <Button key={item.handle}
+          className={styles.suggestion}
+          onClick={() => { inputRef.current?.focus({ preventScroll: true }); onAdd(item); setQuery(""); }}
+        >{item.display_name}</Button>)}
+      </div> : null}
+      {repeated ? <Fact line={{ fact: "couldn’t load more authors.", reason: "the source repeated its continuation." }} />
+        : failure !== null ? <Failed error={failure} noun={search.current ? "more authors" : "authors"} retry={{
+          run: failure.code === "E_INVALID_CURSOR" ? () => { void search.refetch().catch(() => {}); } : search.retry,
+          busy: search.running !== null,
+        }} />
+        : live && (!search.current || suggestions.length === 0 && search.running !== null) ? <Ruling />
+        : live && search.complete && suggestions.length === 0 ? <Fact line={{ fact: "no other authors match this search." }} speak={active} /> : null}
+      <DiscoveryTail label="continue searching authors" action={canContinue ? search.more : null}
+        busy={search.running !== null} show={suggestions.length === 0 || search.continuationNeedsAction} />
     </div>
   );
 }

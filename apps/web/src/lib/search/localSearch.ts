@@ -12,7 +12,8 @@ import { useMemo } from "react";
 import type { AuthoredQuery, QueryResult, ResourceProjection, ResourceRef } from "@nexus/authored/types";
 import type { SearchFamily, SearchScope } from "@nexus/authored/scope";
 import { capturedHighlightText, searchName, searchNameMatch } from "@nexus/authored/queries";
-import { useAuthoredPrefix, useAuthoredQuery } from "@/lib/notes/hooks";
+import { useAuthoredQuery } from "@/lib/notes/hooks";
+import { useLocalDiscovery } from "./localDiscovery";
 import { localResourceHref, localResourceLabel } from "@/lib/resources/localResource";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { SearchKind } from "./kinds";
@@ -161,27 +162,26 @@ export function useLocalSearchPreview(text: string | null, kinds: SearchQuery["r
     error: result.error ?? source.read.error, retry: () => { result.retry(); source.read.retry(); }};
 }
 
-/** Every local match of the requested authored kinds, a page at a time, re-read whenever
- * local state commits. Showing more keeps the current matches until the longer read lands. */
-export function useLocalSearch(text: string | null, kinds: SearchQuery["requestedKinds"], pages: number, scope: string): {
-  readonly matches: readonly LocalMatch[] | null;
-  readonly complete: boolean;
-  readonly pending: boolean;
-  readonly occurrence: object | null;
-  readonly scopeAvailable: boolean | null;
-  readonly error: unknown;
-  readonly retry: () => void;
-} {
+/** Local ranking owns its cursor independently of server search. */
+export function useLocalSearch(text: string | null, kinds: SearchQuery["requestedKinds"], scope: string, active: boolean, remoteRefs: ReadonlySet<string>) {
   const scopes = localSearchScopes(scope);
   const families: SearchFamily[] | null = kinds === null ? null : [...kinds].sort();
   const query: Extract<AuthoredQuery, {kind: "search"}> | null = text === null || scopes === null ? null
     : { kind: "search", text, cursor: null, limit: PAGE, scopes, families };
-  const prefix = useAuthoredPrefix(query, pages);
+  const eligible = (resource: ResourceProjection) => {
+    const kind = kindOf(resource);
+    return kind !== null && (kinds === null || kinds.has(kind));
+  };
+  const prefix = useLocalDiscovery(query, active, ({ resource }) =>
+    eligible(resource) && (resource.authored_by_viewer || !remoteRefs.has(resource.ref)));
   const matches = useMemo(() => prefix.data === null ? null : prefix.data.rows.flatMap(({ resource, match_text, activation_ref, matched_field, activation_field }) => {
     const kind = kindOf(resource);
     return kind !== null && (kinds === null || kinds.has(kind)) ? [localMatch(resource, kind, text ?? "", { matchText: match_text, activationRef: activation_ref, matchedField: matched_field, href: resource.kind === "highlight" && activation_field === "annotation" ? `/highlights/${resource.ref.split(":")[1]}#annotation` : localResourceHref(resource, { activationRef: activation_ref }) })] : [];
   }), [prefix.data, kinds, text]);
-  if (text !== null && scopes === null) return { matches: [], complete: true, pending: false, occurrence: null, scopeAvailable: false, error: null, retry: prefix.retry };
-  return { matches, complete: prefix.data?.next_cursor === null, pending: prefix.pending, occurrence: prefix.occurrence, scopeAvailable: prefix.error !== null || prefix.data === null ? null : prefix.data.scope_available,
-    error: prefix.error, retry: prefix.retry };
+  return {
+    ...prefix, matches,
+    complete: prefix.data?.next_cursor === null,
+    canContinue: prefix.data !== null && prefix.data.next_cursor !== null,
+    scopeAvailable: text !== null && scopes === null ? false : prefix.data?.scope_available ?? null,
+  };
 }
