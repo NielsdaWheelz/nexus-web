@@ -13,7 +13,7 @@
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
-import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_TO_6_SQL } from "@nexus/authored/schema";
+import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, REBUILD_DEVICE_SQL } from "@nexus/authored/schema";
 import { bindingQueries, compileQuery, compileOutlineWindows, excerptQuery, searchQuery, sourceAliasQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, LITERAL_MISSING_SQL, LITERAL_SOURCE_SQL, LITERAL_WRITE_SQL, foldedFields } from "@nexus/authored/queries";
 import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange, type LinkState, type OutlineWindowProof, type OutlineWindowSlice, type ResourceProjection } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
@@ -55,17 +55,25 @@ export function decodeOutlineWindow(raw: Record<string, unknown>[]): OutlineWind
 export class Persistence {
   constructor(readonly db: Database) {}
   async initialize(accountId: string) {
-    for (const sql of DEVICE_SCHEMA) await this.db.run(sql);
-    await this.db.run("INSERT OR IGNORE INTO replica_state VALUES (1,?,?,0,0,0,0,?,0)", [accountId, crypto.randomUUID(), FORMAT_REVISION]);
     await this.db.transaction(async () => {
-      const state = await this.replica();
-      if (state.account_id !== accountId) throw new Error("authored account mismatch");
-      if (state.format_revision === 4 || state.format_revision === 5) {
-        if ((await this.db.all("SELECT 1 FROM pending_changes LIMIT 1")).length > 0)
-          throw Object.assign(new Error("sync all writing with the previous client before updating this device"), { code: "E_AUTHORED_UPGRADE_PENDING" });
-        for (const sql of UPGRADE_TO_6_SQL) await this.db.run(sql);
-      } else if (state.format_revision !== FORMAT_REVISION) throw new Error("authored format mismatch; drain the previous client before reprovisioning this device");
-      // Existing installations rebuild this derived table in place, including unuploaded edits.
+      const [existing] = await this.db.all("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='replica_state'");
+      let rebuild = false;
+      if (existing) {
+        const [state] = await this.db.all("SELECT account_id,format_revision FROM replica_state WHERE singleton=1");
+        if (state) {
+          if (state.account_id !== accountId) throw new Error("authored account mismatch");
+          const format = Number(state.format_revision);
+          rebuild = format === 4 || format === 5 || format === 6;
+          if (!rebuild && format !== FORMAT_REVISION)
+            throw new Error("authored format mismatch; drain the previous client before reprovisioning this device");
+          if (rebuild && (await this.db.all("SELECT 1 FROM pending_changes LIMIT 1")).length > 0)
+            throw Object.assign(new Error("sync all writing with the previous client before updating this device"), { code: "E_AUTHORED_UPGRADE_PENDING" });
+        }
+      }
+      for (const sql of DEVICE_SCHEMA) await this.db.run(sql);
+      await this.db.run("INSERT OR IGNORE INTO replica_state VALUES (1,?,?,0,0,0,0,?,0)", [accountId, crypto.randomUUID(), FORMAT_REVISION]);
+      if (rebuild) for (const sql of REBUILD_DEVICE_SQL) await this.db.run(sql);
+      // Format 7 devices can gain the derived table without reprovisioning local edits.
       for (;;) {
         const missing = await this.db.all(LITERAL_MISSING_SQL);
         if (!missing.length) break;
@@ -189,7 +197,7 @@ export class Persistence {
     const rows = raw.map(row => ({ resource: JSON.parse(String(row.projection_json)), link: row.link_json === null ? null : JSON.parse(String(row.link_json)), match_text: null, activation_ref: null, matched_field: null, activation_field: null }));
     const last = rows.at(-1);
     let next: string | null = null;
-    if ("limit" in query && rows.length === Math.min(100, query.limit) && last) {
+    if (last && "limit" in query && rows.length === Math.min(100, query.limit)) {
       const cursor = raw.at(-1)?.cursor_json;
       next = typeof cursor === "string" ? cursor : last.resource.ref;
     }

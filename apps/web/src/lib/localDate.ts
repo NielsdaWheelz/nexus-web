@@ -6,26 +6,21 @@
  */
 
 const LOCAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const calendarFormatters = new Map<string, Intl.DateTimeFormat>();
+
+let calendar: { zone: string; formatter: Intl.DateTimeFormat } | null = null;
 
 /** A server-valid zone can be absent from this browser’s timezone database. */
 export function formatLocalDateInTimeZone(date: Date, timeZone: string): string | null {
-  let formatter = calendarFormatters.get(timeZone);
-  if (formatter === undefined) {
+  if (calendar?.zone !== timeZone) {
     try {
-      formatter = new Intl.DateTimeFormat("en-US", {
-        timeZone,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      });
+      const formatter = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
+      calendar = { zone: timeZone, formatter };
     } catch (error) {
       if (error instanceof RangeError) return null;
       throw error;
     }
-    calendarFormatters.set(timeZone, formatter);
   }
-  const parts = formatter.formatToParts(date);
+  const parts = calendar.formatter.formatToParts(date);
   const year = parts.find((part) => part.type === "year")?.value;
   const month = parts.find((part) => part.type === "month")?.value;
   const day = parts.find((part) => part.type === "day")?.value;
@@ -56,11 +51,17 @@ export function shiftLocalDate(value: string, days: number): string {
 
 const dayParts = new Intl.DateTimeFormat("en-US", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 
+/** A civil display date can extend beyond the four-digit journal route range. */
+export function calendarDateAtUtcNoon(date: string): Date {
+  const iso = date.length > 10 ? `+${date.padStart(12, "0")}` : date;
+  return new Date(`${iso}T12:00:00Z`);
+}
+
 /** A day's name: `Tuesday, 17 November`. Another year than `today`'s, or `today` unknown, adds the year. */
 export function formatDay(date: string, today: string | null): string {
-  const parts = Object.fromEntries(dayParts.formatToParts(new Date(`${date}T12:00:00Z`)).map(part => [part.type, part.value]));
+  const parts = Object.fromEntries(dayParts.formatToParts(calendarDateAtUtcNoon(date)).map(part => [part.type, part.value]));
   const day = `${parts.weekday}, ${parts.day} ${parts.month}`;
-  return today !== null && today.slice(0, 4) === date.slice(0, 4) ? day : `${day} ${parts.year}`;
+  return today !== null && today.slice(0, -6) === date.slice(0, -6) ? day : `${day} ${parts.year}`;
 }
 
 /** A recorded habit date, in full. */

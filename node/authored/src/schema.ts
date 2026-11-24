@@ -1,12 +1,13 @@
 /** One device schema. Canonical JSON and derived columns commit together; projections
  * are never an independent authority. Both hosts require FTS5 and synchronous FULL. */
-import { PAGE_TITLE_SQL, WORK_ACTIVE_HABIT, WORK_CAPTURE_ORDER, WORK_DESIGNATED_HABIT, WORK_OPEN_TASK, WORK_HABIT_HISTORY, WORK_HABIT_HISTORY_ONLY, WORK_TASK_DAY, WORK_TASK_HISTORY } from "./queries.ts";
+import { PAGE_TITLE_SQL, PAGE_WORK_RANK_SQL, WORK_ACTIVE_HABIT, WORK_CAPTURE_ORDER, WORK_DESIGNATED_HABIT, WORK_OPEN_TASK, WORK_HABIT_HISTORY, WORK_HABIT_HISTORY_ONLY, WORK_TASK_DAY, WORK_TASK_HISTORY } from "./queries.ts";
+import { FORMAT_REVISION } from "./types.ts";
 /** Both outboxes read the server's maximum 64 changes in immutable source order;
  * each host then takes the prefix fitting the existing upload byte budget. */
 export const PENDING_CHANGES_SQL = "SELECT change_json,byte_length FROM pending_changes ORDER BY command_seq LIMIT 64";
 /** Empty-outbox cutover: preserve replica/source counters and re-enter verified
  * snapshot provisioning. Neither host may expose old grammar while awaiting it. */
-export const UPGRADE_TO_6_SQL = [
+export const REBUILD_DEVICE_SQL = [
   "DELETE FROM resources",
   "DELETE FROM links",
   "DELETE FROM passages",
@@ -24,11 +25,10 @@ export const UPGRADE_TO_6_SQL = [
   "DELETE FROM scope_text_progress",
   "DELETE FROM scope_revocations",
   "UPDATE scope_state SET active_revision=NULL,staging_revision=NULL,metadata_cursor=NULL,metadata_complete=0 WHERE singleton=1",
-  "UPDATE replica_state SET format_revision=6,provisioning_complete=0,store_revision=store_revision+1 WHERE singleton=1",
+  `UPDATE replica_state SET format_revision=${FORMAT_REVISION},provisioning_complete=0,store_revision=store_revision+1 WHERE singleton=1`,
 ] as const;
+export const DEVICE_PRAGMAS = ["PRAGMA foreign_keys = ON", "PRAGMA synchronous = FULL"] as const;
 export const DEVICE_SCHEMA = [
-  "PRAGMA foreign_keys = ON",
-  "PRAGMA synchronous = FULL",
   `CREATE TABLE IF NOT EXISTS replica_state (singleton INTEGER PRIMARY KEY CHECK(singleton=1), account_id TEXT NOT NULL, replica_id TEXT NOT NULL, command_seq INTEGER NOT NULL, store_revision INTEGER NOT NULL, lamport INTEGER NOT NULL, server_cursor INTEGER NOT NULL, format_revision INTEGER NOT NULL, provisioning_complete INTEGER NOT NULL CHECK(provisioning_complete IN (0,1)))`,
   `CREATE TABLE IF NOT EXISTS resources (ref TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('note','page','highlight')), state_json TEXT NOT NULL, merge_bytes BLOB NOT NULL, projection_json TEXT NOT NULL, visible INTEGER NOT NULL, body_text TEXT, title TEXT, local_date TEXT UNIQUE, source_ref TEXT)`,
   `CREATE INDEX IF NOT EXISTS resources_visible_refs ON resources(ref) WHERE visible=1`,
@@ -36,6 +36,7 @@ export const DEVICE_SCHEMA = [
   `CREATE INDEX IF NOT EXISTS resources_habit_history ON resources(ref) WHERE ${WORK_HABIT_HISTORY}`,
   `CREATE INDEX IF NOT EXISTS resources_annotations ON resources(source_ref,ref) WHERE visible=1`,
   `CREATE INDEX IF NOT EXISTS resources_register ON resources(${PAGE_TITLE_SQL} COLLATE NOCASE,ref) WHERE kind='page' AND visible=1 AND local_date IS NULL`,
+  `CREATE INDEX IF NOT EXISTS resources_worked ON resources(${PAGE_WORK_RANK_SQL},${PAGE_TITLE_SQL} COLLATE NOCASE,ref) WHERE kind='page' AND visible=1 AND local_date IS NULL`,
   `CREATE TEMP TABLE IF NOT EXISTS captured_index_orders (
     token TEXT NOT NULL, rank INTEGER NOT NULL, ref TEXT NOT NULL, group_name TEXT NOT NULL,
     PRIMARY KEY(token,rank), UNIQUE(token,ref)

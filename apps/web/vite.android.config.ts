@@ -12,7 +12,7 @@ import { compileQuery, compileOutlineWindows, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQ
 import { SCOPE_SQL } from "../../node/authored/src/scope";
 import { nativeQueryPlans } from "./src/lib/authored/nativeQuery";
 import type { AuthoredQuery, CapturedIndexSource } from "../../node/authored/src/types";
-import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_TO_6_SQL } from "../../node/authored/src/schema";
+import { DEVICE_PRAGMAS, DEVICE_SCHEMA, PENDING_CHANGES_SQL, REBUILD_DEVICE_SQL } from "../../node/authored/src/schema";
 import { appCsp } from "./src/lib/security/csp";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
 import { BRAND_BG_DARK } from "./src/lib/brand";
@@ -47,8 +47,9 @@ export default defineConfig({
           ...Object.fromEntries(STATIC_SECURITY_HEADERS.map(header => [header.key, header.value])),
           "Content-Security-Policy": appCsp({ nonce: "__NEXUS_NONCE__", dev: false, https: false, ws: [], connect }),
         }));
-        writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify(DEVICE_SCHEMA));
-        writeFileSync(path.join(outDir, "authored-upgrade-to-6.json"), JSON.stringify(UPGRADE_TO_6_SQL));
+        writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify({
+          pragmas: DEVICE_PRAGMAS, create: DEVICE_SCHEMA, rebuild: REBUILD_DEVICE_SQL,
+        }));
         const cursor = JSON.stringify(["a0", ""]);
         const index = {start: 0, limit: 100, expected_revision: null};
         type PackagedQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;
@@ -64,7 +65,8 @@ export default defineConfig({
           {...source, at: {kind: "release", token: ""}, expected_revision: null},
         ];
         const samples: Record<PackagedQuery["kind"], PackagedQuery[]> = {
-          page_register: ["", "words"].flatMap(text => capturedSamples({kind: "page_register", text})),
+          page_register: (["worked", "title"] as const).flatMap(order =>
+            ["", "words"].flatMap(text => capturedSamples({kind: "page_register", text, order}))),
           register_label: [{kind: "register_label", ref: ""}],
           outline_filter: [{kind: "outline_filter", parent_ref: "", text: "words", start: 0, limit: 1, expected_revision: null}],
           daily_index: [

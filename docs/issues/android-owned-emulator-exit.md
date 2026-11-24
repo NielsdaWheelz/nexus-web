@@ -24,3 +24,12 @@ neither identifies the cause. no common cause with the earlier occurrence,
 chrome crash dialogs or adb transport resets is established. all six app
 journeys remained unrun. an unchanged retry may qualify those journeys but
 does not resolve this unexplained emulator exit.
+
+on 2026-11-24, `nexus-notes-home-api34` on `emulator-5554` completed boot
+and exposed webview `113.0.5672.136`, then exited 134 while the notes-home
+lab waited for capacity. emulator `36.5.10.0` selected software graphics.
+`qemu-system-aarch64-headless-2026-11-24-022720.ips` records pid 81548,
+sigabrt and `std::__throw_bad_function_call` on a grpc completion queue.
+the same stack aborted pid 17350 under host graphics in
+`qemu-system-aarch64-headless-2026-11-24-024109.ips`. the app journey had yet to
+start. the invalid callback's cause is open.

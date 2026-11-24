@@ -25,7 +25,7 @@ export function useCapturedOrder<Row>(source: CapturedIndexSource, revision: str
     const token = crypto.randomUUID();
     let references = 1;
     let live = true;
-    const detailSource: CapturedIndexSource = source.kind === "page_register" ? {kind: "page_register", text: ""} : source;
+    const detailSource: CapturedIndexSource = source.kind === "page_register" ? {...source, text: ""} : source;
     const release = () => {
       if (--references === 0) void store.query({...detailSource, at: {kind: "release", token}, expected_revision: null}).catch(() => {});
     };

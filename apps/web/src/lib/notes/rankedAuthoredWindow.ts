@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { DailyIndexSource, QueryResult, RankedIndexResult, WorkRegisterSource } from "@nexus/authored/types";
+import type { CapturedIndexSource, DailyIndexSource, QueryResult, RankedIndexResult } from "@nexus/authored/types";
 import { useAuthoredAccountId, useAuthoredStore } from "@/lib/authored/provider";
 
 type RankedRow = {ref: string} | {local_date: string};
@@ -15,7 +15,7 @@ const EMPTY = new Map<never, never>();
 /** The admitted viewport and pins own this cache. The description's compact
  * head sample survives seeks, and each reply belongs to its requested revision. */
 export function useRankedAuthoredWindow<Row extends RankedRow>(
-  source: {kind: "page_register"; text: string} | {kind: "habits"} | WorkRegisterSource | {kind: "mentions"; ref: string} | DailyIndexSource,
+  source: CapturedIndexSource | DailyIndexSource,
   revision: string | null,
   description: Description<Row> | null,
   select: (result: QueryResult) => RankedIndexResult<Row> | null,

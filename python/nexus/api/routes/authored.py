@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 from starlette.types import Receive, Scope, Send
 
@@ -26,6 +26,7 @@ from nexus.db.session import (
 from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas.authored import (
+    AUTHORED_FORMAT_REVISION,
     AcceptedChanges,
     DownloadChanges,
     ProvisionReplica,
@@ -47,6 +48,8 @@ class AuthoredRoute(APIRoute):
             try:
                 return await handler(request)
             except RequestValidationError as exc:
+                if any(error["loc"] == ("query", "format_revision") for error in exc.errors()):
+                    raise ApiError(ApiErrorCode.E_WIRE_MISMATCH, "Update nexus to sync") from exc
                 if any(
                     error["type"] == "missing"
                     and str(error["loc"][-1]).lower() == "x-nexus-account"
@@ -113,8 +116,11 @@ async def require_current_upload_replica(
     """Refuse retired producers before FastAPI decodes their change grammar."""
     try:
         value = await request.json()
+        revision = value.get("format_revision") if isinstance(value, dict) else None
+        if type(revision) is not int or revision != AUTHORED_FORMAT_REVISION:
+            raise ApiError(ApiErrorCode.E_WIRE_MISMATCH, "Update nexus to sync")
         replica_id = _REPLICA_ID.validate_python(value["replica_id"])
-    except (KeyError, TypeError, ValidationError) as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Invalid authored replica"
         ) from exc
@@ -126,7 +132,12 @@ def upload(request: UploadChanges, viewer: ViewerDep, db: DbSession) -> Data[Acc
     return Data(data=authored.upload(db, viewer.user_id, request))
 
 
-@router.get("/changes")
+def require_current_download_format(format_revision: Annotated[str, Query()]) -> None:
+    if format_revision != str(AUTHORED_FORMAT_REVISION):
+        raise ApiError(ApiErrorCode.E_WIRE_MISMATCH, "Update nexus to sync")
+
+
+@router.get("/changes", dependencies=[Depends(require_current_download_format)])
 def download(
     viewer: ViewerDep,
     db: RepeatableReadDbSession,

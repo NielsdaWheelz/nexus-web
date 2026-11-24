@@ -1,10 +1,10 @@
 """Closed replication envelopes. Counters are decimal signed-64-bit strings."""
 
 from datetime import date
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self, TypedDict
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.reader_excerpts import ExcerptView, FrozenExcerpt
@@ -18,6 +18,13 @@ def _counter(value: str) -> str:
 
 
 Counter = Annotated[str, AfterValidator(_counter)]
+AUTHORED_FORMAT_REVISION = 7
+PageWorkTime = Annotated[int, Field(strict=True, gt=0, le=253402300799999)]
+
+
+class PageCredit(TypedDict):
+    ref: str
+    at_ms: int
 
 
 def _vector(value: dict[str, str]) -> dict[str, str]:
@@ -116,10 +123,29 @@ class NotePatch(Causality):
     work: NoteWork | None
 
 
-class PagePatch(Causality):
+class PageCausality(Causality):
     kind: Literal["page"]
     local_date: str | None
+    last_work_at_ms: PageWorkTime | None
+
+    @model_validator(mode="after")
+    def work_time_is_undated(self) -> Self:
+        if self.local_date is not None and self.last_work_at_ms is not None:
+            raise ValueError("Only an undated page can carry a work time")
+        return self
+
+
+class PagePatch(PageCausality):
     title_update: str | None
+
+    def is_work_marker(self) -> bool:
+        return (
+            self.last_work_at_ms is not None
+            and self.local_date is None
+            and self.title_update is None
+            and not self.touch_vv
+            and not self.delete_vv
+        )
 
 
 class HighlightPatch(Causality):
@@ -139,9 +165,7 @@ class NoteState(Causality):
     work: NoteWork | None
 
 
-class PageState(Causality):
-    kind: Literal["page"]
-    local_date: str | None
+class PageState(PageCausality):
     title_state: str
 
 
@@ -218,6 +242,7 @@ class ResourceProjection(Closed):
     body_text: str | None
     title: str | None
     local_date: str | None
+    last_work_at_ms: PageWorkTime | None
     source_ref: str | None
     source_publication: Publication | None
     selection: SelectionLocation | None
@@ -238,7 +263,7 @@ class ProvisionReplica(Closed):
 
 
 class UploadChanges(Closed):
-    format_revision: Literal[6]
+    format_revision: Literal[7]
     replica_id: UUID
     changes: list[Change] = Field(min_length=1, max_length=64)
 
@@ -263,7 +288,7 @@ class DownloadChanges(Closed):
 
 class SnapshotHeader(Closed):
     type: Literal["header"]
-    format_revision: Literal[6]
+    format_revision: Literal[7]
     head_cursor: Counter
     lamport: Counter
 
@@ -297,7 +322,7 @@ class SnapshotCounts(Closed):
 
 class SnapshotFooter(Closed):
     type: Literal["footer"]
-    format_revision: Literal[6]
+    format_revision: Literal[7]
     head_cursor: Counter
     lamport: Counter
     counts: SnapshotCounts

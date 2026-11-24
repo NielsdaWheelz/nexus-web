@@ -5,8 +5,7 @@
  * Adjacency uses the exact (position,link_id) tuple, including prefix/equal keys. */
 import { excerptTextParts, excerptView, scopeExcerpt, type ExcerptScope, type ExcerptNode } from "./excerpt.ts";
 import { AUTHORED_INDEX_RANGE, type AuthoredQuery, type CapturedIndexDemand, type OutlineRange, type PassageState, type QueryResult, type QueryRow, type ResourceProjection, type SelectionCapture, type ResourceState, type PassageCapture } from "./types.ts";
-import { normalizeQuote } from "./identity.ts";
-import { validateLocalDate } from "./work.ts";
+import { normalizeQuote, validateLocalDate } from "./identity.ts";
 import { foldFilterText } from "./filter.ts";
 import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, SEARCH_FAMILIES, type ScopeInterval, type ScopeReading } from "./scope.ts";
 const WORK_CAPTURE_LAMPORT = "CAST(json_extract(state_json,'$.work.captured.lamport') AS INTEGER)";
@@ -70,16 +69,22 @@ export function searchNameMatch(resource: ResourceProjection, text: string): "ex
   return !name || !query ? null : name === query ? "exact" : name.startsWith(query) ? "prefix" : name.includes(query) ? "substring" : null;
 }
 const DAILY_TITLE_SQL = `(CASE CAST(substr(local_date,6,2) AS INTEGER) ${MONTHS.map((month,index)=>`WHEN ${index+1} THEN '${month}'`).join(" ")} END || ' ' || CAST(CAST(substr(local_date,9,2) AS INTEGER) AS TEXT) || ', ' || substr(local_date,1,4))`;
+const SOURCE_PROJECTION_SQL = `json_object('ref',s.source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),
+  'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),
+  'local_date',NULL,'last_work_at_ms',NULL,'source_ref',s.source_ref,'source_publication',json_extract(s.state_json,'$.capture.value.publication'),
+  'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]'),'work',NULL)`;
 const READABLE = `WITH readable AS (
   SELECT ref,json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM resources WHERE visible=1
   UNION ALL
-  SELECT source_ref AS ref,json_object('ref',source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',source_ref,'source_publication',json_extract(state_json,'$.capture.value.publication'),'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]'),'work',NULL) AS projection_json
-  FROM source_stubs WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.ref=source_stubs.source_ref) AND NOT EXISTS (SELECT 1 FROM passages p WHERE p.anchor_id=substr(source_stubs.source_ref,16) AND source_stubs.source_ref='passage_anchor:'||p.anchor_id)
+  SELECT s.source_ref AS ref,${SOURCE_PROJECTION_SQL} AS projection_json
+  FROM source_stubs s WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.ref=s.source_ref) AND NOT EXISTS (SELECT 1 FROM passages p WHERE p.anchor_id=substr(s.source_ref,16) AND s.source_ref='passage_anchor:'||p.anchor_id)
   UNION ALL
   SELECT 'passage_anchor:'||anchor_id AS ref,projection_json FROM passages
 )`;
 /** Rebuild one FTS row from canonical presented content, on either SQLite host. */
 export const PAGE_TITLE_SQL = `COALESCE(NULLIF(title,''),${DAILY_TITLE_SQL},'untitled page')`;
+const PAGE_WORK_AT_SQL = "json_extract(projection_json,'$.last_work_at_ms')";
+export const PAGE_WORK_RANK_SQL = `-coalesce(${PAGE_WORK_AT_SQL},0)`;
 /** Rebuildable literal fields. Local resources and passages take precedence over their source stubs. */
 export const LITERAL_SOURCE_SQL = `SELECT CASE WHEN kind='page' THEN ${PAGE_TITLE_SQL} ELSE title END AS title,body_text AS body,
   CASE WHEN kind='highlight' THEN json_extract(projection_json,'$.selection.quote_exact') END AS quote FROM resources WHERE ref=?1
@@ -113,7 +118,7 @@ const INCIDENT = `
 const BOUNDED_READABLE = `
   SELECT r.ref,json_set(r.projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM wanted w CROSS JOIN resources r ON r.ref=w.ref WHERE r.visible=1
   UNION ALL
-  SELECT s.source_ref AS ref,json_object('ref',s.source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',s.source_ref,'source_publication',json_extract(s.state_json,'$.capture.value.publication'),'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]'),'work',NULL) AS projection_json
+  SELECT s.source_ref AS ref,${SOURCE_PROJECTION_SQL} AS projection_json
   FROM wanted w CROSS JOIN source_stubs s ON s.source_ref=w.ref WHERE NOT EXISTS(SELECT 1 FROM resources r WHERE r.ref=w.ref) AND NOT EXISTS(SELECT 1 FROM passages p WHERE p.anchor_id=substr(w.ref,16) AND w.ref='passage_anchor:'||p.anchor_id)
   UNION ALL
   SELECT 'passage_anchor:'||p.anchor_id AS ref,p.projection_json
@@ -464,47 +469,50 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
   const limit = "limit" in query ? Math.max(1, Math.min(100, Math.floor(query.limit))) : 100;
   switch (query.kind) {
     case "page_register": {
+      const worked = query.order === "worked";
       const needle = foldFilterText(query.text.trim());
       const visible = "r.kind='page' AND r.visible=1 AND r.local_date IS NULL";
       const match = needle ? " AND EXISTS(SELECT 1 FROM literal_fields f WHERE f.ref=r.ref AND instr(f.title,?1)>0)" : "";
-      const base = `FROM resources AS r INDEXED BY resources_register WHERE ${visible}`;
+      const base = `FROM resources AS r INDEXED BY ${worked ? "resources_worked" : "resources_register"} WHERE ${visible}`;
       const filtered = base + match;
       const params = needle ? [needle] : [];
       const first = params.length + 1;
-      const order = "name COLLATE NOCASE,ref";
-      const group = "upper(substr(name,1,1))";
+      const order = `${worked ? PAGE_WORK_RANK_SQL + "," : ""}${PAGE_TITLE_SQL} COLLATE NOCASE,r.ref`;
       const label = "CASE WHEN length(CAST(json_quote(name) AS BLOB))<=512 THEN name END";
-      const item = `'ref',ref,'group',${group},'label',${label}`;
+      const details = `${PAGE_TITLE_SQL} AS name,${PAGE_WORK_AT_SQL} AS last_work_at_ms`;
+      const group = worked ? "''" : "upper(substr(name,1,1))";
+      const item = `'ref',ref,'group',${group},'label',${label},'last_work_at_ms',last_work_at_ms`;
       if ("token" in query.at) return compileCapturedIndex(query.at, {
-        members: filtered, order: `${PAGE_TITLE_SQL} COLLATE NOCASE,r.ref`, group: `upper(substr(${PAGE_TITLE_SQL},1,1))`,
-        visible, details: `${PAGE_TITLE_SQL} AS name`, item: `'ref',ref,'group',group_name,'label',${label}`,
+        members: filtered, order, group: worked ? "''" : `upper(substr(${PAGE_TITLE_SQL},1,1))`,
+        visible, details, item: `'ref',ref,'group',group_name,'label',${label},'last_work_at_ms',last_work_at_ms`,
         matches: match, params,
       });
       switch (query.at.kind) {
-        case "describe":
+        case "describe": {
+          const groupCounts = worked ? "" : `,groups AS (SELECT count(*) AS size FROM (SELECT ${PAGE_TITLE_SQL} AS name ${filtered})
+              GROUP BY substr(name,1,1) COLLATE NOCASE ORDER BY substr(name,1,1) COLLATE NOCASE)`;
+          const groups = worked ? "json('[]')" : `json(CASE WHEN total>${COMPLETE_REGISTER_ROWS} THEN
+                (SELECT json_group_array(size) FROM groups) ELSE '[]' END)`;
           return {sql: `WITH extent AS (SELECT (SELECT count(*) ${filtered}) AS total,(SELECT count(*) ${base}) AS source_total),
-            slice AS (SELECT ref,${PAGE_TITLE_SQL} AS name ${filtered} ORDER BY ${order}
-              LIMIT (SELECT CASE WHEN total<=${COMPLETE_REGISTER_ROWS} THEN total ELSE 24 END FROM extent)),
-            groups AS (SELECT count(*) AS size FROM (SELECT ${PAGE_TITLE_SQL} AS name ${filtered})
-              GROUP BY substr(name,1,1) COLLATE NOCASE ORDER BY substr(name,1,1) COLLATE NOCASE)
+            slice AS (SELECT r.ref,${details} ${filtered} ORDER BY ${order}
+              LIMIT (SELECT CASE WHEN total<=${COMPLETE_REGISTER_ROWS} THEN total ELSE 24 END FROM extent))${groupCounts}
             SELECT json_object('kind','description','total',total,'source_total',source_total,
-              'groups',json(CASE WHEN total>${COMPLETE_REGISTER_ROWS} THEN
-                (SELECT json_group_array(size) FROM groups) ELSE '[]' END),
-              'items',json((SELECT json_group_array(json_object(${item})) FROM slice))) AS register FROM extent`, params};
+              'groups',${groups},'items',json((SELECT json_group_array(json_object(${item})) FROM slice))) AS register FROM extent`, params};
+        }
         case "range": {
           const {start,limit} = query.at;
           if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > AUTHORED_INDEX_RANGE)
             throw new RangeError("Invalid page register range");
-          return {sql: `WITH slice AS (SELECT ref,${PAGE_TITLE_SQL} AS name ${filtered} ORDER BY ${order}
+          return {sql: `WITH slice AS (SELECT r.ref,${details} ${filtered} ORDER BY ${order}
               LIMIT ?${first} OFFSET ?${first+1})
             SELECT json_object('kind','range','start',?${first+1},'items',json_group_array(json_object(${item}))) AS register FROM slice`,
             params: [...params,limit,start]};
         }
         case "locate": {
           if (query.at.refs.length > 100) throw new RangeError("Too many page register locations");
-          return {sql: `WITH targets AS (SELECT ref,${PAGE_TITLE_SQL} AS name ${filtered} AND ref IN (SELECT value FROM json_each(?${first}))),
-            ranked AS (SELECT targets.*, (SELECT count(*) ${filtered} AND (${PAGE_TITLE_SQL} COLLATE NOCASE,r.ref) <
-              (targets.name COLLATE NOCASE,targets.ref)) AS rank FROM targets)
+          const target = `${worked ? "-coalesce(targets.last_work_at_ms,0)," : ""}targets.name COLLATE NOCASE,targets.ref`;
+          return {sql: `WITH targets AS (SELECT r.ref,${details} ${filtered} AND r.ref IN (SELECT value FROM json_each(?${first}))),
+            ranked AS (SELECT targets.*, (SELECT count(*) ${filtered} AND (${order}) < (${target})) AS rank FROM targets)
             SELECT json_object('kind','locations','items',json_group_array(json_object(${item},'rank',rank))) AS register FROM ranked`,
             params: [...params,JSON.stringify(query.at.refs)]};
         }

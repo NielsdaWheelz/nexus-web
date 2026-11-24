@@ -1,181 +1,199 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import type { QueryResult, RegisterItem } from "@nexus/authored/types";
-import * as Icon from "@/lib/ui/icons";
-import CollectionView, { type CollectionViewRowRenderProps } from "@/components/collections/CollectionView";
-import type { CollectionRowView } from "@/lib/collections/types";
+import type { QueryResult } from "@nexus/authored/types";
 import CollectionRow from "@/components/collections/CollectionRow";
-import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
+import CollectionView, { type CollectionViewRowRenderProps } from "@/components/collections/CollectionView";
 import { Fact } from "@/components/feedback/Fact";
-import { presentNote } from "@/lib/collections/presenters/note";
-import { useAuthoredAccountId } from "@/lib/authored/provider";
-import { useAuthoredQuery } from "@/lib/notes/hooks";
-import { useCapturedIndex } from "@/lib/notes/capturedIndex";
-import { useRankedAuthoredWindow } from "@/lib/notes/rankedAuthoredWindow";
+import { Ruling } from "@/components/feedback/Ruling";
+import AccountCalendarUnavailable from "@/components/notes/AccountCalendarUnavailable";
+import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
+import ButtonLink from "@/components/ui/ButtonLink";
+import PaneSurface from "@/components/ui/PaneSurface";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import type { RankedIndex } from "@/lib/collections/measuredIndexWindow";
-import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { usePaneFilterQuery } from "@/lib/panes/paneFilterRows";
+import { presentNote } from "@/lib/collections/presenters/note";
+import type { CollectionRowView } from "@/lib/collections/types";
+import { calendarDateAtUtcNoon, formatDay, formatLocalDateInTimeZone } from "@/lib/localDate";
+import { useAccountToday } from "@/lib/notes/accountDay";
+import { useCapturedIndex } from "@/lib/notes/capturedIndex";
+import { useAuthoredQuery } from "@/lib/notes/hooks";
+import { useRankedAuthoredWindow } from "@/lib/notes/rankedAuthoredWindow";
+import { truncatePaneSearchQuery, usePaneChrome } from "@/lib/panes/paneChrome";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
 import { readerType } from "@/lib/reader/typography";
-import { useRecent } from "@/lib/recent/store";
-import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
+import * as Icon from "@/lib/ui/icons";
+import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
+import { definePaneVisitDataKey, usePaneReturnReady, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
 import styles from "./NotesPaneBody.module.css";
+
+type RegisterVisit = { filter: string; order: "worked" | "title" };
+const REGISTER = definePaneVisitDataKey<RegisterVisit>("Notes.Register");
+const FIRST: RegisterVisit = { filter: "", order: "worked" };
+const UNIT = {singular: "page", plural: "pages"};
+const shortMonth = new Intl.DateTimeFormat("en-US", { month: "short", timeZone: "UTC" });
 
 const selectRegister = (result: QueryResult) => result.page_register;
 const register = (result: QueryResult) => {
   const value = selectRegister(result);
-  return value?.kind === "retained" || value?.kind === "held" || value?.kind === "successor" ? null : value;
+  return value?.kind === "range" || value?.kind === "locations" ? value : null;
 };
-const UNIT = {singular: "page", plural: "pages"};
 
-/** Only mounted oversized titles need a read. Their identity, header and link already exist. */
+/** Only mounted oversized titles need a read. The ranked row already supplies its link and work date. */
 function LongTitleRow(props: CollectionViewRowRenderProps) {
   const ref = props.row.resourceRef!;
   const read = useAuthoredQuery({kind: "register_label", ref});
   const result = read.data?.register_label;
   const title = result?.label ?? (result?.oversized ? "title too large to display" : read.error ? "couldn’t read title" : "page");
-  return <CollectionRow {...props} row={{...presentNote({id: ref.slice(5), title}), id: props.row.id}}
+  const primary = props.row.primary;
+  return <CollectionRow {...props} row={{...props.row, title: {...props.row.title, text: title},
+    primary: primary.kind === "link" ? {...primary, paneLabelHint: title} : primary}}
     primaryControl={read.error ? <AuthoredReadFailure {...read} noun="this title"/> : props.primaryControl}/>;
 }
 
 export default function NotesPaneBody() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "NotesPaneBody");
   const type = readerType(useReaderProfile());
-  const filter = usePaneFilterQuery("Notes.Pages");
-  const text = filter.query.trim();
-  const source = useMemo(() => ({kind: "page_register" as const, text}), [text]);
-  const {read, order, admitted: admittedRead, observation, shownOrder, source: shownSource, revision, liveRevision, frozen, held} =
+  const { calendarTimeZone } = useAuthenticatedAccount();
+  const today = useAccountToday();
+  const saved = usePaneVisitData(REGISTER, (): RegisterVisit => visit);
+  const [visit, setVisit] = useState(saved ?? FIRST);
+  const text = visit.filter.trim();
+  const source = useMemo(() => ({kind: "page_register" as const, text, order: visit.order}), [text, visit.order]);
+  const {read, order, admitted, observation, shownOrder, source: shownSource, revision, held} =
     useCapturedIndex(source, selectRegister);
-  const account = useAuthoredAccountId();
-  const shownText = shownSource.text;
   const shown = observation?.page_register;
   const description = shown?.kind === "description" ? shown : null;
   const sparse = description !== null && description.total > description.items.length;
   const {items, positions, request, error: rangeError, retry: retryRange} = useRankedAuthoredWindow(
     shownSource, revision, description, register, held);
-  const recent = useRecent();
-  const [prefix, setPrefix] = useState<{account: typeof account; refs: readonly string[]} | null>(null);
-  const keepPrefix = frozen || held !== undefined;
-  const refs = useMemo(() => shownText ? [] : keepPrefix ? prefix?.account === account ? prefix.refs : []
-    : (recent.snapshot?.entries ?? []).flatMap(({target}) =>
-      target.kind === "resource_ref" && target.ref.startsWith("page:") ? [target.ref] : []),
-    [shownText, keepPrefix, prefix, account, recent.snapshot]);
-  const recentRead = useAuthoredQuery(sparse && liveRevision !== null && refs.length > 0
-    ? {kind: "page_register", text: shownText, at: {kind: "locate", refs: [...refs]}, expected_revision: liveRevision} : null);
-  const locations = recentRead.data?.page_register;
-  const opened = useMemo(() => {
-    if (description === null || refs.length === 0) return [];
-    const choices = sparse ? (locations?.kind === "locations" ? locations.items : []) : description.items;
-    const byRef = new Map(choices.map(item => [item.ref, item]));
-    return refs.flatMap(ref => {
-      const item = byRef.get(ref) ?? null;
-      return keepPrefix || item !== null ? [{ref, item}] : [];
-    }).slice(0, 8);
-  }, [description, locations, refs, sparse, keepPrefix]);
-  const openedRefs = useMemo(() => opened.map(item => item.ref), [opened]);
-  if (!keepPrefix && (prefix?.account !== account || prefix.refs.length !== openedRefs.length ||
-    prefix.refs.some((ref, index) => ref !== openedRefs[index]))) {
-    setPrefix({account, refs: openedRefs});
-  }
-  const shift = opened.length;
-  const groups = useMemo(() => {
-    const heads = new Map<number, string>();
-    if (shift > 0) heads.set(0, "recent");
-    let start = shift;
-    for (const size of description?.groups ?? []) { heads.set(start, "letter"); start += size; }
-    const headSamples = new Map<string, React.ReactNode>([["letter", <h3 key="letter" className={styles.letter}>A</h3>]]);
-    if (shift > 0) headSamples.set("recent", <h3 className={styles.recent}>opened here</h3>);
-    return {heads, headSamples};
-  }, [description?.groups, shift]);
+  const worked = shownSource.order === "worked";
   const list = useMemo(() => {
+    const ordered = sparse ? [...items].sort(([left], [right]) => left - right) : [...(description?.items ?? []).entries()];
+    const days = new Map(ordered.map(([rank, item]) => [rank, today !== null && item.last_work_at_ms !== null
+      ? formatLocalDateInTimeZone(new Date(item.last_work_at_ms), calendarTimeZone) : null]));
     const rows: CollectionRowView[] = [];
-    const heads = new Map<string,string>(), long = new Set<string>();
+    const heads = new Map<string, string>();
+    const long = new Set<string>();
     const ids = new Map<number, string>(), ranks = new Map<string, number>();
-    const add = (item: RegisterItem, rank: number, isRecent: boolean) => {
-      const id = item.ref.slice(5), row = presentNote({id, title: item.label ?? "page"});
-      const occurrence = isRecent ? `recent:${id}` : id;
-      if (item.label === null) long.add(occurrence);
-      if (sparse) { ids.set(rank, occurrence); ranks.set(occurrence, rank); }
-      rows.push({...row, id: occurrence});
-      return occurrence;
-    };
-    for (const [rank, {item}] of opened.entries()) {
-      if (item === null) continue;
-      const id = add(item, rank, true);
-      if (rank === 0) heads.set(id, "opened here");
-    }
-    let previous: string | null = null;
-    const ordered = sparse ? [...items].sort(([left], [right]) => left - right) : (description?.items ?? []).entries();
+    let previousGroup: string | null = null;
     for (const [rank, item] of ordered) {
-      const id = add(item, rank + shift, false);
-      if (!sparse && item.group !== previous) heads.set(id, item.group);
-      previous = item.group;
+      const day = days.get(rank) ?? null;
+      let mark: string | null = null;
+      if (worked && today !== null && day !== null &&
+        (rank === 0 || days.has(rank - 1) && days.get(rank - 1) !== day)) {
+        const month = shortMonth.format(calendarDateAtUtcNoon(day)).toLowerCase();
+        const year = day.slice(0, -6);
+        mark = day === today ? "today" : `${Number(day.slice(-2))} ${month}${year === today.slice(0, -6) ? "" : ` ${year}`}`;
+      }
+      const id = item.ref.slice(5);
+      rows.push(presentNote({id, title: item.label ?? "page"}, day, mark));
+      if (item.label === null) long.add(id);
+      if (sparse) {
+        ids.set(rank, id);
+        ranks.set(id, rank);
+      } else if (!worked && item.group !== previousGroup) {
+        heads.set(id, item.group);
+      }
+      previousGroup = item.group;
     }
     return {rows, heads, long, ids, ranks};
-  }, [description?.items, items, opened, shift, sparse]);
-  const returnOrder = useMemo(() => shownOrder === null ? undefined
-    : {...shownOrder, prefix: openedRefs.map(ref => `recent:${ref.slice(5)}`)}, [shownOrder, openedRefs]);
+  }, [calendarTimeZone, description?.items, items, sparse, today, worked]);
+
+  const returnOrder = useMemo(() => shownOrder === null ? undefined : {...shownOrder, prefix: []}, [shownOrder]);
   const ranked = useMemo(() => {
     if (!sparse || description === null || revision === null) return undefined;
-    const source: RankedIndex = {
-      count: description.total + shift,
-      revision: JSON.stringify([revision, openedRefs]),
-      heads: groups.heads,
+    const heads = new Map<number, string>();
+    let start = 0;
+    for (const size of description.groups) {
+      heads.set(start, "letter");
+      start += size;
+    }
+    const geometry: RankedIndex = {
+      count: description.total,
+      revision,
+      heads,
       returnOrder,
       failed: rangeError !== null,
       idAt: rank => list.ids.get(rank),
-      rankOf(id) {
-        const index = list.ranks.get(id);
-        if (index !== undefined) return index;
-        if (id.startsWith("recent:")) return null;
-        const rank = positions?.get(`page:${id}`);
-        return rank == null ? rank : rank + shift;
-      },
+      rankOf: id => list.ranks.get(id) ?? positions?.get(`page:${id}`),
       request(ranks, ids) {
-        request(ranks.map(rank => rank - shift), ids.filter(id => !id.startsWith("recent:")).map(id => `page:${id}`));
+        // A date mark belongs only to the first rank of its civil day.
+        request(worked ? [...ranks, ...ranks.map(rank => rank - 1)] : ranks, ids.map(id => `page:${id}`));
       },
     };
-    return {source, headSamples: groups.headSamples, headAt: (rank: number) => {
-      if (rank === 0 && shift > 0) return <h3 className={styles.recent}>opened here</h3>;
-      const label = items.get(rank - shift)?.group;
-      return <h3 className={styles.letter} aria-hidden={label === undefined || undefined}>{label ?? "\u00a0"}</h3>;
-    }};
-  }, [description, groups, items, list, openedRefs, positions, rangeError, request, revision, shift, returnOrder, sparse]);
-  const error = read.error ?? order.error;
-  const ready = (admittedRead !== null || error !== null) && (text !== "" || recent.snapshot !== null || recent.readFailure) &&
-    (!sparse || refs.length === 0 || recentRead.data !== null || recentRead.error !== null);
-  usePaneReturnReady(ready, revision);
-  const admitted = admittedRead?.page_register;
-  const count = admitted?.kind === "description" ? admitted.total : 0;
-  const total = admitted?.kind === "description" ? admitted.source_total : 0;
-  usePaneChrome({
-    primaryAction: {kind: "link", id: "NewPage", label: "New page", icon: <Icon.Add aria-hidden="true"/>, href: "/pages/new",
-      onActivate: event => activateTargetLink({event, runtime, target: {href: "/pages/new"}, entry: {kind: "ComposePage", title: ""}})},
-    query: {kind: "Collation", collation: {
-      words: {label: "filter pages", value: filter.query, applied: filter.query, onChange: filter.onQueryChange,
-        onClear: filter.clearQuery, standing: false, onSubmit: null, rows: {status: read.data
-          ? {kind: "Complete", visibleCount: count, totalCount: total, unit: UNIT}
-          : {kind: read.error ? "Failed" : "Partial", visibleCount: 0, loadedCount: 0, unit: UNIT}, announce: !!read.data && !read.error}, notice: null, verbs: []},
-      dimensions: [], order: null, reset: null}},
-    header: {kind: "Section", meta: read.data ? {kind: "Count", value: count, of: total, unit: "page"} : {kind: "Pending"}},
-  });
+    return {source: geometry, headSamples: new Map(heads.size === 0 ? [] : [["letter", <h3 key="letter" className={styles.pages}>A</h3>]]),
+      headAt(rank: number) {
+        const label = items.get(rank)?.group;
+        return <h3 className={styles.pages} aria-hidden={label === undefined || undefined}>{label ?? "\u00a0"}</h3>;
+      }};
+  }, [description, items, list, positions, rangeError, request, returnOrder, revision, sparse, worked]);
   const headBefore = useCallback((row: CollectionRowView) => {
     const label = list.heads.get(row.id);
-    return label === undefined ? null : <h3 className={row.id.startsWith("recent:") ? styles.recent : styles.letter}>{label}</h3>;
+    return label === undefined ? null : <h3 className={styles.pages}>{label}</h3>;
   }, [list.heads]);
-  const failure = <AuthoredReadFailure {...(read.error ? read : order.error ? order : rangeError ? {error: rangeError, retry: retryRange} : recentRead)} noun="pages"/>;
-  return <div {...type} className={styles.register}>
-    <CollectionView returnScope="Notes.Pages" ariaLabel="Notes" rows={list.rows} geometry="UniformIndex" anchorKey={shownText}
-      status={description ? "ready" : error ? "error" : "loading"} collectionBusy={!ready} ranked={ranked}
-      notice={<>{description && (error || rangeError || recentRead.error) ? failure : null}
-        {!text && recent.snapshot === null && recent.readFailure ? <Fact line={{fact: "couldn’t load recent items."}}
-          verbs={[{label: "retry", commandKey: "retry recent", run: recent.read}]}/> : null}</>}
-      error={!description ? failure : undefined}
-      empty={<Fact line={{fact: shownText ? "no pages match this filter." : "no pages yet. daily pages stay in the journal."}}/>}
-      renderRow={props => list.long.has(props.row.id) ? <LongTitleRow {...props}/> : <CollectionRow {...props}/>}
-      headBefore={ranked === undefined ? headBefore : undefined}/>
+
+  const error = read.error ?? order.error;
+  // A failed cold read cannot establish that a remembered page disappeared.
+  usePaneReturnReady(admitted !== null, revision);
+  const current = admitted?.page_register;
+  const complete = current?.kind === "description" && error === null && !read.pending;
+  const changeFilter = (value: string) => setVisit(previous => {
+    const filter = truncatePaneSearchQuery(value);
+    return filter === previous.filter ? previous : {...previous, filter};
+  });
+  usePaneChrome({
+    primaryAction: { kind: "link", id: "NewPage", label: "new page", icon: <Icon.Add aria-hidden="true" />,
+      keepOnNarrowHeader: true, href: "/pages/new",
+      onActivate: event => activateTargetLink({ event, runtime, target: { href: "/pages/new" }, entry: { kind: "ComposePage", title: "" } }) },
+    query: { kind: "Collation", collation: {
+      words: { label: "filter pages", value: visit.filter, applied: visit.filter,
+        onChange: changeFilter, onClear: () => changeFilter(""), standing: false,
+        onSubmit: null, rows: {status: complete
+          ? {kind: "Complete", visibleCount: current.total, totalCount: current.source_total, unit: UNIT}
+          : {kind: error === null ? "Partial" : "Failed", visibleCount: 0, loadedCount: 0, unit: UNIT},
+        announce: complete}, notice: null, verbs: [] },
+      dimensions: [], order: { value: visit.order === "worked" ? null : "title", rest: "last worked in",
+        keys: [{ label: "title", ways: [{ value: "title", label: null, word: "by title" }] }],
+        onChange: value => setVisit(previous => ({...previous, order: value === "title" ? "title" : "worked"})), note: null },
+      reset: visit.order === "title" || visit.filter !== "" ? () => setVisit(FIRST) : null,
+    } },
+    header: { kind: "Section", meta: complete ? { kind: "Count", value: current.total, unit: "page" } : { kind: "None" } },
+  });
+
+  const daily = today === null ? { href: null, "aria-disabled": true } as const : { href: "/daily" } as const;
+  const openJournal = (event: TargetActivationEvent, kind: "RevealDailyDate" | "AppendNote") =>
+    activateTargetLink({ event, runtime, target: { href: "/daily" }, entry: { kind } });
+  const failure = <AuthoredReadFailure {...(read.error ? read : order.error ? order : {error: rangeError, retry: retryRange})} noun="pages" />;
+  return <div {...type}>
+    <PaneSurface className={styles.register}>
+      <div data-pane-return-scope="Notes.Journal" className={styles.journal}>
+        <div className={styles.band}>
+          <ButtonLink {...daily} className={styles.journalLink} data-collection-row-id="journal" data-row-focusable=""
+            data-workspace-rich-target="true" onClick={event => openJournal(event, "RevealDailyDate")} onKeyDown={event => openJournal(event, "RevealDailyDate")}>
+            <span className={styles.journalLabel}><span className={styles.journalName}>journal</span>{" "}
+              {today !== null ? <time dateTime={today} className={styles.journalDate}>{formatDay(today, today)}</time> : null}
+            </span>
+          </ButtonLink>
+          <ButtonLink {...daily} className={styles.add} data-collection-row-id="entry" data-row-focusable=""
+            data-workspace-rich-target="true" onClick={event => openJournal(event, "AppendNote")} onKeyDown={event => openJournal(event, "AppendNote")}>add entry</ButtonLink>
+        </div>
+        {today === null ? <AccountCalendarUnavailable /> : null}
+      </div>
+      <section aria-label="pages">
+        <h2 className={styles.pages}>pages</h2>
+        <CollectionView surface={false} returnScope="Notes.Pages" rows={list.rows} ariaLabel="pages"
+          status={description !== null ? "ready" : error !== null ? "error" : "loading"}
+          geometry="UniformIndex" ranked={ranked}
+          collectionBusy={!complete && error === null} anchorKey={JSON.stringify([shownSource.text, shownSource.order])}
+          notice={description !== null && (error !== null || rangeError !== null) ? failure : null} error={failure}
+          empty={complete ? <Fact line={{ fact: text ? "no pages match this filter." : "no pages yet." }} /> : error === null ? <Ruling /> : null}
+          renderRow={props => list.long.has(props.row.id) ? <LongTitleRow {...props}/> : <CollectionRow {...props}/>}
+          headBefore={!sparse && !worked ? headBefore : undefined}
+        />
+      </section>
+    </PaneSurface>
   </div>;
 }

@@ -285,8 +285,8 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     return result.sort((a, b) => a.top - b.top).map(item => item.anchor);
   }
 
-  /** Recover through the previous full order, including unmounted rows. */
-  function survivingAnchor(port: Scrollport, anchor: Anchor, remembered: readonly Anchor[]): Anchor | null {
+  /** An intrinsic run keeps its closest neighbour. A logical window follows its captured order. */
+  function survivingAnchor(port: Scrollport, anchor: Anchor, parents: readonly Anchor[], remembered: readonly Anchor[]): Anchor | null {
     const remaining = new Set(orderedAnchors(port).map(anchorKey));
     const survives = (candidate: Anchor) => {
       if (remaining.has(anchorKey(candidate))) return true;
@@ -294,6 +294,20 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       return frame?.observation !== undefined && frame.position(candidate.id).kind === "pending";
     };
     const at = remembered.findIndex(item => anchorKey(item) === anchorKey(anchor));
+    const intrinsic = parents.length === 0 && geometryFor(port, anchor) === undefined;
+    for (let distance = 1; distance <= remembered.length; distance += 1) {
+      const next = remembered[at + distance];
+      if (next?.scope === anchor.scope && survives(next)) return next;
+      const previous = remembered[at - distance];
+      if (intrinsic && previous?.scope === anchor.scope && survives(previous)) return previous;
+    }
+    if (!intrinsic) {
+      for (let index = at - 1; index >= 0; index -= 1) {
+        if (remembered[index].scope === anchor.scope && survives(remembered[index])) return remembered[index];
+      }
+    }
+    const parent = parents.findLast(survives);
+    if (parent !== undefined) return parent;
     for (let index = at + 1; index < remembered.length; index += 1) {
       if (survives(remembered[index])) return remembered[index];
     }
@@ -445,9 +459,9 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       }
       return "ready";
     };
-    const recover = (anchor: Anchor): Anchor | null | undefined => {
+    const recover = (anchor: Anchor, parents: readonly Anchor[]): Anchor | null | undefined => {
       const order = memento.order?.scope === anchor.scope ? memento.order.value : undefined;
-      if (order === undefined || revision === undefined) return survivingAnchor(port, anchor, memento.anchors);
+      if (order === undefined || revision === undefined) return survivingAnchor(port, anchor, parents, memento.anchors);
       if (revision === null) return undefined;
       const index = order.prefix.indexOf(anchor.id);
       if (index >= 0) {
@@ -466,7 +480,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         }, () => {if (pending.get(paneId) === restore) finish(paneId, false);});
       }
       if (result == null) return undefined;
-      return result.id === null ? survivingAnchor(port, anchor, memento.anchors) : {...anchor, id: result.id};
+      return result.id === null ? survivingAnchor(port, anchor, parents, memento.anchors) : {...anchor, id: result.id};
     };
     const eyeLine = memento.eyeLine;
     if (eyeLine !== null) {
@@ -474,7 +488,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       if (state === "failed") return finish(paneId, false);
       if (state === "pending") return;
       if (state === "missing") {
-        const next = recover(eyeLine);
+        const next = recover(eyeLine, eyeLine.parents);
         if (next === undefined) return;
         memento.eyeLine = next === null ? null : {...next, offset: eyeLine.offset, parents: parentsFor(port, next)};
         return attempt(paneId);
@@ -485,7 +499,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
       const state = admit(focused.anchor, focused.parents);
       if (state === "failed") memento.focus = null;
       else if (state === "missing") {
-        const next = recover(focused.anchor);
+        const next = recover(focused.anchor, focused.parents);
         if (next === undefined) return;
         memento.focus = {anchor: next, parents: next === null ? [] : parentsFor(port, next)};
         return attempt(paneId);
@@ -627,7 +641,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         const located = position?.kind === "ready" || position?.kind === "pending" && position.estimate !== null ||
           findAnchor(port.content, eyeLine) !== null;
         anchor = located || frame?.observation !== undefined && position?.kind === "pending"
-          ? eyeLine : survivingAnchor(port, eyeLine, snapshot.anchors);
+          ? eyeLine : survivingAnchor(port, eyeLine, eyeLine.parents, snapshot.anchors);
         if (anchor !== null) {
           const entry = geometryFor(port, anchor);
           const anchorPosition = entry?.frame?.position(anchor.id);
