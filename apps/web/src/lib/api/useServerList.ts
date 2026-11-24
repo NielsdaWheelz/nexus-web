@@ -430,8 +430,10 @@ function useList<T, M>(
   useEffect(() => {
     if (admissionGeneration === admittedGeneration.current) return;
     admittedGeneration.current = admissionGeneration;
-    if (remoteReady()) void refetch().catch(() => {});
-  }, [admissionGeneration, refetch]);
+    // A discovery prefix remains admitted when reachability changes. In
+    // particular, reacquiring the connection cannot replace a failed cursor.
+    if (remoteReady() && (!discovery || shownRef.current?.key !== key)) void refetch().catch(() => {});
+  }, [admissionGeneration, discovery, key, refetch, shownRef]);
 
   const retry = () => {
     if (failure?.error.code === "E_REPEATED_CURSOR" || input.cursorRecovery === "manual" && failure?.error.code === "E_INVALID_CURSOR") return;
