@@ -15,7 +15,7 @@ import { mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
 import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_TO_6_SQL } from "@nexus/authored/schema";
 import { bindingQueries, compileQuery, compileOutlineWindows, excerptQuery, searchQuery, sourceAliasQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, LITERAL_MISSING_SQL, LITERAL_SOURCE_SQL, LITERAL_WRITE_SQL, foldedFields } from "@nexus/authored/queries";
-import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange, type LinkState, type OutlineWindowProof, type OutlineWindowSlice, type ResourceProjection } from "@nexus/authored/types";
+import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange, type LinkState, type OutlineWindowProof, type OutlineWindowSlice, type ResourceProjection, type WorkIndexItem } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
 import { SCOPE_SQL, type ScopeInputsPage, type ScopeProgress, type ScopeTextPage, type ScopeNormalizationInterval, type ScopeRawChunk, type ScopeNormalizationObservation, type NormalizedScopeChunk } from "@nexus/authored/scope";
 
@@ -104,27 +104,39 @@ export class Persistence {
     return this.states(selection);
   }
   async query(query: AuthoredQuery): Promise<QueryResult> {
-    if (query.kind === "page_register" || query.kind === "outline_filter" || query.kind === "page_label") {
+    if ("expected_revision" in query || query.kind === "page_label" || query.kind === "habit_days" || query.kind === "latest_habit_date") {
       const revision = (await this.replica()).store_revision;
       const result: QueryResult = {store_revision: revision, rows: [], children: [], next_cursor: null, previous_cursor: null,
         binding_id: null, canonical_source_ref: null, positions: [], scope_available: true, outline_windows: null,
-        daily_index: null, page_register: null, page_label: null, outline_filter: null};
-      if (query.kind !== "page_label" && query.expected_revision !== null && revision !== query.expected_revision) {
-        result[query.kind] = {kind: "changed"};
+        daily_index: null, page_register: null, page_label: null, outline_filter: null, work_index: null, mentions: null, habit_days: null, latest_habit_date: null};
+      const plan = compileQuery(query);
+      if ("expected_revision" in query && query.expected_revision !== null && revision !== query.expected_revision) {
+        const field = query.kind === "work_pending" || query.kind === "work_completed" || query.kind === "habits" ? "work_index" : query.kind;
+        result[field] = {kind: "changed"};
         return result;
       }
-      const plan = compileQuery(query);
-      const [record] = await this.db.all(plan.sql, plan.params);
-      if (query.kind === "page_label") {
+      const rows = await this.db.all(plan.sql, plan.params);
+      const [record] = rows;
+      if (query.kind === "habit_days") {
+        result.habit_days = rows.map(row => String(row.local_date));
+      } else if (query.kind === "latest_habit_date") {
+        result.latest_habit_date = typeof record?.local_date === "string" ? record.local_date : null;
+      } else if (query.kind === "page_label") {
         result.page_label = {label: typeof record?.label === "string" ? record.label : null, oversized: Number(record?.oversized) === 1};
       } else {
         const total = Number(record!.total), start = query.start;
         if (query.kind === "page_register") {
           const raw: [string,string,string|null][] = JSON.parse(String(record!.items));
           result.page_register = {kind: "range", start, total, source_total: Number(record!.source_total), items: raw.map(([ref,group,label]) => ({ref,group,label}))};
-        } else {
+        } else if (query.kind === "outline_filter") {
           const raw: [string,string,number][] = JSON.parse(String(record!.items));
           result.outline_filter = {kind: "range", start, total, source_total: total, items: raw.map(([link_id,other_ref,matched]) => ({link_id,other_ref,matched: matched === 1}))};
+        } else if (query.kind === "mentions") {
+          const items: string[] = JSON.parse(String(record!.items));
+          result.mentions = {kind: "range", start, total, source_total: total, items};
+        } else {
+          const items: WorkIndexItem[] = JSON.parse(String(record!.items));
+          result.work_index = {kind: "range", start, total, source_total: total, items};
         }
       }
       return result;
@@ -152,7 +164,7 @@ export class Persistence {
     if (query.kind === "outline_windows") {
       const windows: OutlineWindowSlice[] = [];
       for (const compiled of compileOutlineWindows(query)) windows.push(decodeOutlineWindow(await this.db.all(compiled.sql, compiled.params)));
-      return {store_revision: (await this.replica()).store_revision, rows: [], children: [], page_register: null, page_label: null, outline_filter: null, outline_windows: windows, daily_index: null,
+      return {store_revision: (await this.replica()).store_revision, rows: [], children: [], page_register: null, page_label: null, outline_filter: null, work_index: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: windows, daily_index: null,
         next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], scope_available: true};
     }
     const compiled = compileQuery(query);
@@ -160,16 +172,16 @@ export class Persistence {
     if (query.kind === "daily_index") return {store_revision: (await this.replica()).store_revision,
       daily_index: raw.map(row => ({local_date: String(row.local_date), ref: row.ref === null ? null : String(row.ref)})),
       rows: [], children: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null,
-      positions: [], scope_available: true, page_register: null, page_label: null, outline_filter: null, outline_windows: null};
+      positions: [], scope_available: true, page_register: null, page_label: null, outline_filter: null, work_index: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null};
     if (query.kind === "outline_children") return {
       store_revision: (await this.replica()).store_revision, rows: [], next_cursor: null,
       previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [],
-      children: raw.map(row => row.child_available === null ? null : Number(row.child_available) === 1), scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, outline_windows: null,
+      children: raw.map(row => row.child_available === null ? null : Number(row.child_available) === 1), scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, work_index: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null,
     };
-    if (query.kind === "binding") return { store_revision: (await this.replica()).store_revision, rows: [], children: [], next_cursor: null, previous_cursor: null, positions: [], binding_id: raw[0] ? String(raw[0].binding_id) : null, canonical_source_ref: null, scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, outline_windows: null };
+    if (query.kind === "binding") return { store_revision: (await this.replica()).store_revision, rows: [], children: [], next_cursor: null, previous_cursor: null, positions: [], binding_id: raw[0] ? String(raw[0].binding_id) : null, canonical_source_ref: null, scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, work_index: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null };
     if (query.kind === "positions") {
       const positions = raw.map(row => JSON.parse(String(row.position_json)));
-      return { store_revision: (await this.replica()).store_revision, rows: [], children: [], positions, next_cursor: query.at.kind === "tie" && positions.length === Math.min(100, query.at.limit) ? String(raw.at(-1)?.cursor_json) : null, previous_cursor: null, binding_id: null, canonical_source_ref: null, scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, outline_windows: null };
+      return { store_revision: (await this.replica()).store_revision, rows: [], children: [], positions, next_cursor: query.at.kind === "tie" && positions.length === Math.min(100, query.at.limit) ? String(raw.at(-1)?.cursor_json) : null, previous_cursor: null, binding_id: null, canonical_source_ref: null, scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, work_index: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null };
     }
     const rows = raw.map(row => ({ resource: JSON.parse(String(row.projection_json)), link: row.link_json === null ? null : JSON.parse(String(row.link_json)), match_text: null, activation_ref: null, matched_field: null, activation_field: null }));
     const last = rows.at(-1);
@@ -178,7 +190,7 @@ export class Persistence {
       const cursor = raw.at(-1)?.cursor_json;
       next = typeof cursor === "string" ? cursor : last.resource.ref;
     }
-    return { store_revision: (await this.replica()).store_revision, rows, next_cursor: next, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, outline_windows: null };
+    return { store_revision: (await this.replica()).store_revision, rows, next_cursor: next, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, work_index: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null };
   }
   async write(states: MergeResult) {
     for (const state of states.resources) {

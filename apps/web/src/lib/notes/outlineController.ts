@@ -188,7 +188,14 @@ export class OutlineController {
       embed.projection === null ? [] : [[id, embed.owner, embed.projection.ref, [...embed.projection.branch.traversedEdgeIds]]])]);
   }
 
-  observeStructure(text: string, failed: (error: unknown) => void): () => void {
+  scopeDisclosed(owner: string | null): boolean {
+    for (let parent = owner === null ? null : this.parent(owner); parent !== null && parent !== this.pending.root_id; parent = this.parent(parent)) {
+      if (!parent.startsWith("embed:") && !this.opened.has(parent)) return false;
+    }
+    return true;
+  }
+
+  observeStructure(text: string, remoteOwners: ReadonlySet<string>, failed: (error: unknown) => void): () => void {
     type Query = Extract<AuthoredQuery, {kind: "outline_filter"}>;
     const root = this.pending.root_id, opened = new Set(this.opened), embeds = new Map(this.embedded);
     const first: Query = {kind: "outline_filter", parent_ref: this.rootRef, text, start: 0, limit: 2048, expected_revision: null};
@@ -218,7 +225,7 @@ export class OutlineController {
             const projection = classifyOutlineOccurrence({branch, targetRef: item.other_ref, edgeId: item.link_id});
             if (projection.kind === "omit") continue;
             const known = this.identities.get(`${parent}/${item.link_id}`)?.id;
-            let keep = item.matched || known !== undefined && protectedRows.has(known);
+            let keep = item.matched || known !== undefined && (protectedRows.has(known) || remoteOwners.has(known));
             if (known !== undefined && opened.has(known) && projection.kind === "resource") {
               const child = await visit(known, item.other_ref, enterOutlineOccurrence({branch, ref: item.other_ref,
                 target: {kind: "occurrence", key: known}, edgeIds: [item.link_id]}));

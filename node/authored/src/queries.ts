@@ -6,7 +6,6 @@
 import { excerptTextParts, excerptView, scopeExcerpt, type ExcerptScope, type ExcerptNode } from "./excerpt.ts";
 import type { AuthoredQuery, Change, OutlineRange, PassageState, QueryResult, QueryRow, ResourceProjection, SelectionCapture, ResourceState, PassageCapture } from "./types.ts";
 import { normalizeQuote } from "./identity.ts";
-import { counter } from "./merge.ts";
 import { validateLocalDate } from "./work.ts";
 import { foldFilterText } from "./filter.ts";
 import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, SEARCH_FAMILIES, type ScopeInterval, type ScopeReading } from "./scope.ts";
@@ -392,43 +391,6 @@ export function compileOutlineWindows(query: Extract<AuthoredQuery, {kind: "outl
   return query.ranges.map(range => outlineWindow({...query, ...range}));
 }
 
-function workQuery(query: Extract<AuthoredQuery, {kind: "work_pending" | "work_completed" | "habits"}>, limit: number): CompiledQuery {
-  let cursor: [string, string, string] | null = null;
-  if (query.cursor !== null) {
-    const value: unknown = JSON.parse(query.cursor);
-    if (!Array.isArray(value) || value.length !== 3 || value.some(part => typeof part !== "string")) throw new TypeError("Invalid work cursor");
-    if (counter(value[0]) < 1n) throw new TypeError("Invalid capture clock");
-    cursor = [value[0], value[1], value[2]];
-  }
-  const params: CompiledQuery["params"] = [];
-  const task_date = "json_extract(state_json,'$.work.task_completed_on.value')";
-  const work_kind = "json_extract(state_json,'$.work.designation.value.kind')";
-  const habit_day = "EXISTS(SELECT 1 FROM json_each(state_json,'$.work.habit_checks') day WHERE day.key=? AND json_extract(day.value,'$.value')=1)";
-  let where: string;
-  switch (query.kind) {
-    case "work_pending":
-      validateLocalDate(query.local_date); params.push(query.local_date);
-      where = `json_extract(state_json,'$.work.designation.value.enabled')=1 AND ((${work_kind}='task' AND ${task_date} IS NULL) OR (${work_kind}='habit' AND NOT ${habit_day}))`;
-      break;
-    case "work_completed":
-      validateLocalDate(query.local_date); params.push(query.local_date, query.local_date);
-      where = `(${task_date}=? OR ${habit_day})`;
-      break;
-    case "habits":
-      where = `(${work_kind}='habit' OR EXISTS(SELECT 1 FROM json_each(state_json,'$.work.habit_checks') day WHERE json_extract(day.value,'$.value')=1))`;
-      break;
-  }
-  if (cursor !== null) params.push(...cursor);
-  params.push(limit);
-  return {sql: `WITH work AS (
-    SELECT ref,projection_json,CAST(json_extract(state_json,'$.work.captured.lamport') AS INTEGER) AS captured_lamport,
-      json_extract(state_json,'$.work.captured.replica_id') AS captured_replica
-    FROM resources WHERE kind='note' AND visible=1 AND ${where}
-  ) SELECT projection_json,NULL AS link_json,json_array(CAST(captured_lamport AS TEXT),captured_replica,ref) AS cursor_json
-    FROM work ${cursor === null ? "" : "WHERE (captured_lamport,captured_replica,ref)>(CAST(? AS INTEGER),?,?)"}
-    ORDER BY captured_lamport,captured_replica,ref LIMIT ?`, params};
-}
-
 export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission" | "outline_windows"}>): CompiledQuery {
   const limit = "limit" in query ? Math.max(1, Math.min(100, Math.floor(query.limit))) : 100;
   switch (query.kind) {
@@ -467,7 +429,40 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       ON p.kind='page' AND p.visible=1 AND p.local_date=dates.local_date ORDER BY dates.local_date DESC`, params: []};
     case "work_pending":
     case "work_completed":
-    case "habits": return workQuery(query, limit);
+    case "habits":
+    case "mentions": {
+      if (!Number.isSafeInteger(query.start) || query.start < 0 || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 2048) throw new RangeError("Invalid index range");
+      if (query.kind === "mentions") return {sql: `WITH admitted AS (
+        SELECT i.owner_ref AS ref FROM reference_index i JOIN resources r ON r.ref=i.owner_ref WHERE i.target_ref=?3 AND r.visible=1
+      ), slice AS (SELECT ref FROM admitted ORDER BY ref LIMIT ?1 OFFSET ?2)
+      SELECT (SELECT count(*) FROM admitted) AS total,json_group_array(ref) AS items FROM slice`,
+        params: [query.limit, query.start, query.ref]};
+      const task = "json_extract(state_json,'$.work.task_completed_on.value')";
+      const kind = "json_extract(state_json,'$.work.designation.value.kind')";
+      const habitDay = "EXISTS(SELECT 1 FROM json_each(state_json,'$.work.habit_checks') day WHERE day.key=?3 AND json_extract(day.value,'$.value')=1)";
+      const anyHabitDay = "EXISTS(SELECT 1 FROM json_each(state_json,'$.work.habit_checks') day WHERE json_extract(day.value,'$.value')=1)";
+      const where = query.kind === "habits" ? `(${kind}='habit' OR ${anyHabitDay})` : query.kind === "work_completed"
+        ? `(${task}=?3 OR ${habitDay})` : `json_extract(state_json,'$.work.designation.value.enabled')=1 AND ((${kind}='task' AND ${task} IS NULL) OR (${kind}='habit' AND NOT ${habitDay}))`;
+      if (query.kind !== "habits") validateLocalDate(query.local_date);
+      return {sql: `WITH admitted AS (SELECT ref,body_text,projection_json,state_json FROM resources WHERE kind='note' AND visible=1 AND ${where}),
+        slice AS (SELECT ref,projection_json,trim(substr(COALESCE(body_text,'')||char(10),1,instr(COALESCE(body_text,'')||char(10),char(10))-1)) AS label FROM admitted
+          ORDER BY CAST(json_extract(state_json,'$.work.captured.lamport') AS INTEGER),json_extract(state_json,'$.work.captured.replica_id'),ref
+          LIMIT ?1 OFFSET ?2)
+        SELECT (SELECT count(*) FROM admitted) AS total,json_group_array(json_object('ref',ref,
+          'label',CASE WHEN length(CAST(json_quote(label) AS BLOB))<=512 THEN label END,
+          'work',json_set(json_extract(projection_json,'$.work'),'$.habit_dates',json('[]')))) AS items FROM slice`,
+        params: [query.limit, query.start, ...(query.kind === "habits" ? [] : [query.local_date])]};
+    }
+    case "habit_days": {
+      if (!Number.isInteger(query.year) || query.year < 1 || query.year > 9999) throw new RangeError("Invalid habit year");
+      const year = String(query.year).padStart(4, "0");
+      return {sql: `SELECT day.key AS local_date FROM resources r,json_each(r.state_json,'$.work.habit_checks') day
+        WHERE r.ref=?1 AND r.kind='note' AND r.visible=1 AND day.key BETWEEN ?2 AND ?3 AND json_extract(day.value,'$.value')=1
+        ORDER BY day.key`, params: [query.ref, `${year}-01-01`, `${year}-12-31`]};
+    }
+    case "latest_habit_date": return {sql: `SELECT max(day.key) AS local_date
+      FROM resources r,json_each(r.state_json,'$.work.habit_checks') day
+      WHERE r.kind='note' AND r.visible=1 AND json_extract(day.value,'$.value')=1`, params: []};
     case "outline_children": {
       if(query.occurrences.length>100||query.occurrences.some(item=>item.refs.length>2||item.excluded_link_ids.length>1000))throw new RangeError("Child occurrence batch exceeds bound");
       const eligible=eligibleChildren("endpoint.value", "EXISTS(SELECT 1 FROM json_each(occurrence.value,'$.excluded_link_ids') excluded WHERE excluded.value=l.link_id)");
@@ -488,15 +483,6 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       return { sql: `${READABLE} SELECT projection_json,NULL AS link_json FROM readable WHERE ref IN (${query.refs.map(() => "?").join(",") || "NULL"}) ORDER BY ref`, params: query.refs };
     }
     case "daily": return { sql: "SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,NULL AS link_json FROM resources WHERE local_date=? AND visible=1", params: [query.local_date] };
-    case "pages": {
-      const cursor=readAdjacencyCursor(query.cursor);
-      const where=cursor===null?'':`WHERE display_title COLLATE NOCASE>=? AND(display_title COLLATE NOCASE,ref)>(?,?)`;
-      // The register: undated pages by ascii-folded title, then ref. Unanalysed, the planner reads
-      // `local_date IS NULL` as a point lookup on the unique index, then sorts every undated
-      // resource; INDEXED BY holds the ordered partial index and fails to prepare if it drifts.
-      // A row value cannot seek an expression index; the scalar bound before it does.
-      return {sql:`WITH pages AS(SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,ref,${PAGE_TITLE_SQL} AS display_title FROM resources INDEXED BY resources_register WHERE kind='page' AND visible=1 AND local_date IS NULL) SELECT projection_json,NULL AS link_json,json_array(display_title,ref) AS cursor_json FROM pages ${where} ORDER BY display_title COLLATE NOCASE,ref LIMIT ?`,params:[...cursor?[cursor[0],cursor[0],cursor[1]]:[],limit]};
-    }
     case "annotations": return { sql: "SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,NULL AS link_json FROM resources WHERE kind='highlight' AND visible=1 AND source_ref=? AND ref>? ORDER BY ref LIMIT ?", params: [query.source_ref, query.cursor ?? "", limit] };
     case "backlinks": return { sql: "SELECT json_set(r.projection_json,'$.authored_by_viewer',json('true')) AS projection_json,NULL AS link_json FROM reference_index i JOIN resources r ON r.ref=i.owner_ref WHERE i.target_ref=? AND r.visible=1 AND r.ref>? ORDER BY r.ref LIMIT ?", params: [query.ref, query.cursor ?? "", limit] };
     case "search": return { sql: SEARCH_SQL, params: [searchExpression(query.text) || '""', query.families === null ? null : JSON.stringify(query.families), query.cursor ?? "", limit] };
@@ -516,12 +502,12 @@ type PassageMembership = { activation_ref: string | null } | false;
 /** Active published source identity only; this proves no reading permission. */
 export async function sourceAliasQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "source_alias"}>): Promise<Omit<QueryResult, "store_revision">> {
   const rows = await read(compileQuery(query));
-  return {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: rows[0] ? String(rows[0].canonical_source_ref) : null, positions: [], children: [], scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, outline_windows: null};
+  return {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: rows[0] ? String(rows[0].canonical_source_ref) : null, positions: [], children: [], scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, work_index: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null};
 }
 
 /** Exact capture identity is loaded first. Reading aliases prove admission only, never substitute a capture. */
 export async function excerptQuery(read: QueryRead, query: Extract<AuthoredQuery,{kind:"excerpt"}>): Promise<Omit<QueryResult,"store_revision">> {
-  const result: Omit<QueryResult,"store_revision"> = {rows:[],next_cursor:null,previous_cursor:null,binding_id:null,canonical_source_ref:null,positions:[],children:[],scope_available:true,daily_index:null,page_register:null,page_label:null,outline_filter:null,outline_windows:null};
+  const result: Omit<QueryResult,"store_revision"> = {rows:[],next_cursor:null,previous_cursor:null,binding_id:null,canonical_source_ref:null,positions:[],children:[],scope_available:true,daily_index:null,page_register:null,page_label:null,outline_filter:null,work_index:null,mentions:null,habit_days:null,latest_habit_date:null,outline_windows:null};
   const rows = await read({sql:EXCERPT_ROW_SQL,params:[query.ref]});
   if (!rows.length) return result;
   const row = rows[0]!, resource: ResourceProjection = JSON.parse(String(row.projection_json));
@@ -618,7 +604,7 @@ export async function excerptQuery(read: QueryRead, query: Extract<AuthoredQuery
  * derived scope inputs never replace the canonical authored projection. */
 export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "search" | "search_preview" | "search_admission"}>,
   score: (text: string, expression: string) => Promise<number | null>): Promise<Omit<QueryResult, "store_revision">> {
-  const result: Omit<QueryResult, "store_revision"> = {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, outline_windows: null};
+  const result: Omit<QueryResult, "store_revision"> = {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, page_register: null, page_label: null, outline_filter: null, work_index: null, mentions: null, habit_days: null, latest_habit_date: null, outline_windows: null};
   const preview = query.kind !== "search";
   const admission = query.kind === "search_admission";
   if (query.kind === "search_preview" && !Number.isFinite(query.limit)

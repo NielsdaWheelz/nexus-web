@@ -49,7 +49,7 @@ function WorkSign({resource, today, history, context, anchorRef, className, mark
   extended(event: ReactMouseEvent): boolean;
 }) {
   const runtime = usePaneRuntime();
-  const check = useWorkCheck(resource, today, history);
+  const check = useWorkCheck({ref: resource.ref, work: resource.work, label}, today, history);
   if (check === null) return null;
   return <button ref={anchorRef} id={context.id} type="button" role="checkbox" aria-checked={check.checked} aria-disabled={check.disabled || check.busy || undefined}
     aria-busy={context["aria-busy"] || check.busy} aria-label={check.label} className={className} tabIndex={0} data-outline-bullet="true" data-row-focusable="true" data-marker={marker}

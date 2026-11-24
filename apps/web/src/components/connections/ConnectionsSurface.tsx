@@ -29,7 +29,8 @@ import { outcomeUnknown } from "@/lib/api/client";
 import { modeledApiError } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchDiscoveryScanStatus, requestDiscoveryScan, type DiscoveryScanStatus } from "@/lib/connectionDiscovery";
-import { useAuthoredPages, useAuthoredQuery } from "@/lib/notes/hooks";
+import type { QueryResult } from "@nexus/authored/types";
+import { useAuthoredIndex, useAuthoredQuery } from "@/lib/notes/hooks";
 import { isAuthoredStorageFailure } from "@/lib/notes/runtime";
 import { formatResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { CONNECTION_DISCOVERY_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
@@ -41,6 +42,8 @@ import { usePaneIsPresented } from "@/lib/panes/paneRuntime";
 import RemoteConnections, { useRemoteConnections } from "./RemoteConnections";
 import { useConnectionAttachments } from "./useConnectionAttachments";
 import styles from "./ConnectionsSurface.module.css";
+
+const mentionIndex = (result: QueryResult) => result.mentions;
 
 export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   resourceRef: ResourceRef;
@@ -55,7 +58,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const remote = useRemoteConnections(selfRef, `${refreshKey}:${refreshTick}:${metadata}`);
   const self = useAuthoredQuery({ kind: "resource", ref: selfRef });
   const linked = useAuthoredQuery({ kind: "adjacency", ref: selfRef, cursor: null, limit: 1 });
-  const mentions = useAuthoredPages({ kind: "backlinks", ref: selfRef, cursor: null, limit: 100 });
+  const mentions = useAuthoredIndex({kind: "mentions", ref: selfRef, start: 0, limit: 2048, expected_revision: null}, mentionIndex);
   const embedded = self.data?.rows[0]?.resource.embedded_refs ?? [];
   const scannable = (CONNECTION_DISCOVERY_SOURCE_SCHEMES as readonly string[]).includes(resourceRef.scheme);
   const scan = useDiscoveryScan({ selfRef, enabled: scannable, onSettled: reload });
@@ -63,9 +66,9 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   const local = [self, linked, mentions];
   for (const read of local) if (read.error !== null && !isAuthoredStorageFailure(read.error)) throw read.error;
   const unread = local.find(read => read.error !== null && read.data === null);
-  const empty = linked.data?.rows.length === 0 && mentions.data?.rows.length === 0 && self.data !== null &&
+  const empty = linked.data?.rows.length === 0 && mentions.data?.items.length === 0 && self.data !== null &&
     embedded.length === 0 && remote.status === "ready" && remote.data.edge_ids.length === 0;
-  const shown = Boolean(linked.data?.rows.length || mentions.data?.rows.length || embedded.length || remote.status === "ready" && remote.data.edge_ids.length);
+  const shown = Boolean(linked.data?.rows.length || mentions.data?.items.length || embedded.length || remote.status === "ready" && remote.data.edge_ids.length);
   const opening = !shown && unread === undefined && remote.status !== "failed"
     && (local.some(read => read.data === null && read.pending) || remote.status === "loading");
 
@@ -87,13 +90,12 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
         retry={() => {self.retry(); linked.retry(); mentions.retry();}}/> : null}
       {opening ? <Ruling /> : empty ? <Fact line={{ fact: "no connections yet." }} /> : null}
       <LocalOutline rootRef={selfRef} occurrencePrefix={`connections:${selfRef}`} />
-      {mentions.data?.rows.length ? <section aria-label="mentioned in">
+      {mentions.data?.items.length ? <section aria-label="mentioned in">
         <h3 className={styles.subtitle}>mentioned in</h3>
         <ResourceOutlineList scope={`mentions:${selfRef}`} ariaLabel="mentioned in" ancestorRef={selfRef}>
-          {mentions.data.rows.map(({ resource }) => <ResourceOutlineRow key={resource.ref} resource={resource}
-            occurrenceKey={`connections:${selfRef}/mention:${resource.ref}`} incoming={null} />)}
+          {mentions.data.items.map(ref => <ResourceOutlineRow key={ref} resourceRef={ref}
+            occurrenceKey={`connections:${selfRef}/mention:${ref}`} incoming={null} />)}
         </ResourceOutlineList>
-        {mentions.data.next_cursor !== null ? <Button type="button" onClick={mentions.more}>show more</Button> : null}
       </section> : null}
       {embedded.length ? <section aria-label="embedded in this note">
         <h3 className={styles.subtitle}>embedded in this note</h3>

@@ -2,36 +2,35 @@
 
 import { useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
-import { Failed } from "@/components/feedback/Fact";
+import { Fact, Failed } from "@/components/feedback/Fact";
 import ResourceOutlineList, { ResourceBranch } from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { FactRemovalsContext, useFactRemovals } from "@/lib/resourceGraph/useFactRemovals";
 import { queryConnections, resolveConnections } from "@/lib/resourceGraph/links";
+import { OpenOutlineScopes, ParentOutlineScope, remoteConnectionScope } from "@/lib/resourceGraph/openOutlineScopes";
 import { PaneRefreshAnchor } from "@/lib/workspace/paneReturnMemento";
 import styles from "./ConnectionsSurface.module.css";
 
-export function remoteConnectionScope(ownerRef: string) {
-  return {
-    refs: [ownerRef], direction: "both", rollup: "owner",
-    filters: { origins: ["citation", "discovery", "assistant", "document_embed"] },
-  } satisfies Omit<Parameters<typeof queryConnections>[0], "match_text">;
-}
-
-export function useRemoteConnections(ownerRef: string, stale: string) {
+export function useRemoteConnections(ownerRef: string, stale: string, enabled = true) {
   const load = useCallback((signal: AbortSignal) => queryConnections({...remoteConnectionScope(ownerRef), match_text: null}, signal), [ownerRef]);
-  return usePaneFreeServerValue({key: `connections:remote:${ownerRef}`, stale, load});
+  return usePaneFreeServerValue({key: enabled ? `connections:remote:${ownerRef}` : null, stale, load});
 }
 
-export default function RemoteConnections({ ownerRef, occurrencePrefix, list, onChanged }: {
+export default function RemoteConnections({ ownerRef, occurrencePrefix, list, onChanged, label }: {
   ownerRef: string;
+  label?: string;
   occurrencePrefix: string;
   list: ReturnType<typeof useRemoteConnections>;
   onChanged: () => void;
 }) {
   const branch = useContext(ResourceBranch);
+  const search = useContext(OpenOutlineScopes);
+  const filtering = Boolean(search?.filter);
+  const match = filtering ? search?.results?.get(occurrencePrefix) : null;
   const removals = useFactRemovals(occurrencePrefix);
-  const order = list.status === "ready" ? list.data.edge_ids : null;
+  const filtered = useMemo(() => match?.kind === "ready" ? [...match.ids] : null, [match]);
+  const order = filtering ? filtered : list.status === "ready" ? list.data.edge_ids : null;
   const ids = useMemo(() => order?.filter(id => !branch.traversedEdgeIds.has(id)) ?? [], [order, branch]);
   const element = useRef<HTMLUListElement | null>(null);
   const [margin, setMargin] = useState(0);
@@ -76,10 +75,13 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
   useLayoutEffect(() => {
     if (details.status !== "ready" || !details.fresh || items.size === wanted.length || refetched.current === key) return;
     refetched.current = key;
-    void list.refetch().catch(() => undefined);
-  }, [details, items.size, wanted.length, key, list]);
-  return <FactRemovalsContext value={removals}>
-    {list.status === "failed" ? <Failed error={list.error} noun="other connections" retry={{run: list.refetch, busy: list.retrying}}/> : null}
+    if (filtering) search?.retry(occurrencePrefix);
+    else void list.refetch().catch(() => undefined);
+  }, [details, items.size, wanted.length, key, list, filtering, search, occurrencePrefix]);
+  return <FactRemovalsContext value={removals}><ParentOutlineScope value={occurrencePrefix}>
+    {match?.kind === "failed" ? <Fact line={{fact: `couldn’t search links in ${label ?? "this item"}.`}}
+      verbs={[{label: "retry", commandKey: "RetryOutlineLinks", run: () => search?.retry(occurrencePrefix)}]}/> : null}
+    {!filtering && list.status === "failed" ? <Failed error={list.error} noun="other connections" retry={{run: list.refetch, busy: list.retrying}}/> : null}
     {ids.length > 0 ? <section aria-label="other connections">
       <h3 className={styles.subtitle}>other connections</h3>
       {details.status === "failed" ? <Failed error={details.error} noun="visible connections"
@@ -104,5 +106,5 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
       </PaneRefreshAnchor>
     </section> : null}
     {removals.holds}
-  </FactRemovalsContext>;
+  </ParentOutlineScope></FactRemovalsContext>;
 }

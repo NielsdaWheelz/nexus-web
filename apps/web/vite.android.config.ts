@@ -50,16 +50,19 @@ export default defineConfig({
         writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify(DEVICE_SCHEMA));
         writeFileSync(path.join(outDir, "authored-upgrade-to-6.json"), JSON.stringify(UPGRADE_TO_6_SQL));
         const cursor = JSON.stringify(["a0", ""]);
-        const workCursors = [null, JSON.stringify(["1", "22222222-2222-4222-8222-222222222222", "note_block:33333333-3333-4333-8333-333333333333"])];
+        const index = {start: 0, limit: 100, expected_revision: null};
         type PackagedQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;
         const samples: Record<PackagedQuery["kind"], PackagedQuery[]> = {
           page_register: ["","words"].map(text => ({kind: "page_register", text, start: 0, limit: 1, expected_revision: null})),
           page_label: [{kind: "page_label", ref: ""}],
           outline_filter: ["","words"].map(text => ({kind: "outline_filter", parent_ref: "", text, start: 0, limit: 1, expected_revision: null})),
           daily_index: [{kind: "daily_index"}],
-          work_pending: workCursors.map(cursor => ({kind: "work_pending", local_date: "2026-11-11", cursor, limit: 100})),
-          work_completed: workCursors.map(cursor => ({kind: "work_completed", local_date: "2026-11-11", cursor, limit: 100})),
-          habits: workCursors.map(cursor => ({kind: "habits", cursor, limit: 100})),
+          work_pending: [{kind: "work_pending", local_date: "2026-11-11", ...index}],
+          work_completed: [{kind: "work_completed", local_date: "2026-11-11", ...index}],
+          habits: [{kind: "habits", ...index}],
+          habit_days: [{kind: "habit_days", ref: "", year: 2026}],
+          latest_habit_date: [{kind: "latest_habit_date"}],
+          mentions: [{kind: "mentions", ref: "", ...index}],
           outline_windows: [
             {kind: "outline_windows", ref: "", ranges: [{cursor: null, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
             {kind: "outline_windows", ref: "", ranges: [{cursor, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
@@ -71,7 +74,6 @@ export default defineConfig({
           excerpt: [{kind:"excerpt",ref:"",reading_ref:null}],
           source_alias: [{ kind: "source_alias", ref: "" }],
           daily: [{ kind: "daily", local_date: "" }],
-          pages: [null, cursor].map(cursor => ({ kind: "pages", cursor, limit: 100 })),
           annotations: [{ kind: "annotations", source_ref: "", cursor: null, limit: 100 }],
           backlinks: [{ kind: "backlinks", ref: "", cursor: null, limit: 100 }],
           search: [{ kind: "search", text: "", cursor: null, limit: 100, scopes: [{kind: "all", id: null}], families: null }],

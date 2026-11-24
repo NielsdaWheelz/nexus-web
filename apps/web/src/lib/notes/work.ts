@@ -7,7 +7,6 @@ import type {ResourceProjection} from "@nexus/authored/types";
 import {WorkConversionError, WorkUnavailableError} from "@nexus/authored/types";
 import {useOutcome} from "@/components/feedback/Feedback";
 import {useActionRuntime} from "@/lib/actions/ResourceActionsProvider";
-import {localResourceLabel} from "@/lib/resources/localResource";
 import {useRenderEnvironment} from "@/lib/renderEnvironment/provider";
 import {findPaneLandmarkFocusTarget} from "@/lib/workspace/paneDom";
 import {ACCOUNT_DAY_UNAVAILABLE} from "./accountDay";
@@ -76,22 +75,21 @@ export interface WorkCheck {
 }
 
 /** The one owner of what a press on a work sign does. Null when the resource is not designated work. */
-export function useWorkCheck(resource: ResourceProjection, today: string | null, history: OutlineHistory): WorkCheck | null {
+export function useWorkCheck({ref, work, label}: {ref: string; work: ResourceProjection["work"]; label: string}, today: string | null, history: OutlineHistory): WorkCheck | null {
   const [busy, setBusy] = useState(false), [defect, setDefect] = useState<{error: unknown} | null>(null);
   const {say} = useOutcome();
   const {platform} = useRenderEnvironment();
   if (defect) throw defect.error;
-  const work = resource.work;
-  if (resource.kind !== "note" || !work?.designation.enabled) return null;
+  if (!work?.designation.enabled) return null;
   const habit = work.designation.kind === "habit";
   const done = habit ? today !== null && work.habit_dates.includes(today) : work.task_completed_on !== null;
   const action = habit ? done ? "clear today's check" : "mark done today" : done ? "reopen" : "complete";
   const intent: WorkIntent | null = busy || today === null ? null
-    : habit ? {kind: "set_habit_completion", ref: resource.ref, local_date: today, completed: !done, today}
-    : {kind: "set_task_completion", ref: resource.ref, local_date: done ? null : today, today};
+    : habit ? {kind: "set_habit_completion", ref, local_date: today, completed: !done, today}
+    : {kind: "set_task_completion", ref, local_date: done ? null : today, today};
   return {
     checked: habit && today === null ? "mixed" : done, disabled: today === null, busy, intent,
-    label: today === null ? `${ACCOUNT_DAY_UNAVAILABLE} ${localResourceLabel(resource)}` : `${action}: ${localResourceLabel(resource)}`,
+    label: today === null ? `${ACCOUNT_DAY_UNAVAILABLE} ${label}` : `${action}: ${label}`,
     toggle: async () => {
       if (intent === null) return null;
       setBusy(true);

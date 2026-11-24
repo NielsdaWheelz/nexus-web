@@ -18,6 +18,8 @@ import {OutlineHistory} from "@/lib/notes/structure";
 import {useOutlineWindows, type OutlineWindow} from "@/lib/notes/useOutlineWindow";
 import {OutlinePresentationAllowance} from "@/lib/notes/outlinePresentationAllowance";
 import {OutlineHistoryAllowance} from "@/lib/notes/outlineHistoryAllowance";
+import {OpenOutlineScopes, type OpenOutlineScope} from "@/lib/resourceGraph/openOutlineScopes";
+import {useOpenScopeSearch} from "@/lib/notes/openScopeSearch";
 import {WorkHistoryContext} from "@/lib/notes/work";
 import {WorkConversionError, WorkJoinError, WorkUnavailableError} from "@nexus/authored/types";
 import {usePaneAnchorGeometry, usePaneBeforeLayout, usePaneInputLease, usePaneRevealAnchor, usePaneVisitRetained} from "@/lib/workspace/paneReturnMemento";
@@ -55,7 +57,7 @@ type Props = {rootRef: string; rootField?: RootField; prelude?: readonly Intent[
   entering?: string};
 const EMPTY_INTENTS: readonly Intent[] = [];
 const SharedOutline = createContext<OutlineController | null>(null);
-type Session = OutlineSession & {input: OutlinePendingInput; revision: number};
+type Session = OutlineSession & {input: OutlinePendingInput; revision: number; remoteScopes: ReadonlyMap<string, OpenOutlineScope>};
 const pendingRisk = (value: {input: OutlinePendingInput}) => value.input.risk();
 const pendingCopy = (value: {input: OutlinePendingInput}) => value.input.copyText();
 
@@ -103,7 +105,7 @@ export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS
   }, [inherited, rootRef, entering]);
   const [revision, setRevision] = useState(0);
   const notify = useCallback(() => setRevision(value => value + 1), []);
-  const pending = useEditorDraft<Session>(`Outline.Session:${occurrencePrefix}`, () => ({input: new OutlinePendingInput(), revision: 0, opened: new Set(), identities: new Map()}), pendingRisk, pendingCopy);
+  const pending = useEditorDraft<Session>(`Outline.Session:${occurrencePrefix}`, () => ({input: new OutlinePendingInput(), revision: 0, opened: new Set(), identities: new Map(), remoteScopes: new Map()}), pendingRisk, pendingCopy);
   const setPending = pending.set;
   const changed = useCallback(() => setPending(value => ({...value, revision: value.revision + 1})), [setPending]);
   const [failure, setFailure] = useState<unknown | null>(null);
@@ -187,9 +189,30 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
   const editorReady = useCallback((handle: NoteEditorHandle | null) => {controller.setHandle(handle); onReady(handle ? controller : null);}, [controller, onReady]);
   useLayoutEffect(() => {controller.filter = filter; controller.revealExternal = resources?.reveal ?? null; controller.configure(rootField); controller.refresh();}, [controller, filter, pending.value.revision, rootField, resources?.reveal]);
   const filterText = filter.trim(), disclosure = controller.disclosureKey();
+  const setPending = pending.set;
+  const remember = useCallback((id: string, scope: OpenOutlineScope) => setPending(value => {
+    if (JSON.stringify(value.remoteScopes.get(id)) === JSON.stringify(scope)) return value;
+    return {...value, remoteScopes: new Map(value.remoteScopes).set(id, scope)};
+  }), [setPending]);
+  const close = useCallback((id: string) => setPending(value => {
+    const next = new Map(value.remoteScopes);
+    for (const key of value.remoteScopes.keys()) {
+      for (let parent: string | null = key; parent !== null; parent = value.remoteScopes.get(parent)?.parent ?? null) {
+        if (parent === id) {next.delete(key); break;}
+      }
+    }
+    return next.size === value.remoteScopes.size ? value : {...value, remoteScopes: next};
+  }), [setPending]);
+  const scopes = useMemo(() => new Map([...pending.value.remoteScopes].filter(([, scope]) => controller.scopeDisclosed(scope.owner))),
+    // Disclosure keys include the controller's current open branches.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [controller, disclosure, pending.value.remoteScopes]);
+  const remote = useOpenScopeSearch(filterText, scopes);
   const [structureAttempt, retryStructure] = useState(0);
   const [structureError, setStructureError] = useState<unknown | null>(null);
-  useEffect(() => controller.observeStructure(filterText, setStructureError), [controller, filterText, disclosure, structureAttempt]);
+  const ownerKey = JSON.stringify([...remote.owners].sort());
+  useEffect(() => controller.observeStructure(filterText, new Set(JSON.parse(ownerKey)), setStructureError),
+    [controller, filterText, disclosure, ownerKey, structureAttempt]);
   useEffect(() => {
     const intent = (event: Event) => {
       if (!event.isTrusted || controller.inertInput(event)) return;
@@ -246,6 +269,7 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
     if (text !== null) void copy(text);
   }};
   return <WorkHistoryContext value={history}><SharedOutline value={controller}>
+    <OpenOutlineScopes value={{filter: filterText, results: remote.results, remember, close, retry: remote.retry}}>
     <div {...type} className={styles.session} data-outline-session={pending.value.input.root_id} data-pane-return-scope={`outline:${occurrencePrefix}`} onFocusCapture={event => {
       if (event.target instanceof Element && event.target.matches('.ProseMirror') && event.target.closest("[data-reference-editor]")?.getAttribute("data-reference-editor") === `outline:${occurrencePrefix}`) controller.setFocused(true);
     }} onBlurCapture={event => {
@@ -261,7 +285,7 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
       {rootState.error !== null ? <AuthoredReadFailure {...rootState} noun="linked items"/>
         : controller.windows.has(pending.value.input.root_id) && controller.structureReady ? null : <Ruling/>}
       <AuthoredReadFailure error={structureError} retry={() => retryStructure(attempt => attempt + 1)} noun="the outline index"/>
-      {filterText && controller.structureReady && structureError === null && !controller.hasFilteredRows ? <Fact line={{fact: "no linked items match this filter."}}/> : null}
+      {filterText && controller.structureReady && structureError === null && remote.complete && !remote.matches && !controller.hasFilteredRows ? <Fact line={{fact: "no linked items match this filter."}}/> : null}
       {[...controller.requests.values()].map(request => <BranchCollector key={request.parent_id} controller={controller} request={request} received={request.parent_id === pending.value.input.root_id ? received : null}/>)}
       <NoteEditor editorKey={`outline:${occurrencePrefix}`} occurrenceKey={`outline:${occurrencePrefix}`} containingNoteRef={rootRef}
         projection={controller.projection} body={emptyBody()} revision={0} editable={!filter.trim()} label="edit linked items" wordsAtRisk={wordsAtRisk || pendingError !== null}
@@ -269,7 +293,7 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
         onEdit={() => {}} onEditorReady={editorReady}/>
       <OutlineEditorRows mounts={[...controller.mounts.values()]} rows={controller.chrome()} history={history}/>
     </OutlineDrag></div>
-  </SharedOutline></WorkHistoryContext>;
+  </OpenOutlineScopes></SharedOutline></WorkHistoryContext>;
 }
 
 function BranchCollector({controller, request, received}: {controller: OutlineController; request: BranchRequest; received: ((window: OutlineWindow) => void) | null}) {

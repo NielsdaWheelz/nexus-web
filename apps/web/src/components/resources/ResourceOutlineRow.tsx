@@ -46,6 +46,8 @@ import {assumeCanonicalResourceRef} from "@/lib/sharing/targets";
 import type {ActionDescriptor} from "@/lib/ui/actionDescriptor";
 import {suppressSelectionActivation, type TargetActivationEvent} from "@/lib/ui/targetActivation";
 import {cx} from "@/lib/ui/cx";
+import {OpenOutlineScopes, ParentOutlineScope} from "@/lib/resourceGraph/openOutlineScopes";
+import {OutlineEmbeddingOccurrence} from "@/lib/notes/editorHost";
 import RemoteConnections, {useRemoteConnections} from "@/components/connections/RemoteConnections";
 import ContextualActionMenu, {type ContextActionSection} from "./ContextualActionMenu";
 import { FullResourceBody } from "./ExcerptDisclosure";
@@ -331,6 +333,16 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
     lostArrowFocus.current=false;
   },[hasControl]);
   const childrenId = useId();
+  const openScopes = useContext(OpenOutlineScopes);
+  const embeddingOwner = useContext(OutlineEmbeddingOccurrence);
+  const parentScope = useContext(ParentOutlineScope);
+  const rememberScope = openScopes?.remember;
+  useLayoutEffect(() => {
+    if (open && hasChildren && rememberScope) rememberScope(occurrenceKey, {
+      ref, label, owner: embeddingOwner, parent: parentScope, entering: incoming?.kind === "edge" ? incoming.edge_id : null,
+      excluded: excludedEdgeIds,
+    });
+  }, [open, hasChildren, rememberScope, occurrenceKey, ref, label, embeddingOwner, parentScope, excludedEdgeIds, incoming?.kind, enteringEdgeId]);
   // one way, so a row flown past reads none of its children.
   const rested = useRef(false); rested.current ||= outline?.settled(occurrenceKey) ?? true;
   const childrenStarted = useRef(false);
@@ -340,6 +352,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
     if (disclosureDisabled) return;
     if (open && props.beforeCollapse && !await props.beforeCollapse()) return;
     if (open && element.current?.contains(document.activeElement)) arrow.current?.focus({preventScroll: true});
+    if (open) openScopes?.close(occurrenceKey);
     if (outline) outline.toggle(occurrenceKey, !open); else setLocalOpen(!open);
   }
   function removeFact() {
@@ -420,18 +433,19 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
       </div>
       {childrenStarted.current ? <div className={styles.children} data-outline-children="true"><section id={childrenId} aria-label="linked resources">
         <LocalOutline rootRef={ref} occurrencePrefix={occurrenceKey} onControllerReady={presentation.annotation?.editable ? childController : undefined} childrenVisible={open}/>
-        {open && rested.current ? <Children ownerRef={ref} localOwnerRef={compatible?.local_ref??null} occurrenceKey={occurrenceKey}/> : null}</section></div> : null}
+        {open && rested.current ? <Children ownerRef={ref} label={label} localOwnerRef={compatible?.local_ref??null} occurrenceKey={occurrenceKey}/> : null}</section></div> : null}
     </li>
   </ResourceBranch>;
 }
 
 /** An expanded occurrence: its local links, then its separately failable server facts. */
-function Children({ownerRef, localOwnerRef, occurrenceKey}: {ownerRef: string; localOwnerRef:string|null; occurrenceKey: string}) {
+function Children({ownerRef, label, localOwnerRef, occurrenceKey}: {ownerRef: string; label: string; localOwnerRef:string|null; occurrenceKey: string}) {
   const branch=useContext(ResourceBranch);
-  const remote = useRemoteConnections(ownerRef, useChangeStamp("Metadata"));
+  const search = useContext(OpenOutlineScopes);
+  const remote = useRemoteConnections(ownerRef, useChangeStamp("Metadata"), !search?.filter);
   return <>
     {localOwnerRef&&localOwnerRef!==ownerRef?<ResourceBranch value={enterOutlineOccurrence({branch,ref:localOwnerRef,target:{kind:"occurrence",key:occurrenceKey},edgeIds:[]})}><LocalOutline rootRef={localOwnerRef} occurrencePrefix={`${occurrenceKey}/owner`}/></ResourceBranch>:null}
-    <RemoteConnections ownerRef={ownerRef} occurrencePrefix={occurrenceKey} list={remote}
+    <RemoteConnections ownerRef={ownerRef} label={label} occurrencePrefix={occurrenceKey} list={remote}
       onChanged={() => void remote.refetch().catch(() => undefined)}/>
   </>;
 }

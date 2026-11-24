@@ -437,20 +437,30 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             .put("binding_id", JSONObject.NULL).put("canonical_source_ref", JSONObject.NULL)
             .put("scope_available", true).put("daily_index", JSONObject.NULL).put("outline_windows", JSONObject.NULL)
             .put("page_register", JSONObject.NULL).put("page_label", JSONObject.NULL).put("outline_filter", JSONObject.NULL)
-        if (kind == "page_register" || kind == "outline_filter") {
-            if (!query.isNull("expected_revision") && replica.getString("store_revision") != query.getString("expected_revision")) return result.put(kind, JSONObject().put("kind", "changed"))
-            if (query.getString("text").isNotBlank() && rows(sql("literal_missing")).length() > 0) return JSONObject().put("literal_repair", true)
+            .put("work_index", JSONObject.NULL).put("mentions", JSONObject.NULL).put("habit_days", JSONObject.NULL).put("latest_habit_date", JSONObject.NULL)
+        if (kind in listOf("page_register", "outline_filter", "work_pending", "work_completed", "habits", "mentions")) {
+            val field = if (kind in listOf("work_pending", "work_completed", "habits")) "work_index" else kind
+            if (!query.isNull("expected_revision") && replica.getString("store_revision") != query.getString("expected_revision")) return result.put(field, JSONObject().put("kind", "changed"))
+            if ((kind == "page_register" || kind == "outline_filter") && query.getString("text").isNotBlank() && rows(sql("literal_missing")).length() > 0)
+                return JSONObject().put("literal_repair", true)
             val record = read(0).getJSONObject(0)
             val raw = JSONArray(record.getString("items"))
             val items = JSONArray()
             for (index in 0 until raw.length()) {
-                val row = raw.getJSONArray(index)
-                items.put(if (kind == "page_register") JSONObject().put("ref", row.getString(0)).put("group", row.getString(1)).put("label", row.get(2))
-                    else JSONObject().put("link_id", row.getString(0)).put("other_ref", row.getString(1)).put("matched", row.getInt(2) == 1))
+                items.put(when (kind) {
+                    "page_register" -> raw.getJSONArray(index).let { row -> JSONObject().put("ref", row.getString(0)).put("group", row.getString(1)).put("label", row.get(2)) }
+                    "outline_filter" -> raw.getJSONArray(index).let { row -> JSONObject().put("link_id", row.getString(0)).put("other_ref", row.getString(1)).put("matched", row.getInt(2) == 1) }
+                    else -> raw.get(index)
+                })
             }
             val total = record.getInt("total")
-            return result.put(kind, JSONObject().put("kind", "range").put("items", items).put("start", query.getInt("start")).put("total", total).put("source_total", record.optInt("source_total", total)))
+            return result.put(field, JSONObject().put("kind", "range").put("items", items).put("start", query.getInt("start")).put("total", total).put("source_total", record.optInt("source_total", total)))
         }
+        if (kind == "habit_days") {
+            val dates = read(0)
+            return result.put(kind, JSONArray().apply { for (index in 0 until dates.length()) put(dates.getJSONObject(index).getString("local_date")) })
+        }
+        if (kind == "latest_habit_date") return result.put(kind, read(0).getJSONObject(0).get("local_date"))
         if (kind == "page_label") {
             val row = read(0).optJSONObject(0)
             return result.put(kind, JSONObject().put("label", row?.opt("label") ?: JSONObject.NULL).put("oversized", row?.getInt("oversized") == 1))

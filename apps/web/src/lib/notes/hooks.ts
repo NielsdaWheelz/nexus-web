@@ -179,51 +179,6 @@ export function useAuthoredContinuation(query: CursorQuery | null) {
   return {data: current ? state.data : null, pending: query !== null && (!current || state.pending), error: current ? state.error : null, more, retry};
 }
 
-export function useAuthoredPrefix(query: CursorQuery | null, count: number) {
-  const store = useAuthoredStore();
-  const accountId = useAuthoredAccountId();
-  const key = JSON.stringify([accountId, query === null ? null : { ...query, cursor: null }]);
-  const [state, setState] = useState<{ key: string; data: QueryResult | null; error: unknown | null; occurrence: object | null; pending: boolean }>({ key, data: null, error: null, occurrence: null, pending: query !== null });
-  const [attempt, retry] = useState(0);
-  useEffect(() => {
-    setState(old => query !== null && old.key === key ? {...old, pending: true} : {key, data: null, error: null, occurrence: null, pending: query !== null});
-    if (query === null) return;
-    let generation = 0;
-    let active = true;
-    let latestRevision:bigint|null=null;
-    const firstQuery = { ...query, cursor: null };
-    const receive = (first: QueryResult) => {
-      const revision=BigInt(first.store_revision);
-      if(!active || latestRevision!==null && revision<latestRevision)return;
-      latestRevision=revision;
-      const current = ++generation;
-      void (async () => {
-        const rows = first.scope_available === false ? [] : [...first.rows];
-        let cursor = first.scope_available === false ? null : first.next_cursor;
-        for (let page = 1; page < count && cursor !== null; page++) {
-          const next = await store.query({ ...query, cursor });
-          if (!active || current !== generation || next.store_revision !== first.store_revision) return;
-          if (next.scope_available === false) {
-            setState({ key, data: { ...next, rows: [], next_cursor: null }, error: null, occurrence: null, pending: false });
-            return;
-          }
-          rows.push(...next.rows); cursor = next.next_cursor;
-        }
-        if (active && current === generation) setState({ key, data: { ...first, rows, next_cursor: cursor }, error: null, occurrence: null, pending: false });
-      })().catch(error => { if (active && current === generation) setState(old => ({ key, data: old.key === key ? old.data : null, error, occurrence: old.key === key ? old.occurrence ?? {} : {}, pending: false })); });
-    };
-    const unsubscribe = store.subscribe(firstQuery, receive, error => {
-      if (!active) return;
-      generation++;
-      setState(old => ({ key, data: old.key === key ? old.data : null, error, occurrence: old.key === key ? old.occurrence ?? {} : {}, pending: false }));
-    });
-    return () => { active = false; generation++; unsubscribe(); };
-    // The serialized query is its stable value identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store, key, count, attempt]);
-  return { data: query !== null && state.key === key ? state.data : null, error: query !== null && state.key === key ? state.error : null, occurrence: query !== null && state.key === key ? state.occurrence : null, pending: query !== null && (state.key !== key || state.pending), retry: () => retry(n => n + 1) };
-}
-
 type Resolved = QueryResult["rows"][number]["resource"];
 /** Resources by ref for a display that stays on screen while its set of refs changes: at most 100
  * refs, one local `resolve`. While a changed set is pending, this account's resources already
@@ -246,14 +201,4 @@ export function useResolvedRefs(refs: readonly string[]) {
     return new Map<string, Resolved>((source?.rows ?? []).flatMap(({ resource }) => members.has(resource.ref) ? [[resource.ref, resource]] : []));
   }, [source, wanted]);
   return { resources, settled, error: read.error, pending: read.pending, retry: read.retry };
-}
-
-/** The picker owns its page count; controlled search passes its count to the same prefix owner. */
-export function useAuthoredPages(query: CursorQuery | null) {
-  const accountId = useAuthoredAccountId();
-  const key = JSON.stringify([accountId, query === null ? null : { ...query, cursor: null }]);
-  const [pages, setPages] = useState({ key, count: 1 });
-  const count = pages.key === key ? pages.count : 1;
-  const prefix = useAuthoredPrefix(query, count);
-  return { ...prefix, more: () => setPages({ key, count: count + 1 }) };
 }
