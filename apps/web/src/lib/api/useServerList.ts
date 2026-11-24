@@ -74,7 +74,7 @@ export interface ServerList<T, M = null> {
   /** Current-key metadata from the committed traversal (`foldMetadata`), including an empty page. */
   readonly metadata: M | null;
   readonly running: Op | null;
-  readonly failure: { readonly op: Op; readonly error: ApiError } | null;
+  readonly failure: { readonly op: Op; readonly error: ApiError; readonly withdrawn: boolean } | null;
   /** Input activity and document visibility; admitted reads may finish inactive. */
   readonly active: boolean;
   readonly revalidate: () => void;
@@ -369,8 +369,14 @@ function useList<T, M>(
                 ? error
                 : modeledApiError(error, fail, signIn);
             if (modeled !== null) {
+              const withdrawn = discovery && modeled.sent && (modeled.status === 403 || modeled.status === 404);
+              if (withdrawn) {
+                demand.current = null;
+                shownRef.current = null;
+                setShown(null);
+              }
               setFailureAccount(accountId);
-              setFailure({ key, op, error: modeled });
+              setFailure({ key, op, error: modeled, withdrawn });
             }
             for (const waiter of settle) waiter.reject(error);
           },
@@ -432,12 +438,12 @@ function useList<T, M>(
     admittedGeneration.current = admissionGeneration;
     // A discovery prefix remains admitted when reachability changes. In
     // particular, reacquiring the connection cannot replace a failed cursor.
-    if (remoteReady() && (!discovery || shownRef.current?.key !== key)) void refetch().catch(() => {});
-  }, [admissionGeneration, discovery, key, refetch, shownRef]);
+    if (remoteReady() && (!discovery || shownRef.current?.key !== key && !failure?.withdrawn)) void refetch().catch(() => {});
+  }, [admissionGeneration, discovery, key, refetch, shownRef, failure?.withdrawn]);
 
   const retry = () => {
     if (failure?.error.code === "E_REPEATED_CURSOR" || input.cursorRecovery === "manual" && failure?.error.code === "E_INVALID_CURSOR") return;
-    if (failure?.op === "More" && failure.error.code !== "E_INVALID_CURSOR") {
+    if (failure?.op === "More" && !failure.withdrawn && failure.error.code !== "E_INVALID_CURSOR") {
       if (demand.current?.remainingMs !== undefined && demand.current.remainingMs <= 0)
         demand.current.remainingMs = input.prefixTimeoutMs?.(1);
       run("More");
@@ -445,7 +451,7 @@ function useList<T, M>(
       refetch().catch(() => {});
     }
   };
-  useFailedReadRepair(failure !== null && !(discovery && failure.op === "More"), running !== null, retry);
+  useFailedReadRepair(failure !== null && !(discovery && (failure.op === "More" || failure.withdrawn)), running !== null, retry);
 
   const revalidate = useCallback(() => {
     if (latest.current.key === null || pendingObservation.current) return;

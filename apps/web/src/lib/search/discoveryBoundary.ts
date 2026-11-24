@@ -37,8 +37,19 @@ export function useInitialDiscoveryDemand({ key, current, active, viewport, run 
 type Slot = { readonly id: string; readonly height: number };
 const optionNodes = (list: HTMLElement) => [...list.querySelectorAll<HTMLElement>(":scope > [data-discovery-option]")];
 
-export function heldDiscoveryOptionStyle(height: number | null): CSSProperties | undefined {
+export function heldDiscoverySlotStyle(height: number | null): CSSProperties | undefined {
   return height === null ? undefined : { blockSize: height, minBlockSize: 0, overflow: "hidden", flexShrink: 0 };
+}
+
+/** A source denial removes row content, while a moving pane keeps its painted slots. */
+export function useDiscoverySlotHeights(portion: RefObject<HTMLElement | null>, rows: readonly unknown[], hold: boolean, withdrawn: boolean) {
+  const heights = useRef(new Map<string, number>());
+  useLayoutEffect(() => {
+    if (!hold || withdrawn || portion.current === null) return;
+    heights.current = new Map([...portion.current.querySelectorAll<HTMLElement>("[data-collection-row-id]")].map(node =>
+      [node.dataset.collectionRowId!, node.getBoundingClientRect().height]));
+  }, [portion, rows, hold, withdrawn]);
+  return heights.current;
 }
 
 /** The actual option port owns its landing. A revoked option loses its content
@@ -109,7 +120,9 @@ export function useDiscoveryOptions<T>(input: {
     if (Math.abs(delta) > 0.5) writeScrollPosition(port, port.scrollTop + delta);
   }, [held, key, viewport]);
 
-  if (held === null || held.key !== key || !open) return rows.map(row => ({id: id(row), row, height: null}));
+  if (held === null || held.key !== key || !open) {
+    return { holding: false, slots: rows.map(row => ({id: id(row), row, height: null})) };
+  }
   const byId = new Map(rows.map(row => [id(row), row]));
-  return held.slots.map(slot => ({ ...slot, row: byId.get(slot.id) ?? null }));
+  return { holding: true, slots: held.slots.map(slot => ({ ...slot, row: byId.get(slot.id) ?? null })) };
 }

@@ -79,7 +79,7 @@ export function useReferenceInput(
   const admitted = pickerOpen && state !== null && state.row_id === row_id && search.querySettled && !search.minimum && search.current;
   const viewport = useRef<HTMLDivElement>(null);
   const showing = pickerOpen && state !== null && state.row_id === row_id;
-  const slots = useDiscoveryOptions({ key: context, viewport, open: showing, rows: admitted ? search.items : [],
+  const {slots, holding} = useDiscoveryOptions({ key: context, viewport, open: showing, rows: admitted ? search.items : [],
     id: targetKey, forward: search.fetchAhead });
   const options = admitted ? slots.flatMap(slot => slot.row === null ? [] : [{ key: slot.id, disabledReason: state.message }]) : [];
   const reconciled = reconcileSearchActive({ context, admitted, options,
@@ -157,6 +157,7 @@ export function useReferenceInput(
     owner: draft.owner,
     search: { ...search, items: admitted ? search.items : [] },
     slots,
+    holding,
     selected,
     bindings,
     acceptSelected() { if (selected !== null) accept(search.items.find(item => targetKey(item) === selected)); },

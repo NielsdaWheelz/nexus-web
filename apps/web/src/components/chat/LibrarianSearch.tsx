@@ -8,7 +8,7 @@ import { Ruling } from "@/components/feedback/Ruling";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { ExcerptText } from "@/components/resources/ResourceBody";
 import DiscoveryTail from "@/components/collections/DiscoveryTail";
-import { nearDiscoveryTail, useInitialDiscoveryDemand } from "@/lib/search/discoveryBoundary";
+import { heldDiscoverySlotStyle, nearDiscoveryTail, useDiscoverySlotHeights, useInitialDiscoveryDemand } from "@/lib/search/discoveryBoundary";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useServerList, type ListSnapshot, type ServerList } from "@/lib/api/useServerList";
 import type { ApiJson } from "@/lib/api/wire";
@@ -113,10 +113,12 @@ export function useLibrarianSearch() {
   const received = list.current || list.shownKey?.startsWith(`${key}:`) ? list.items : [];
   const motion = usePaneScrollMotion();
   const presented = useRef({ key, rows: received });
-  const rows = motion === "seek" && presented.current.key === key ? presented.current.rows : received;
+  const withdrawn = list.failure?.withdrawn === true;
+  const holdingWithdrawal = withdrawn && motion !== "still";
+  const rows = (motion === "seek" || holdingWithdrawal) && presented.current.key === key ? presented.current.rows : received;
   useLayoutEffect(() => { presented.current = { key, rows }; }, [key, rows]);
   const canContinue = current && !list.complete && list.failure === null;
-  const options = rows.map(row => ({ key: row.item.ref, disabledReason: row.item.activation.href === null ? "message unavailable" : null }));
+  const options = withdrawn ? [] : rows.map(row => ({ key: row.item.ref, disabledReason: row.item.activation.href === null ? "message unavailable" : null }));
   const selected = reconcileSearchActive({ context: key, admitted: current, options, initialKey: rows[0]?.item.ref ?? null, active: selection });
   if (selected !== selection) setSelection(selected);
   captured.current = selected;
@@ -176,19 +178,20 @@ export function useLibrarianSearch() {
   return {
     searching, query: controls, ready: !eligible || list.current || list.failure !== null, refresh,
     content: searching ? <LibrarianSearchResults query={applied} eligible={eligible} list={list} current={current}
-      canContinue={canContinue} refresh={() => { void refresh().catch(() => {}); }} rows={rows}
+      canContinue={canContinue} refresh={() => { void refresh().catch(() => {}); }} rows={rows} holdingWithdrawal={holdingWithdrawal} moving={motion !== "still"}
       navigation={navigation} announcement={feedback.announcement} /> : null,
   };
 }
 
-function LibrarianSearchResults({ query, eligible, list, current, canContinue, refresh, rows, navigation, announcement }: {
+function LibrarianSearchResults({ query, eligible, list, current, canContinue, refresh, rows, holdingWithdrawal, moving, navigation, announcement }: {
   query: string; eligible: boolean; list: ServerList<Row>; current: boolean;
-  canContinue: boolean; refresh: () => void; rows: readonly Row[];
+  canContinue: boolean; refresh: () => void; rows: readonly Row[]; holdingWithdrawal: boolean; moving: boolean;
   navigation: ReturnType<typeof useSearchOptions<HTMLDivElement>>;
   announcement: ReturnType<typeof useCollectionReadFeedback>["announcement"];
 }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "LibrarianSearchResults");
   const content = useRef<HTMLDivElement>(null);
+  const slotHeights = useDiscoverySlotHeights(content, rows, moving, list.failure?.withdrawn === true);
   usePaneReturnScrollport({ enabled: true, scrollportRef: navigation.listRef, contentRef: content,
     continuityKey: `${runtime.visitId}:${runtime.routeKey}` });
   useLayoutEffect(() => {
@@ -210,11 +213,15 @@ function LibrarianSearchResults({ query, eligible, list, current, canContinue, r
     <PaneRefreshAnchor identity={query} value={rows} ready={current}>
     <div ref={content} className={styles.searchResults} data-pane-return-scope="Librarian.Search">
       {!eligible ? <Fact line={{ fact: "type at least two characters" }} />
+        : holdingWithdrawal ? null
         : !list.current ? failureNotice ?? (rows.length === 0 ? <Ruling /> : null)
         : list.complete && rows.length === 0 ? <Fact line={{ fact: `no messages match “${query}”` }} /> : null}
       <div {...navigation.listProps} className={styles.rows} aria-busy={eligible && !list.current || undefined}>
-        {rows.map(row => <MessageResult key={row.item.ref} row={row} current={current}
-          option={navigation.optionProps(row.item.ref)} timeZone={timeZone} />)}
+        {rows.map(row => holdingWithdrawal
+          ? <div key={row.item.ref} data-collection-row-id={row.item.ref}
+            style={heldDiscoverySlotStyle(slotHeights.get(row.item.ref) ?? null)} aria-hidden="true" />
+          : <MessageResult key={row.item.ref} row={row} current={current}
+            option={navigation.optionProps(row.item.ref)} timeZone={timeZone} />)}
       </div>
       {list.current ? failureNotice : null}
       <DiscoveryTail label="continue searching messages" action={canContinue ? list.more : null}

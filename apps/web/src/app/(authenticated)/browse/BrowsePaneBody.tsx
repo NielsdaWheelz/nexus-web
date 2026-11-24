@@ -58,6 +58,7 @@ import {
   definePaneVisitDataKey,
   usePaneReturnReady,
   usePaneForwardTravel,
+  usePaneScrollMotion,
 } from "@/lib/workspace/paneReturnMemento";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { providerRefusal } from "./providerRefusal";
@@ -171,7 +172,9 @@ function BrowseSourceSection({ queryKey, text, section, scoped, quiet, onStatus 
   });
   // A failure over shown rows heals unseen; continuation is the read feedback's.
   const running = list.running !== null;
-  const cold = list.current || running ? null : list.failure?.error ?? null;
+  const motion = usePaneScrollMotion();
+  const holdingWithdrawal = list.failure?.withdrawn === true && motion !== "still";
+  const cold = list.current || running || holdingWithdrawal ? null : list.failure?.error ?? null;
   const refusal = cold === null ? null : providerRefusal(cold, display);
   const invalid = cold !== null && refusedQuery(cold);
   const failure = refusal !== null || invalid ? null : cold;
@@ -209,11 +212,11 @@ function BrowseSourceSection({ queryKey, text, section, scoped, quiet, onStatus 
   useInitialDiscoveryDemand({ key: scoped ? readKey : null, current: list.current, active: canContinue && list.active,
     viewport: () => sectionRef.current?.closest<HTMLElement>("[data-pane-content]") ?? null, run: list.fetchAhead });
   const boundary = list.current && !list.complete && list.failure === null;
-  const continuedFailure = list.failure?.op === "More" ? list.failure.error : null;
+  const continuedFailure = list.failure?.op === "More" && !list.failure.withdrawn ? list.failure.error : null;
   const badCursor = continuedFailure?.code === "E_REPEATED_CURSOR" || continuedFailure?.code === "E_INVALID_CURSOR";
   const continuedRefusal = continuedFailure === null ? null : providerRefusal(continuedFailure, display);
   const noun = `${KIND_NOUNS[section.kind]} from ${label.toLowerCase()}`;
-  const feedback = useCollectionReadFeedback({ list: badCursor || continuedRefusal !== null ? { ...list, failure: null } : list, unit: { singular: "result", plural: "results" }, waiting: false, outcome: null });
+  const feedback = useCollectionReadFeedback({ list: badCursor || continuedRefusal !== null || list.failure?.withdrawn === true ? { ...list, failure: null } : list, unit: { singular: "result", plural: "results" }, waiting: false, outcome: null });
   return <section ref={sectionRef} tabIndex={-1} className={styles.sourceSection} aria-labelledby={headingId}
     onKeyDownCapture={event => {
       if (!canContinue || event.shiftKey || !["Tab", "ArrowDown", "PageDown", "End"].includes(event.key)) return;

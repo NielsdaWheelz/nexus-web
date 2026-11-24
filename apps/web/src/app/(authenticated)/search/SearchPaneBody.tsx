@@ -26,7 +26,7 @@ import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import DiscoveryTail from "@/components/collections/DiscoveryTail";
 import { writeScrollPosition } from "@/lib/collections/scrollMotion";
-import { nearDiscoveryTail, useInitialDiscoveryDemand } from "@/lib/search/discoveryBoundary";
+import { heldDiscoverySlotStyle, nearDiscoveryTail, useDiscoverySlotHeights, useInitialDiscoveryDemand } from "@/lib/search/discoveryBoundary";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { assertNever } from "@/lib/assertNever";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -137,6 +137,7 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
   const active = usePaneIsActive();
   const root = useRef<HTMLDivElement>(null);
   const remoteTail = useRef<HTMLDivElement>(null);
+  const remoteRows = useRef<HTMLDivElement>(null);
   const localTail = useRef<HTMLDivElement>(null);
   const motion = usePaneScrollMotion();
   const viewport = () => root.current?.closest<HTMLElement>("[data-pane-content]") ?? null;
@@ -153,7 +154,7 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
   if (wasVisible.current && !visible) returning.current = true;
   wasVisible.current = visible;
   const [refreshPhase, setRefreshPhase] = useState<SearchPhase | null>(null);
-  const [refreshError, setRefreshError] = useState<{ phase: SearchPhase; error: ApiError; shownStamp: string; failedStamp: string } | null>(null);
+  const [refreshError, setRefreshError] = useState<{ phase: SearchPhase; error: ApiError; shownStamp: string; failedStamp: string; withdrawn: boolean } | null>(null);
   captured.current = visit;
   const blank = query.text.trim().length === 0 && (
     query.view === "passages" || query.formats.length + query.authors.length + query.roles.length === 0
@@ -197,6 +198,8 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
     },
   });
   const selected = visit.adopted?.phase === "hybrid" ? hybrid : lexical;
+  const withdrawn = selected.failure?.withdrawn === true || refreshError?.withdrawn === true;
+  const holdingWithdrawal = withdrawn && motion !== "still";
   // A phase's failure stands through its retry, so its `retry` keeps focus while busy.
   const [incidents, setIncidents] = useState<{key: string; lexical: ApiError | null; hybrid: ApiError | null}>({key, lexical: null, hybrid: null});
   const previousIncidents = incidents.key === key ? incidents : {key, lexical: null, hybrid: null};
@@ -208,9 +211,9 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
   if (incidents.key !== key || incidents.lexical !== phaseIncidents.lexical || incidents.hybrid !== phaseIncidents.hybrid) setIncidents(phaseIncidents);
 
   // remote search reads synchronized projections, including a server copy of authored text.
-  const incoming = useMemo(() => (visit.adopted === null ? [] : selected.items).filter(row => !row.item.authored_by_viewer)
+  const incoming = useMemo(() => (visit.adopted === null || withdrawn ? [] : selected.items).filter(row => !row.item.authored_by_viewer)
     .map(row => "matching_passage" in row && row.matching_passage && row.matching_passage.item.authored_by_viewer ? { ...row, matching_passage: null } : row),
-  [visit.adopted, selected.items]);
+  [visit.adopted, selected.items, withdrawn]);
   const presented = useRef(incoming);
   const results = useMemo(() => {
     if (motion === "still") return incoming;
@@ -225,6 +228,7 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
     return [...previous, ...additions];
   }, [incoming, motion, query.view]);
   useLayoutEffect(() => { presented.current = results; }, [results]);
+  const slotHeights = useDiscoverySlotHeights(remoteRows, results, motion !== "still", withdrawn);
   const remoteRefs = useMemo(() => new Set(results.map(row => row.item.ref)), [results]);
   const localApplies = localSearchApplies(query);
   const local = useLocalSearch(localApplies ? query.text.trim() : null, query.requestedKinds, query.scope, visible, remoteRefs);
@@ -235,7 +239,7 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
   useLayoutEffect(() => { presentedLocal.current = shownLocal; }, [shownLocal]);
   const list = selected;
   const actionFacts = useFeedActionFacts({ scope: `Search:${key}`,
-    targets: results.flatMap(row => {
+    targets: withdrawn ? [] : results.flatMap(row => {
       const ref = parseResourceRef(row.item.ref);
       return (ref?.scheme === "podcast" || ref?.scheme === "feed") && row.item.preview.body.kind === "named" && !row.item.missing
         ? [{ kind: "Canonical" as const, feed_id: ref.id }] : [];
@@ -301,7 +305,7 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
     if (refreshPhase === null) return;
     const list = refreshPhase === "hybrid" ? hybrid : lexical;
     if (list.failure === null || list.running !== null) return;
-    setRefreshError({ phase: refreshPhase, error: list.failure.error, shownStamp: list.shownStale ?? stamp, failedStamp: stamp });
+    setRefreshError({ phase: refreshPhase, error: list.failure.error, shownStamp: list.shownStale ?? stamp, failedStamp: stamp, withdrawn: list.failure.withdrawn });
     setRefreshPhase(null);
   }, [refreshPhase, lexical, hybrid, stamp]);
 
@@ -383,16 +387,16 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
   const [previous] = useState(() => shown.current?.accountId === accountId && shown.current.view === query.view ? shown.current.rows : []);
   // Text failed, unless related matches are still on their way: then it is a wait.
   const textFailed = visit.adopted === null && phaseIncidents.lexical !== null && !(hybridState === "pending" && phaseIncidents.hybrid === null);
-  const stale = visit.adopted === null && pending && unfixable === undefined && !textFailed;
+  const stale = visit.adopted === null && pending && unfixable === undefined && !textFailed && !withdrawn;
   const rows = stale ? previous : results;
   // Rows, or none where a fact stands instead: what the next key may stand dimmed.
   useLayoutEffect(() => {
-    shown.current = { accountId, view: query.view, rows };
+    shown.current = { accountId, view: query.view, rows: withdrawn ? [] : rows };
   });
   const filtered = query.requestedKinds !== null || query.formats.length + query.authors.length + query.roles.length > 0 || query.scope !== "all";
   const clearFilters: Verbs = [{ label: "clear filters", commandKey: "clear filters", run: () => commit({ ...emptySearchQuery(), text: query.text, view: query.view }) }];
   const noun = query.view === "passages" ? "passages" : "results";
-  const readFeedback = useCollectionReadFeedback({ list: repeatedCursor || rejectedCursor ? { ...selected, failure: null } : selected, unit: query.view === "passages" ? { singular: "passage", plural: "passages" } : { singular: "result", plural: "results" }, waiting: false, outcome: null });
+  const readFeedback = useCollectionReadFeedback({ list: repeatedCursor || rejectedCursor || withdrawn ? { ...selected, failure: null } : selected, unit: query.view === "passages" ? { singular: "passage", plural: "passages" } : { singular: "result", plural: "results" }, waiting: false, outcome: null });
   const show = held && candidate !== null && !rejectedCursor && !prefixFailure ? () => { returning.current = false; adopt(candidate, true); } : null;
   usePaneReturnReady(blank || unsupported || visit.adopted !== null || unfixable !== undefined || (lexicalState === "failed" && hybridState !== "pending"));
   usePaneChrome({
@@ -416,6 +420,7 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
         { label: "any kind", commandKey: "any kind", run: () => commit({ ...query, requestedKinds: null }) },
       ]} />
       : <Fact line={{ fact: "these filters leave no kinds to search." }} verbs={[{ label: "any kind", commandKey: "any kind", run: () => commit({ ...query, requestedKinds: null }) }]} />
+    : withdrawn && !holdingWithdrawal ? <Fact line={{ fact: "this search is no longer available." }} />
     : count > 0 ? null
     : unfixable !== undefined ? <Fact line={{ fact: unfixable.code === "E_INVALID_REQUEST" ? "nexus can’t run this search." : "the item this search is inside isn’t available." }} />
     : textFailed && phaseIncidents.lexical !== null
@@ -427,6 +432,12 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
       ? <Fact line={{ fact: query.view === "passages" ? "no passages match this search." : "no results match this search." }}
         verbs={filtered ? clearFilters : undefined} speak={active} />
       : null;
+  const renderRow = (row: Row, index: number, group: readonly Row[]) => {
+    const id = `search:${row.item.ref}`;
+    return holdingWithdrawal
+      ? <li key={id} data-collection-row-id={id} style={heldDiscoverySlotStyle(slotHeights.get(id) ?? null)} aria-hidden="true" />
+      : <SearchResult key={id} row={row} selection={visit.selection} podcastSubject={stale ? undefined : podcastFor(row)} afterRemoval={afterRemoval(group, index)} />;
+  };
   return <PaneRefreshAnchor identity={visit.adopted?.key ?? key} value={refreshValue} ready={enabled && !stale}>
     <div ref={root} data-pane-return-scope="Search.Results" onPointerDownCapture={select} onFocusCapture={select} onKeyDownCapture={event => {
       interact();
@@ -437,14 +448,14 @@ function SearchResults({ query, accountId, shown, inputRef, commit, collation }:
     }}>
     {localApplies ? <LocalResults local={local} rows={shownLocal} boundary={localTail} /> : null}
     {state}
-    <div key={visit.adopted?.key ?? key} className={stale ? styles.stale : undefined} inert={stale || undefined}>
+    <div ref={remoteRows} key={visit.adopted?.key ?? key} className={stale ? styles.stale : undefined} inert={stale || undefined}>
       {query.view === "resources" ? sections.filter(section => section.rows.length > 0).map(section => <section className={styles.section} key={section.key} aria-label={section.label}>
         <h2 className={styles.sectionHeading}>{section.label}</h2>
         <ResourceList ariaLabel={section.label}>
-          {section.rows.map((row, index) => <SearchResult key={row.item.ref} row={row} selection={visit.selection} podcastSubject={stale ? undefined : podcastFor(row)} afterRemoval={afterRemoval(section.rows, index)} />)}
+          {section.rows.map(renderRow)}
         </ResourceList>
       </section>) : rows.length > 0 ? <ResourceList ariaLabel="Passages">
-        {rows.map((row, index) => <SearchResult key={row.item.ref} row={row} selection={visit.selection} podcastSubject={stale ? undefined : podcastFor(row)} afterRemoval={afterRemoval(rows, index)} />)}
+        {rows.map(renderRow)}
       </ResourceList> : null}
     </div>
     {show !== null && motion === "still" ? <Fact line={{ fact: "results with related matches are ready." }}
