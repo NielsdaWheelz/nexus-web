@@ -300,7 +300,7 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
 
 function BranchCollector({controller, request, received}: {controller: OutlineController; request: BranchRequest; received: ((window: OutlineWindow) => void) | null}) {
   const traversed = [...request.branch.traversedEdgeIds];
-  const read = useOutlineWindows({ref: request.ref, ranges: request.ranges ?? [{cursor: request.cursor, anchor_link_id: request.anchor, limit: request.limit}],
+  const read = useOutlineWindows({ref: request.ref, ranges: request.ranges ?? [{start_rank: null, cursor: request.cursor, anchor_link_id: request.anchor, limit: request.limit}],
     excluded_link_ids: traversed, entering_link_id: traversed.at(-1) ?? null}, request.branch, controller.runtime);
   useLayoutEffect(() => controller.publishRead(request, {pending: read.loading, error: read.error, occurrence: read.occurrence, retry: read.retry}),
     [controller, request, read.loading, read.error, read.occurrence, read.retry]);

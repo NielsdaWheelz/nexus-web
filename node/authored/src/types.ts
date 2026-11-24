@@ -121,8 +121,8 @@ export type WorkRegisterResult = RankedIndexResult<WorkIndexItem, {groups: numbe
 export interface OutlineIndexItem { link_id: string; other_ref: ResourceRef; matched: boolean }
 export type IndexRange<Row> = {kind: "changed"} | {kind: "range"; total: number; source_total: number; start: number; items: Row[]};
 export type IndexRequest = {start: number; limit: number; expected_revision: Counter | null};
-export interface OutlineRange { cursor: string | null; anchor_link_id: string | null; limit: number }
-export interface OutlineWindowSlice { rows: QueryRow[]; children: (boolean | null)[]; next_cursor: string | null; previous_cursor: string | null; proof: OutlineWindowProof }
+export interface OutlineRange { start_rank: number | null; cursor: string | null; anchor_link_id: string | null; limit: number }
+export interface OutlineWindowSlice { total: number; start_rank: number | null; rows: QueryRow[]; children: (boolean | null)[]; next_cursor: string | null; previous_cursor: string | null; proof: OutlineWindowProof }
 export type AuthoredQuery =
   | PageRegisterRequest
   | {kind: "register_label"; ref: ResourceRef}

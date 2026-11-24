@@ -79,9 +79,10 @@ export default defineConfig({
           latest_habit_date: [{kind: "latest_habit_date"}],
           mentions: [{kind: "mentions", ref: "", ...index}],
           outline_windows: [
-            {kind: "outline_windows", ref: "", ranges: [{cursor: null, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
-            {kind: "outline_windows", ref: "", ranges: [{cursor, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
-            {kind: "outline_windows", ref: "", ranges: [{cursor: null, anchor_link_id: "", limit: 48}], excluded_link_ids: [], entering_link_id: null},
+            {kind: "outline_windows", ref: "", ranges: [{start_rank: null, cursor: null, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
+            {kind: "outline_windows", ref: "", ranges: [{start_rank: null, cursor, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
+            {kind: "outline_windows", ref: "", ranges: [{start_rank: null, cursor: null, anchor_link_id: "", limit: 48}], excluded_link_ids: [], entering_link_id: null},
+            {kind: "outline_windows", ref: "", ranges: [{start_rank: 1, cursor: null, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
           ],
           binding: [{ kind: "binding", key: { kind: "daily", local_date: "" } }, { kind: "binding", key: { kind: "link", endpoint_a: "", endpoint_b: "" } }, { kind: "binding", key: { kind: "passage", source_ref: "", normalized_exact: "", prefix: "", suffix: "" } }],
           outline_children: [{ kind: "outline_children", occurrences: [] }],

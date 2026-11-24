@@ -44,7 +44,11 @@ export function decodeOutlineWindow(raw: Record<string, unknown>[]): OutlineWind
     else throw new Error("unknown outline window record");
   }
   proof.resources = [...resources.values()].filter(resource => !rawRefs.has(resource.ref));
-  return {rows, children, proof, next_cursor: meta.next_cursor === null ? null : String(meta.next_cursor),
+  const total = Number(meta.total), start_rank = meta.start_rank === null ? null : Number(meta.start_rank);
+  if (!Number.isSafeInteger(total) || total < 0 ||
+      start_rank !== null && (!Number.isSafeInteger(start_rank) || start_rank < 0 || start_rank >= total))
+    throw new Error("outline window has invalid ranks");
+  return {rows, children, proof, total, start_rank, next_cursor: meta.next_cursor === null ? null : String(meta.next_cursor),
     previous_cursor: meta.previous_cursor === null ? null : String(meta.previous_cursor)};
 }
 

@@ -54,6 +54,8 @@ export function projectOutlineWindow(result: QueryResult, ref: string, branch: O
     rawChildren.set(row.link.link_id, data.children[index]!);
   }
   const rows = data.rows.filter(row => classifyOutlineOccurrence({branch: captured, targetRef: row.resource.ref, edgeId: row.link!.link_id}).kind !== "omit");
+  if (data.start_rank === null ? rows.length !== 0 : rows.length === 0 || data.start_rank + rows.length > data.total)
+    throw new Error("outline slice ranks disagree with admitted rows");
   const edges = [proof.before, proof.after, proof.tail].map(link => {
     if (!link) return null;
     const resource = resources.get(link.endpoint_a === ref ? link.endpoint_b : link.endpoint_a);

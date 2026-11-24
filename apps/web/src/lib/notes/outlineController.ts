@@ -183,7 +183,11 @@ export class OutlineController {
   private structureRevision: string | null = null;
   private structureFilter = "";
   private structure = new Map<string, ReadonlySet<string>>();
-  get structureReady(): boolean {return this.structureRevision !== null && this.structureFilter === this.filter.trim();}
+  get structureReady(): boolean {
+    const filter = this.filter.trim();
+    return this.structureFilter === filter &&
+      (filter === "" ? this.windows.has(this.pending.root_id) : this.structureRevision !== null);
+  }
   get hasFilteredRows(): boolean {return [...this.structure.values()].some(links => links.size > 0);}
 
   setMotion(motion: ScrollMotion): void {
@@ -201,6 +205,7 @@ export class OutlineController {
         pending?.();
         this.publishLayout();
         this.planViewport();
+        for (const [id, proposal] of this.proposals) this.resumeAdmission(id, proposal);
       }
     } finally {finish?.();}
   }
@@ -218,6 +223,17 @@ export class OutlineController {
   }
 
   observeStructure(text: string, remoteOwners: ReadonlySet<string>, failed: (error: unknown) => void): () => void {
+    if (text === "") {
+      if (this.viewport.setBranches(null)) {
+        this.structure = new Map();
+        this.structureRevision = null;
+        this.structureFilter = "";
+        const finish = this.layoutTransaction();
+        try {this.changed();} finally {finish();}
+      }
+      failed(null);
+      return () => {};
+    }
     type Query = Extract<AuthoredQuery, {kind: "outline_filter"}>;
     const root = this.pending.root_id, opened = new Set(this.opened), embeds = new Map(this.embedded);
     const first: Query = {kind: "outline_filter", parent_ref: this.rootRef, text, start: 0, limit: 2048, expected_revision: null};
@@ -459,7 +475,7 @@ export class OutlineController {
       const admitted = await store.withCommand(async () => {
         if (!lease() || this.runtime.snapshot().saving || this.annotations.get(row_id)?.document !== source) return null;
         const row = this.rows.get(row_id), parentBranch = row ? enterOutlineOccurrence({branch: row.branch, ref: source.ref, target: {kind: "occurrence", key: row_id}, edgeIds: row.link ? [row.link.link_id] : []}) : this.rootBranch;
-        const boundaryResult = await store.query({kind: "outline_windows", ref: source.ref, ranges: [{cursor: null, anchor_link_id: null, limit: 1}], excluded_link_ids: [...parentBranch.traversedEdgeIds], entering_link_id: row?.link?.link_id ?? null});
+        const boundaryResult = await store.query({kind: "outline_windows", ref: source.ref, ranges: [{start_rank: null, cursor: null, anchor_link_id: null, limit: 1}], excluded_link_ids: [...parentBranch.traversedEdgeIds], entering_link_id: row?.link?.link_id ?? null});
         const boundary = projectOutlineWindow(boundaryResult, source.ref, parentBranch, 0);
         if (!boundary.data.scope_available || boundary.data.previous_cursor !== null || boundary.beforeEdge !== null) {this.refuse("the first linked item is not available"); return null;}
         const first = boundary.rows[0], placement = {parent_ref: source.ref, parent: source, after_ref: null, before_ref: first?.resource.ref ?? null};
@@ -712,30 +728,30 @@ export class OutlineController {
         let scope = this.pending.root_id;
         for (const link of anchor.split("/")) {
           const id = this.id(scope, link);
-          if (!this.rows.has(id)) {if (scope === parent) ranges.push({cursor: null, anchor_link_id: link, limit: 32}); break;}
+          if (!this.rows.has(id)) {if (scope === parent) ranges.push({start_rank: null, cursor: null, anchor_link_id: link, limit: 32}); break;}
           scope = id;
         }
       }
       for (const [index, part] of parts.entries()) {
         const selected = part.rows.flatMap((item, at) => wanted.has(this.id(parent, item.link!.link_id)) ? [at] : []);
         if (!selected.length) continue;
-        if (this.rowOverscan > 0) ranges.push(admitted.ranges?.[index] ?? {cursor: admitted.cursor, anchor_link_id: admitted.anchor, limit: admitted.limit});
+        if (this.rowOverscan > 0) ranges.push(admitted.ranges?.[index] ?? {start_rank: null, cursor: admitted.cursor, anchor_link_id: admitted.anchor, limit: admitted.limit});
         else {
           const from = Math.min(...selected), to = Math.max(...selected), limit = to - from + 1;
-          ranges.push({cursor: null, anchor_link_id: from === 0 && part.beforeEdge === null ? null : part.rows[from + Math.floor(limit / 2)]!.link!.link_id, limit});
+          ranges.push({start_rank: null, cursor: null, anchor_link_id: from === 0 && part.beforeEdge === null ? null : part.rows[from + Math.floor(limit / 2)]!.link!.link_id, limit});
         }
       }
       for (const metric of near) {
         const gap = this.gaps.get(metric.id);
         if (metric.parent !== parent || !gap || metric.id.startsWith("reading:")) continue;
-        const anchor_link_id = gap.links === undefined ? gap.range.anchor_link_id :
-          this.viewport.seek(parent, gap.links, Math.max(0, (this.viewportRange.top + this.viewportRange.bottom) / 2 - metric.top));
-        if (!ranges.some(range => range.anchor_link_id === anchor_link_id && range.cursor === gap.range.cursor))
-          ranges.push({...gap.range, anchor_link_id, limit: Math.max(1, Math.min(32, Math.ceil((bottom - top) / Math.max(1, this.viewport.estimate))))});
+        const limit = Math.max(1, Math.min(32, Math.ceil((bottom - top) / Math.max(1, this.viewport.estimate))));
+        const range = this.viewport.rangeAt(parent, gap, Math.max(0, (this.viewportRange.top + this.viewportRange.bottom) / 2 - metric.top), limit);
+        if (!ranges.some(before => before.start_rank === range.start_rank &&
+          before.anchor_link_id === range.anchor_link_id && before.cursor === range.cursor)) ranges.push(range);
       }
       // A focused title keeps its root proof, not unrelated offscreen bodies.
       if (!ranges.length && parent === this.pending.root_id && this.rowOverscan === 0)
-        ranges.push({cursor: null, anchor_link_id: null, limit: 1});
+        ranges.push({start_rank: null, cursor: null, anchor_link_id: null, limit: 1});
       if (!ranges.length) {
         if (parent !== this.pending.root_id && this.branchHeights.has(parent) && !this.protectedDescendants(parent)) {
           this.dormantBranches.add(parent); this.requests.delete(parent); this.windows.delete(parent); this.slices.delete(parent); this.admittedRequests.delete(parent);
@@ -743,7 +759,7 @@ export class OutlineController {
         }
         continue;
       }
-      const previous = request.ranges ?? [{cursor: request.cursor, anchor_link_id: request.anchor, limit: request.limit}];
+      const previous = request.ranges ?? [{start_rank: null, cursor: request.cursor, anchor_link_id: request.anchor, limit: request.limit}];
       if (JSON.stringify(previous) === JSON.stringify(ranges)) continue;
       this.request({...request, ranges}); changed = true;
     }
@@ -763,8 +779,8 @@ export class OutlineController {
       for (let index = 0; index < path.length; index++) {
         const link = path[index]!, id = this.id(parent, link), row = this.rows.get(id), request = this.requests.get(parent);
         if (!row && request) {
-          const ranges = [...(request.ranges ?? [{cursor: request.cursor, anchor_link_id: request.anchor, limit: request.limit}])];
-          if (!ranges.some(range => range.anchor_link_id === link)) {this.request({...request, ranges: [...ranges, {cursor: null, anchor_link_id: link, limit: 32}]}); this.notify();}
+          const ranges = [...(request.ranges ?? [{start_rank: null, cursor: request.cursor, anchor_link_id: request.anchor, limit: request.limit}])];
+          if (!ranges.some(range => range.anchor_link_id === link)) {this.request({...request, ranges: [...ranges, {start_rank: null, cursor: null, anchor_link_id: link, limit: 32}]}); this.notify();}
           else if (this.admittedRequests.get(parent) === request && !this.windows.get(parent)?.rows.some(item => item.link?.link_id === link)) this.missingAnchors.add(anchor);
           break;
         }
@@ -1133,6 +1149,10 @@ export class OutlineController {
       const valid = () => {
         if (!this.active || !accepted.every(part => this.requests.get(part.id) === part.request && this.versions.get(part.id) === part.version &&
           this.proposals.get(part.id) === part.window && this.compatibleWindow(part.id, part.window) && this.navigationValid(part.id))) return false;
+        if (this.motion !== "still" && this.structureFilter === "" && accepted.some(part => {
+          const before = this.windows.get(part.id);
+          return before !== undefined && part.request?.navigation === undefined && before.data.store_revision !== part.window.data.store_revision;
+        })) return false;
         const actual = this.reachable(new Map([...this.windows, ...selected]));
         if (actual.size !== next.size || [...actual].some(([id, part]) => next.get(id) !== part)) {topologyChanged = true; return false;}
         return [...this.pending.fields.values()].filter(field => field.relocating).length === placements.length && placements.every(field => {
@@ -1445,7 +1465,7 @@ export class OutlineController {
       }
       const parts = window ? this.viewport.layout(parent_id, this.slices.get(parent_id) ?? [window]) : [];
       if (!window && this.branchHeights.has(parent_id)) {
-        const row_id = `dormant:${parent_id}`, range = this.viewport.rangeFor(parent_id, 0.5) ?? {cursor: null, anchor_link_id: null, limit: 32};
+        const row_id = `dormant:${parent_id}`, range = this.viewport.rangeFor(parent_id, 0.5) ?? {start_rank: null, cursor: null, anchor_link_id: null, limit: 32};
         const gap = {kind: "gap", key: row_id, height: this.branchHeights.get(parent_id)!, range, direction: "after", waiting: true} as const;
         this.gaps.set(row_id, gap);
         this.rows.set(row_id, {row_id, ref: null, link: null, parent_id, parent_ref: ref, depth, branch, resource: null, kind: "reference", children: null,
@@ -1468,8 +1488,7 @@ export class OutlineController {
         if (row.gap) {this.rows.set(row.row_id, row); continue;}
         const members = this.structure.get(parent_id);
         if (row.link && members && !members.has(row.link.link_id) && !this.pending.fields.has(row.row_id) &&
-          !protectedRows.has(row.row_id) && (this.structureFilter !== "" ||
-            this.structureRevision !== null && window && BigInt(this.structureRevision) >= BigInt(window.data.store_revision))) continue;
+          !protectedRows.has(row.row_id)) continue;
         this.rows.set(row.row_id, row);
         for (const [id, embedded] of this.embedded) if (embedded.projection !== null && embedded.owner === row.row_id) collect(id, embedded.projection.ref, embedded.projection.branch, depth + 1);
         if (row.open && !row.terminal) {
@@ -1479,7 +1498,7 @@ export class OutlineController {
             const range = this.wakingRanges.get(row.row_id);
             this.wakingRanges.delete(row.row_id);
             this.requests.set(row.row_id, {parent_id: row.row_id, ref: row.ref, branch: entered, cursor: range?.cursor ?? null, anchor: range?.anchor_link_id ?? null,
-              limit: 32});
+              limit: range?.limit ?? 32, ranges: range ? [range] : undefined});
             this.attempted.add(row.row_id); this.notify();
           } else if (existing && row.link && !existing.branch.traversedEdgeIds.has(row.link.link_id)) {
             // A row open before its move keeps a request built on its former edge; the window must exclude the current one.
@@ -1517,7 +1536,7 @@ export class OutlineController {
         if (boundary && direction === "after") {insert++; while (insert < ordered.length && ordered[insert]!.depth > boundary.depth) insert++;}
         const parent = ordered.find(row => row.row_id === this.reading!.parent);
         const row_id = `reading:${this.reading.parent}:${direction}`;
-        this.gaps.set(row_id, {kind: "gap", key: row_id, height: this.viewport.estimate, range: {cursor: null, anchor_link_id: edge.link.link_id, limit: 32}, direction});
+        this.gaps.set(row_id, {kind: "gap", key: row_id, height: this.viewport.estimate, range: {start_rank: null, cursor: null, anchor_link_id: edge.link.link_id, limit: 32}, direction});
         ordered.splice(Math.max(0, insert), 0, {row_id, ref: null, link: null, parent_id: this.reading.parent,
           parent_ref: boundary?.parent_ref ?? parent?.ref ?? this.rootRef, depth: boundary?.depth ?? (parent && !parent.root ? parent.depth + 1 : 0),
           branch: boundary?.branch ?? parent?.branch ?? this.rootBranch, resource: null, kind: "reference", children: null,
@@ -1946,8 +1965,8 @@ export class OutlineController {
           await Promise.all([...refs].map(ref => this.captureDocument(ref)));
           if (!this.active || !lease() || this.keepReason(descendants) !== null || !this.handle?.canArrange()) return;
           this.opened.delete(row_id);
-          for (const id of [row_id, ...descendants]) {this.requests.delete(id); this.windows.delete(id); this.slices.delete(id); this.admittedRequests.delete(id); this.proposals.delete(id); this.versions.set(id, (this.versions.get(id) ?? 0) + 1);}
-          for (const [id, embed] of this.embedded) if (embed.projection !== null && descendants.has(embed.owner)) {this.requests.delete(id); this.windows.delete(id); this.slices.delete(id); this.admittedRequests.delete(id); this.proposals.delete(id); this.versions.set(id, (this.versions.get(id) ?? 0) + 1);}
+          for (const id of [row_id, ...descendants]) {this.viewport.forgetBranch(id); this.requests.delete(id); this.windows.delete(id); this.slices.delete(id); this.admittedRequests.delete(id); this.proposals.delete(id); this.versions.set(id, (this.versions.get(id) ?? 0) + 1);}
+          for (const [id, embed] of this.embedded) if (embed.projection !== null && descendants.has(embed.owner)) {this.viewport.forgetBranch(id); this.requests.delete(id); this.windows.delete(id); this.slices.delete(id); this.admittedRequests.delete(id); this.proposals.delete(id); this.versions.set(id, (this.versions.get(id) ?? 0) + 1);}
           this.changed();
           const keep = this.refs(this.windows);
           for (const [ref, held] of this.documents) if (!keep.has(ref)) {held.release(); this.documents.delete(ref); this.historyLeases.get(ref)?.(); this.historyLeases.delete(ref);}
@@ -1998,7 +2017,7 @@ export class OutlineController {
     const edge = held ? held[direction] : direction === "before" ? window.beforeEdge : window.afterEdge;
     if (!edge) return;
     const lease = this.lease();
-    const range = {cursor: null, anchor_link_id: edge.link.link_id, limit: 32};
+    const range = {start_rank: null, cursor: null, anchor_link_id: edge.link.link_id, limit: 32};
     this.request({...request, ranges: [range], cursor: null, anchor: edge.link.link_id}, lease);
     if (held) this.readingContinuation = {request: this.requests.get(parent_id)!, token: held.token, direction, edge, lease};
     this.notify();
@@ -2009,7 +2028,8 @@ export class OutlineController {
     if (this.reading?.parent === row.parent_id) {this.load(row.parent_id, gap.direction); return;}
     const request = this.requests.get(row.parent_id);
     if (!request) return;
-    this.request({...request, ranges: [{...gap.range, limit: 32}]}, true); this.notify();
+    const range = this.viewport.rangeAt(row.parent_id, gap, gap.height / 2, 32);
+    this.request({...request, ranges: [range]}, true); this.notify();
   }
 
   private request(request: BranchRequest, navigation: boolean | (() => boolean) = false): void {
@@ -2111,7 +2131,7 @@ export class OutlineController {
       if (window.afterEdge) {
         if (!window.tailEdge) {this.refuse(rangeReasonMessage("gap")); return;}
         const at = {...request, cursor: null, anchor: window.tailEdge.link.link_id};
-        const data = await (await this.runtime.store).query({kind: "outline_windows", ref: at.ref, ranges: [{cursor: null, anchor_link_id: at.anchor, limit: at.limit}],
+        const data = await (await this.runtime.store).query({kind: "outline_windows", ref: at.ref, ranges: [{start_rank: null, cursor: null, anchor_link_id: at.anchor, limit: at.limit}],
           excluded_link_ids: [...at.branch.traversedEdgeIds], entering_link_id: [...at.branch.traversedEdgeIds].at(-1) ?? null});
         if (!lease()) return;
         window = projectOutlineWindow(data, at.ref, at.branch, 0);

@@ -333,14 +333,24 @@ function eligibleChildren(endpoint: string, excluded: string): string {
   }).join(" OR ");
 }
 
-/** One bounded graph proof. Pagination precedes branch omission; the only
- * materialized incident sets contain the selected page or two endpoint limits. */
+/** One bounded graph proof. Structural ranks exclude traversed edges. Raw
+ * cursor and anchor slices keep the existing command boundaries. */
 function outlineWindow(query: Omit<Extract<AuthoredQuery, {kind: "outline_windows"}>, "ranges"> & OutlineRange): CompiledQuery {
   const limit = query.limit;
   const cursor = readAdjacencyCursor(query.cursor);
   const around = cursor === null && query.anchor_link_id !== null;
   const before = "CAST(?5/2 AS INTEGER)", after = "(?5-CAST(?5/2 AS INTEGER))";
-  const page = around ? `anchor AS MATERIALIZED(${anchor("?2", false)}),
+  const branch = (["a", "b"] as const).map(side => {
+    const other = side === "a" ? "b" : "a";
+    return `SELECT l.link_id,l.position_${side} AS position,l.endpoint_${other} AS other_ref
+      FROM links l INDEXED BY links_${side} WHERE l.endpoint_${side}=?1 AND l.visible=1
+        AND ${live("?1")} AND ${live(`l.endpoint_${other}`)}
+        AND NOT EXISTS(SELECT 1 FROM json_each(?6) excluded WHERE excluded.value=l.link_id)`;
+  }).join(" UNION ALL ");
+  const page = query.start_rank !== null
+    ? `page_links AS MATERIALIZED(SELECT k.link_id,l.endpoint_a,l.endpoint_b,k.position,l.state_json AS position_json,k.other_ref
+      FROM (SELECT * FROM branch_keys ORDER BY position,link_id LIMIT ?5 OFFSET ?8) k JOIN links l ON l.link_id=k.link_id)`
+    : around ? `anchor AS MATERIALIZED(${anchor("?2", false)}),
     earlier_candidates AS(${orderedIncident("AND(POSITION,l.link_id)<((SELECT position FROM anchor),(SELECT link_id FROM anchor))", "DESC", before, "NULL")}),
     later_candidates AS(${orderedIncident("AND(POSITION,l.link_id)>=((SELECT position FROM anchor),(SELECT link_id FROM anchor))", "ASC", after, "NULL")}),
     earlier AS(SELECT * FROM earlier_candidates ORDER BY position DESC,link_id DESC LIMIT ${before}),
@@ -355,7 +365,7 @@ function outlineWindow(query: Omit<Extract<AuthoredQuery, {kind: "outline_window
   // (raw/before/after/tail); only raw edges have child_available. The single meta
   // record carries next_cursor/previous_cursor. SQL's position/link_id/ref order
   // lets hosts assemble the public result without graph reads or host sorting.
-  return {sql: `WITH ${page},
+  return {sql: `WITH branch_keys AS NOT MATERIALIZED(${branch}),${page},
     raw_first AS(SELECT position,link_id FROM page_links ORDER BY position,link_id LIMIT 1),${previous}
     kept AS MATERIALIZED(SELECT * FROM page_links p WHERE NOT EXISTS(SELECT 1 FROM json_each(?6) excluded WHERE excluded.value=p.link_id)),
     first_kept AS(SELECT position,link_id FROM kept ORDER BY position,link_id LIMIT 1),
@@ -374,13 +384,16 @@ function outlineWindow(query: Omit<Extract<AuthoredQuery, {kind: "outline_window
     wanted(ref) AS(SELECT ?1 UNION SELECT other_ref FROM edges),
     readable AS NOT MATERIALIZED(${BOUNDED_READABLE})
     SELECT 'resource' AS part,r.ref,r.projection_json AS value_json,NULL AS child_available,
-      NULL AS next_cursor,NULL AS previous_cursor,NULL AS position,NULL AS link_id FROM readable r
-    UNION ALL SELECT part,other_ref,position_json,child_available,NULL,NULL,position,link_id FROM edges
+      NULL AS next_cursor,NULL AS previous_cursor,NULL AS position,NULL AS link_id,NULL AS total,NULL AS start_rank FROM readable r
+    UNION ALL SELECT part,other_ref,position_json,child_available,NULL,NULL,position,link_id,NULL,NULL FROM edges
     UNION ALL SELECT 'meta',NULL,NULL,NULL,
       CASE WHEN (SELECT COUNT(*) FROM page_links)=?5 THEN (SELECT json_array(position,link_id) FROM page_links ORDER BY position DESC,link_id DESC LIMIT 1) ELSE NULL END,
-      ${previousCursor},NULL,NULL
+      ${previousCursor},NULL,NULL,(SELECT count(*) FROM branch_keys),
+      CASE WHEN EXISTS(SELECT 1 FROM first_kept) THEN
+        ${query.start_rank !== null ? "?8" : "(SELECT count(*) FROM branch_keys WHERE (position,link_id)<((SELECT position FROM first_kept),(SELECT link_id FROM first_kept)))"} END
     ORDER BY part,position,link_id,ref`,
-    params: [query.ref, query.anchor_link_id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit, JSON.stringify(query.excluded_link_ids), query.entering_link_id]};
+    params: [query.ref, query.anchor_link_id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit, JSON.stringify(query.excluded_link_ids), query.entering_link_id,
+      ...(query.start_rank === null ? [] : [query.start_rank])]};
 }
 
 /** A note touch can revive retained completion dates after observed deletion,
@@ -392,7 +405,9 @@ export function changesDailyIndex(change: Change): boolean {
 /** Every compiled slice is executed in one host store turn, under one revision. */
 export function compileOutlineWindows(query: Extract<AuthoredQuery, {kind: "outline_windows"}>): CompiledQuery[] {
   if (query.ranges.length === 0 || query.excluded_link_ids.length > 1000 ||
-    query.ranges.some(range => !Number.isInteger(range.limit) || range.limit < 1 || range.limit > 48)) throw new RangeError("Outline windows exceed bound");
+    query.ranges.some(range => !Number.isInteger(range.limit) || range.limit < 1 || range.limit > 48 ||
+      range.start_rank !== null && (!Number.isSafeInteger(range.start_rank) || range.start_rank < 0 ||
+        range.anchor_link_id !== null || range.cursor !== null))) throw new RangeError("Outline windows exceed bound");
   if (query.entering_link_id !== null && !query.excluded_link_ids.includes(query.entering_link_id)) throw new TypeError("Outline entering edge is not traversed");
   return query.ranges.map(range => outlineWindow({...query, ...range}));
 }
