@@ -38,6 +38,7 @@ const DWELL_MS = 600;
 /** The receipt stands this long from its display, then leaves. A pressed undo keeps it until the undo settles. */
 const RECEIPT_MS = 5000;
 const NO_WORK = new Map<string, WorkIndexItem>();
+const WORK_ROWS_SCOPE = "work-rows";
 
 /** An agenda completion. This section owns its durable `write`, so a refusal or a defect is not lost with the row or
  * the receipt. `press` names the gesture: a late promise or timer for an older press of the same row changes
@@ -142,9 +143,9 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
   }, [retained, pending, expired]);
   const refs = useMemo(() => [...visible.values()].sort(compareWork).map(row => row.ref), [visible]);
   const pins = useMemo(() => new Set(retained.keys()), [retained]);
-  const index = useVariableIndex({scope: "work", ids: refs, ranked: view.ranked, list, estimate: 48, pinned: pins,
+  const index = useVariableIndex({scope: WORK_ROWS_SCOPE, ids: refs, ranked: view.ranked, list, estimate: 48, pinned: pins,
     windowed: view.ranked !== undefined || refs.length > INDEX_WINDOW_THRESHOLD});
-  usePaneIndexRevision("work", view.revision, today === null || view.revision !== null);
+  usePaneIndexRevision(WORK_ROWS_SCOPE, view.revision, today === null || view.revision !== null);
   const layout = useMemo(() => ({rows: read.data?.work_index ?? null, held, completions, open, adding, windowed: index.windowed}),
     [read.data, held, completions, open, adding, index.windowed]);
   if (failure) throw failure.error;
@@ -175,7 +176,8 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
     <div id={contentId} hidden={!open}>
       {today === null ? <AccountCalendarUnavailable /> : null}
       <AuthoredReadFailure {...reply} noun="unfinished work" />
-      <ResourceList ref={list} ariaLabel="unfinished work" busy={read.pending && read.data === null} windowed={index.windowed} height={index.height}>
+      <ResourceList ref={list} returnScope={WORK_ROWS_SCOPE} ariaLabel="unfinished work" busy={read.pending && read.data === null}
+        windowed={index.windowed} height={index.height}>
         {index.slots.map(({id, rank, top, size}) => {
           const resource = visible.get(id);
           const slot = {ref: index.measure, "data-index": rank, "aria-posinset": rank + 1, "aria-setsize": index.count,
