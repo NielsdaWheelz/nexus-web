@@ -6,6 +6,7 @@
 // The pinned VFS patch returns SQLite error codes after an IndexedDB abort;
 // rejected Asyncify callbacks otherwise strand the account's SQL queue.
 import * as SQLite from "@journeyapps/wa-sqlite";
+import { DEVICE_PRAGMAS } from "@nexus/authored/schema";
 import SQLiteFactory from "@journeyapps/wa-sqlite/dist/wa-sqlite-async.mjs";
 import { IDBBatchAtomicVFS } from "@journeyapps/wa-sqlite/src/examples/IDBBatchAtomicVFS.js";
 
@@ -41,8 +42,7 @@ export async function openDatabase(accountId: string): Promise<Database> {
     return rows;
     } catch (error) { throw Object.assign(new Error("couldn’t open or save notes on this device", { cause: error }), { code: "E_AUTHORED_LOCAL" }); }
   };
-  await all("PRAGMA synchronous=FULL");
-  await all("PRAGMA foreign_keys=ON");
+  for (const sql of DEVICE_PRAGMAS) await all(sql);
   // Missing FTS5 is an unsupported binary, never permission for a memory store.
   await all("CREATE VIRTUAL TABLE temp.authored_fts_probe USING fts5(text)");
   await all("DROP TABLE temp.authored_fts_probe");

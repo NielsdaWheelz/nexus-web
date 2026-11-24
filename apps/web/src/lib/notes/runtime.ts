@@ -22,6 +22,7 @@ export class PageWritingOrigin {
 export interface WritingSnapshot { body_state: string; observed_touch: Vector }
 export interface WritingDocument {
   ref: string; doc: Y.Doc; retain(): () => void; capture(): Promise<WritingSnapshot>;
+  readonly prelude: readonly Intent[];
   onCommitted(listener: (receipt: LocalCommit, origin: unknown) => void): () => void;
   hasPendingEdits(): boolean;
   subscribePendingEdits(listener: () => void): () => void;
@@ -42,6 +43,14 @@ export interface LocalCommit {
 }
 export interface LocalGraphCommit extends LocalCommit {states: MergeResult}
 export type GraphIntent = Exclude<Intent, {kind: "batch" | "create_note" | "create_page" | "create_highlight" | "edit_body" | "edit_title"}>;
+interface WritingMutation {
+  existing: readonly {document: WritingDocument; origin: unknown; state_vector?: Uint8Array}[];
+  notes: readonly ({body: NoteBody; origin: unknown} | {initializer: Extract<Intent, {kind: "create_note"}>; origin: unknown})[];
+  mutate(created: readonly WritingDocument[]): void;
+  prepare(created_refs: readonly string[]): Promise<readonly Intent[]>;
+}
+interface WritingAdmission {created: readonly WritingDocument[]; result: Promise<LocalCommit>}
+type CheckedBaseline = Awaited<ReturnType<AuthoredStore["readSnapshot"]>> & {selection: StateSelection};
 interface CachedDocument extends WritingDocument { text_pending: Set<Promise<LocalCommit>>; read_attempt: number; read_subscription: number; pins: number; bytes: number; last_used: number; pending: number; prelude: readonly Intent[]; receive(resource: ResourceState): void; track(result: Promise<LocalCommit>, origin: unknown): void; unsubscribe: () => void }
 interface SaveState { saving: boolean; error: unknown | null; error_occurrence: object | null; error_refs: string[]; revision: number }
 interface FailedCommit {
@@ -49,6 +58,7 @@ interface FailedCommit {
   readonly credit: PageCredit;
   reject_oversize: boolean;
   intent: Intent | null; selection: StateSelection; change: Change | null;
+  baseline: CheckedBaseline | null;
   prepared: { frame: CommitFrame; before: LocalCommit["before"] } | null;
   store: AuthoredStore | null; held: boolean; attempting: boolean;
   settled: Promise<LocalCommit>; resolve(receipt: LocalCommit): void; reject(error: Error): void;
@@ -169,20 +179,12 @@ export class WritingRuntime {
         this.pending_commands.set(committed, owner);
         owner.intent = intent; owner.selection = selection; owner.change = change; owner.store = store;
         owner.prepared = {before: commitBefore(change, snapshot.states, selection), frame: {expected_store_revision: snapshot.replica.store_revision, replica_id: snapshot.replica.replica_id, change, states}};
-        owner.release(); owner.held = true; owner.attempting = true; this.failed = owner;
+        owner.release();
         void owner.result.catch(reject);
-        try {
-          prepared.accepted(states);
-          let receipt: LocalCommit;
-          try {receipt = await this.prepareAndPersist(owner, store);}
-          catch (error) {owner.attempting = false; this.reportFailure(owner, error); receipt = await owner.settled;}
-          owner.resolve(receipt); owner.accept(receipt);
-          if (this.failed === owner) this.failed = null;
-          this.publish({error: null, error_occurrence: null, error_refs: []});
-          const graphReceipt: LocalGraphCommit = {...receipt, states: owner.prepared!.frame.states};
-          accept({kind: "committed", receipt: graphReceipt});
-          return graphReceipt;
-        } finally {owner.held = false; owner.attempting = false;}
+        const receipt = await this.commitHeld(owner, store, () => prepared.accepted(states));
+        const graphReceipt: LocalGraphCommit = {...receipt, states: owner.prepared!.frame.states};
+        accept({kind: "committed", receipt: graphReceipt});
+        return graphReceipt;
       });
     });
     this.tail = operation.then(settle, error => {reject(error); fail(error);}).finally(() => {
@@ -190,16 +192,59 @@ export class WritingRuntime {
     });
     return {result, committed};
   }
+  /** A structural edit can prove its forward, undo and redo before publishing text.
+   * The first write uses the witness's exact snapshot and account lease. */
+  admitCheckedWriting<T>(credit: PageCredit, check: (store: AuthoredStore, admit: (args: WritingMutation, baseline: CheckedBaseline) => WritingAdmission) => Promise<T>): Promise<T> {
+    if (this.capture_scope) throw new Error("A compound mutation cannot submit another command");
+    let accept: (value: T) => void = () => {}, reject: (error: unknown) => void = () => {};
+    const decision = new Promise<T>((resolve, refuse) => {accept = resolve; reject = refuse;});
+    const operation: Promise<LocalCommit | null> = this.tail.then(async () => {
+      if (this.retired) throw new Error("Writing account is closed");
+      const store = await this.store;
+      return store.withCommand(async () => {
+        if (this.retired) throw new Error("Writing account is closed");
+        const owner = this.commandOwner(credit);
+        let value: T;
+        try {
+          value = await check(store, (args, baseline) => this.sealWriting(args, () => {
+            if (owner.intent !== null) throw new Error("Writing admission was already used");
+            owner.baseline = baseline; this.pending_commands.set(operation, owner); return owner;
+          }));
+        } catch (error) {
+          if (owner.intent === null) throw error;
+          reject(error); // A presenter fault cannot strand an already sealed write.
+          return this.commitHeld(owner, store, () => {});
+        }
+        if (owner.intent === null) {accept(value); return null;}
+        return this.commitHeld(owner, store, () => accept(value));
+      });
+    });
+    this.pending++; this.pending_commands.set(operation, null); this.publish({saving: true});
+    this.tail = operation.then(() => {}, reject).finally(() => {
+      this.pending_commands.delete(operation); this.pending--; this.publish({saving: this.pending > 0});
+    });
+    return decision;
+  }
+  private async commitHeld(owner: FailedCommit, store: AuthoredStore, accepted: () => void): Promise<LocalCommit> {
+    owner.store = store; owner.held = true; owner.attempting = true; this.failed = owner;
+    try {
+      accepted();
+      let receipt: LocalCommit;
+      try {receipt = await this.prepareAndPersist(owner, store);}
+      catch (error) {owner.attempting = false; this.reportFailure(owner, error); receipt = await owner.settled;}
+      owner.resolve(receipt); owner.accept(receipt);
+      if (this.failed === owner) this.failed = null;
+      this.publish({error: null, error_occurrence: null, error_refs: []});
+      return receipt;
+    } finally {owner.held = false; owner.attempting = false;}
+  }
   /** Reserve one command before exposing new documents or running synchronous
    * structural edits. Only actual updates from the declared live documents enter
    * its text segment; asynchronous preparation may add graph intents only. */
-  admitWriting(args: {
-    credit: PageCredit;
-    existing: readonly { document: WritingDocument; origin: unknown; state_vector?: Uint8Array }[];
-    notes: readonly { body: NoteBody; origin: unknown }[];
-    mutate: (created: readonly WritingDocument[]) => void;
-    prepare: (created_refs: readonly string[]) => Promise<readonly Intent[]>;
-  }): { created: readonly WritingDocument[]; result: Promise<LocalCommit> } {
+  admitWriting(args: WritingMutation & {credit: PageCredit}): WritingAdmission {
+    return this.sealWriting(args, () => this.reserve(args.credit));
+  }
+  private sealWriting(args: WritingMutation, reserve: () => FailedCommit): WritingAdmission {
     if (this.retired) throw new Error("Writing account is closed");
     if (this.capture_scope) {
       const error = new Error("Nested compound writing is unavailable");
@@ -218,9 +263,8 @@ export class WritingRuntime {
     const initializers: {ref:string;intent:Extract<Intent,{kind:"create_note"}>;doc:Y.Doc;origin:unknown}[] = [];
     try {
       for (const note of args.notes) {
-        const ref = `note_block:${crypto.randomUUID()}`;
-        const intent = createNoteIntent(ref, note.body);
-        initializers.push({ref,intent,doc:hydrateNote(intent.body_update),origin:note.origin});
+        const intent = "initializer" in note ? note.initializer : createNoteIntent(`note_block:${crypto.randomUUID()}`, note.body);
+        initializers.push({ref:intent.ref,intent,doc:hydrateNote(intent.body_update),origin:note.origin});
       }
     } catch (error) {
       for (const note of initializers) note.doc.destroy();
@@ -236,7 +280,7 @@ export class WritingRuntime {
       for (const note of initializers) note.doc.destroy();
       throw error;
     }
-    const owner = this.reserve(args.credit);
+    const owner = reserve();
     owner.created_refs = initializers.map(note=>note.ref);
     const created: CachedDocument[] = [];
     const preludes: Intent[] = [];
@@ -316,7 +360,7 @@ export class WritingRuntime {
     void settled.catch(() => {});
     let release: () => void = () => {};
     const ready = new Promise<void>(done => { release = done; });
-    const owner: FailedCommit = { occurrence: {}, credit, reject_oversize: false, intent: null, selection: selectStates({}), change: null, prepared: null, store: null, held: false, attempting: false, settled, resolve, reject, result, accept, refuse, retry_failure: null, ready, release, faulted: false, fault: null, created_refs: [], prepare_graph: null };
+    const owner: FailedCommit = { occurrence: {}, credit, reject_oversize: false, intent: null, selection: selectStates({}), baseline: null, change: null, prepared: null, store: null, held: false, attempting: false, settled, resolve, reject, result, accept, refuse, retry_failure: null, ready, release, faulted: false, fault: null, created_refs: [], prepare_graph: null };
     return owner;
   }
   private reserve(credit: PageCredit): FailedCommit {
@@ -386,7 +430,8 @@ export class WritingRuntime {
     if (owner.prepare_graph) await owner.prepare_graph();
     if (owner.intent === null) throw new Error("Writing command is unsealed");
     if (owner.prepared === null) {
-      const { replica, states } = await store.readSnapshot(owner.selection);
+      if (owner.baseline) owner.selection = owner.baseline.selection;
+      const { replica, states } = owner.baseline ?? await store.readSnapshot(owner.selection);
       if (this.retired) throw new Error("Writing account is closed");
       if (states.resources.some(resource=>owner.created_refs.includes(resource.ref))) throw new TypeError("New writing identity already exists");
       if (owner.change === null) {
@@ -395,6 +440,7 @@ export class WritingRuntime {
       }
       const before = commitBefore(owner.change, states, owner.selection);
       owner.prepared = { before, frame: { expected_store_revision: replica.store_revision, replica_id: replica.replica_id, change: owner.change, states: mergeChanges(states, [owner.change]) } };
+      owner.baseline = null;
     }
     const receipt = await this.persist(owner.prepared, store, owner.created_refs, owner.selection);
     // Subscriptions may arrive after the receipt. Install the complete committed

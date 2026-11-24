@@ -1620,9 +1620,14 @@ export class OutlineController {
     const destination = direction === "backward" ? peer : row, source = direction === "backward" ? row : peer;
     if (source.resource?.work) {this.refuse("this note has work records. remove its outline link instead."); return;}
     if (this.hasChildren(source)) {this.refuse("join its children first"); return;}
-    const displayed = {destination: this.captureField(destination), source: this.captureField(source)};
-    const selection = this.pending.join(destination.row_id, source.row_id, this.capture(), displayed);
-    this.changed("semantic"); void this.focus(destination.row_id, selection);
+    const dest = this.binding.captureDisplayed(destination.row_id), src = this.binding.captureDisplayed(source.row_id);
+    if (!dest || !src) {this.refuse("the outline changed; join again"); return;}
+    const lease = this.lease();
+    void this.pending.join(destination.row_id, source.row_id, this.capture(), {destination: dest, source: src},
+      () => this.sameOccurrence(destination) && this.sameOccurrence(source) && !this.hasChildren(this.rows.get(source.row_id)!),
+      reason => {if (this.active) this.refuse(reason);}).then(selection => {
+      if (this.active && selection) {this.changed("semantic"); void this.focus(destination.row_id, selection, lease);}
+    }).catch(error => {if (this.active) {this.error = error; this.notify();}});
   }
   rangeSnapshot(): RangeSnapshot {
     const scope = (row: OutlineRow): string => {
@@ -2486,10 +2491,16 @@ export class OutlineController {
     if (!items.length || !block && items.length === 1 && lines.length === 1) return false;
     event.preventDefault();
     const before = this.capture();
-    if (lines.length === items.length) this.pasteLines(lines, at, block, before);
-    else if (items.every(item => item.ref !== null)) void this.pasteLinks(items, at, block, before).catch(error => {if (this.active) {this.error = error; this.notify();}});
+    const accepted = lines.length === items.length ? this.pasteLines(lines, at, block, before)
+      : items.every(item => item.ref !== null) ? this.pasteLinks(items, at, block, before) : null;
+    if (accepted) void accepted.catch(error => {if (this.active) {this.error = error; this.notify();}});
     else this.refuse("this clipboard content cannot be inserted here");
     return true;
+  }
+  private sameOccurrence(at: OutlineRow): boolean {
+    const row = this.rows.get(at.row_id);
+    return !!row && row.ref === at.ref && row.parent_ref === at.parent_ref && row.parent_id === at.parent_id &&
+      row.link?.link_id === at.link?.link_id && row.seed === at.seed;
   }
   /** Links the clipboard's roots under the destination's parent (descendants travel with their root's link) in one
    * command, after the last selected, above an empty item or at the write row's place. Pairs already here are skipped;
@@ -2507,12 +2518,15 @@ export class OutlineController {
       .filter(link => isVisible(link.add_vv, link.remove_vv)).map(link => link.link_id) : []);
     const fresh = unique.filter((_, index) => bindings[index]!.binding_id === null || !here.has(bindings[index]!.binding_id!));
     if (!this.active) return;
+    if (!this.sameOccurrence(at)) {this.refuse("the outline changed; paste again"); return;}
     const skipped = roots.length - fresh.length;
     if (!fresh.length) {this.refuse(skipped === 1 ? "already here" : `all ${skipped} already here`); return;}
     const first = block ? {after: at.ref, before: null} : {after: null, before: at.seed ? null : at.ref}, rows = fresh.map(() => crypto.randomUUID());
-    const admitted = this.history.createMany({births: fresh.map((ref, index) => index ? {ref, parent: parent_ref, after: index - 1, before: null} : {ref, parent: parent_ref, ...first}),
+    const admitted = await this.history.createMany({births: fresh.map((ref, index) => index ? {ref, parent: parent_ref, after: index - 1, before: null} : {ref, parent: parent_ref, ...first}),
+      current: () => this.sameOccurrence(at), refused: reason => this.refuse(reason),
       parents: [this.writing(parent_ref)], change: {before, after: () => before, placements_after: (_documents, links) => fresh.map((ref, index) => ({row_id: rows[index]!, ref, link: links[index]!,
         placement: {row_id: rows[index]!, ref, parent_id: at.parent_id!, parent_ref, after_id: index ? rows[index - 1]! : block ? at.row_id : null, before_id: !index && !block && !at.seed ? at.row_id : null}}))}}, credit);
+    if (!admitted) return;
     if (at.seed) this.consumeSeed(admitted.committed);
     void Promise.all(admitted.links).then(links => {
       if (!this.active) return;
@@ -2526,7 +2540,7 @@ export class OutlineController {
   }
   /** Births the lines at their indented depths in one command: a committed empty item takes line 1 and the rest follow
    * it, the write row's place takes them all, a selection puts them after its last topmost item. */
-  private pasteLines(lines: readonly Extract<ClipItem, {kind: "note"}>[], at: OutlineRow, block: boolean, before: InputBookmark): void {
+  private async pasteLines(lines: readonly Extract<ClipItem, {kind: "note"}>[], at: OutlineRow, block: boolean, before: InputBookmark): Promise<void> {
     const fill = !block && !at.seed ? this.writing(at.ref!)! : null;
     if (!this.admitNew(lines.length - (fill ? 1 : 0))) return;
     const lease = this.lease();
@@ -2540,13 +2554,15 @@ export class OutlineController {
       const line = lines[index]!, earlier = previous[index]!;
       return {body: line.body, parent: line.parent === null ? at.parent_ref : anchor(line.parent), after: earlier >= 0 ? anchor(earlier) : line.parent === null && block ? at.ref! : null, before: null};
     });
-    const admitted = this.history.createMany({births, parents: [this.writing(at.parent_ref)], ...(fill ? {fill: {document: fill, body: lines[0]!.body}} : {}),
+    const admitted = await this.history.createMany({births, parents: [this.writing(at.parent_ref)], ...(fill ? {fill: {document: fill, body: lines[0]!.body}} : {}),
+      current: () => this.sameOccurrence(at) && (!fill || this.writing(at.ref!) === fill), refused: reason => this.refuse(reason),
       change: {before, after: () => before, placements_after: (documents, links) => born.map(index => {
         const ref = documents[birth(index)]!.ref, parent = lines[index]!.parent, earlier = previous[index]!;
         return {row_id: rows[index]!, ref, link: links[birth(index)]!, placement: {row_id: rows[index]!, ref, parent_id: parentRow(index),
           parent_ref: parent === null ? at.parent_ref : fill && parent === 0 ? at.ref! : documents[birth(parent)]!.ref,
           after_id: earlier >= 0 ? rows[earlier]! : parent === null && block ? at.row_id : null, before_id: null}};
       })}});
+    if (!admitted) return;
     if (at.seed) this.consumeSeed(admitted.committed);
     if (fill) this.publishWriting([fill], admitted.committed);
     for (const index of lines.keys()) if (lines.some(line => line.parent === index)) this.opened.add(rows[index]!);

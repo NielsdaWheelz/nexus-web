@@ -302,13 +302,18 @@ export class OutlinePendingInput {
     }
     this.watch([original.row_id, replacement.row_id], admission, new Map([[replacement.row_id, link]]));
   }
-  join(destination: string, source: string, before: InputBookmark, displayed: {source: DisplayedWriting; destination: DisplayedWriting}): (document: WritingDocument) => FocusSelection {
-    const owner = this.current(), to = this.row(destination), from = this.row(source), a = this.bound.get(destination), b = this.bound.get(source);
-    if (!a?.document || !b?.document) throw new Error("join requires both displayed canonical fields");
-    const admitted = owner.history.join({source: b.document, destination: a.document, displayed,
+  async join(destination: string, source: string, before: InputBookmark, displayed: {source: DisplayedWriting; destination: DisplayedWriting},
+    current: () => boolean, refused: (reason: string) => void): Promise<((document: WritingDocument) => FocusSelection) | null> {
+    const owner = this.current(), to = this.row(destination), from = this.row(source);
+    const a = to.ref ? owner.document(to.ref) : null, b = from.ref ? owner.document(from.ref) : null;
+    if (!a || !b) throw new Error("join requires both displayed canonical fields");
+    const admitted = await owner.history.join({source: b, destination: a, displayed, current: () => this.owner === owner && current(), refused,
       sourceOccurrence: this.placementBookmark(from)!, change: {before, after: this.bookmark(to, "end"), placements_before: [this.placementBookmark(to)!], placements_after: [this.placementBookmark(to, false, source)!]}});
-    this.fields.set(source, {...from, hidden: true});
-    owner.publish([a.document], admitted.committed); this.watch([destination, source], admitted); return admitted.selection;
+    if (!admitted) return null;
+    this.freeze(this.fields.get(destination) ?? to, a);
+    this.freeze({...this.fields.get(source) ?? from, hidden: true}, b);
+    if (this.owner === owner) owner.publish([a], admitted.committed);
+    this.watch([destination, source], admitted); return admitted.selection;
   }
   unlink(row_id: string, refused: (reason: RangeReason) => void): void {
     const selection: InputBookmark = {kind: "blocks", anchor_id: row_id, head_id: row_id, row_ids: [row_id]};
