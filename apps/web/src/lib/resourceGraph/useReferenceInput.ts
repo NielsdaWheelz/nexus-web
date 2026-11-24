@@ -4,7 +4,7 @@
 // freezes identity and placement; only the queue head seals its causal version.
 import { useEffect, useId, useRef } from "react";
 import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
-import { captureLocator } from "@nexus/authored/capture";
+import { capturePassageLocator } from "@nexus/authored/capture";
 import type { NoteBody } from "@nexus/authored/body";
 import type { TextEditBase } from "@/lib/notes/editorTypes";
 
@@ -43,6 +43,37 @@ type State = {
   active: SearchActive;
 };
 
+/** Both the inline @ field and the menu choose from this exact settled collection. */
+export function pickedTarget(target: LinkTargetResult): LinkTarget {
+  if (target.kind === "resource") return {kind: "resource", ref: target.item.ref};
+  return {kind: "passage", candidate_ref: target.candidate_ref, passage_target: target.target,
+    capture: {...target.capture, locator: target.capture.locator === null ? null : capturePassageLocator(target.capture.locator, target.target.owner_ref)}};
+}
+export function useReferenceQuery(input: {
+  raw: string; source: string | null; excludeRef?: string; remoteSource?: string | null; label: string; enabled: boolean; open: boolean;
+  context: string; active: SearchActive; disabled: string | null;
+  setActive(value: SearchActive): void; choose(target: LinkTargetResult): void;
+}) {
+  const listId = `reference-${useId().replaceAll(":", "")}`;
+  const search = useLinkTargets(input.raw, input.source, input.enabled, input.open, input.excludeRef, input.remoteSource);
+  const admitted = input.open && search.querySettled && !search.minimum && search.current;
+  const items = admitted ? search.items : [];
+  const options = items.map(item => ({key: targetKey(item), disabledReason: input.disabled}));
+  const reconciled = reconcileSearchActive({context: input.context, admitted, options,
+    initialKey: options[0]?.key ?? null, active: input.active});
+  const selected = admitted ? reconciled?.key ?? null : null;
+  useEffect(() => {
+    if (input.active !== reconciled) input.setActive(reconciled);
+  }, [input, reconciled]);
+  const accept = (key: string) => {
+    const target = items.find(item => targetKey(item) === key);
+    if (target && input.disabled === null) input.choose(target);
+  };
+  const bindings = useSearchOptions({listId, label: `link from ${input.label}`, open: input.open, options,
+    activeKey: selected, onActiveChange: key => input.setActive({context: input.context, key}), onActivate: accept});
+  return {search: {...search, items}, bindings, selected, acceptSelected() { if (selected !== null) accept(selected); }};
+}
+
 export function useReferenceInput(
   editorKey: string,
   host: ReferenceInputHost | null,
@@ -60,37 +91,19 @@ export function useReferenceInput(
   );
   const state = draft.value;
   const accepting = useRef<State | null>(null);
-  const listId = `reference-${useId().replaceAll(":", "")}`;
   const active = state !== null;
   const hasHost = host !== null;
   const set = draft.set;
-  const sourceRef = state?.host.source_ref ?? null;
-  const search = useLinkTargets(
-    state?.raw ?? "",
-    sourceRef,
-    state !== null,
-    pickerOpen,
-    sourceRef,
-  );
-  const context = JSON.stringify([draft.owner, state?.context, state?.raw]);
-  const admitted = pickerOpen && state !== null && state.row_id === row_id && search.querySettled && !search.minimum && search.current;
-  const options = admitted ? search.items.map(item => ({ key: targetKey(item), disabledReason: state.message })) : [];
-  const reconciled = reconcileSearchActive({ context, admitted, options,
-    initialKey: options[0]?.key ?? null, active: state?.active ?? null });
-  const selected = admitted ? reconciled?.key ?? null : null;
-  useEffect(() => {
-    const value = draft.read();
-    if (value && value === state && value.active !== reconciled) set({ ...value, active: reconciled });
-    // Selection belongs to the reference draft; reconciliation changes no text.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, reconciled]);
-  const bindings = useSearchOptions({ listId, label: `link from ${state?.host.label ?? "editor"}`,
-    open: pickerOpen && state !== null && state.row_id === row_id, options, activeKey: selected,
-    onActiveChange(key) {
+  const query = useReferenceQuery({
+    raw: state?.raw ?? "", source: state?.host.source_ref ?? null, label: state?.host.label ?? "editor",
+    enabled: active, open: pickerOpen && active && state.row_id === row_id,
+    context: JSON.stringify([draft.owner, state?.context, state?.raw]), active: state?.active ?? null,
+    disabled: state?.message ?? null,
+    setActive(next) {
       const value = draft.read();
-      if (value && value === state) set({ ...value, active: { context, key } });
+      if (value && value === state && value.active !== next) set({ ...value, active: next });
     },
-    onActivate(key) { accept(search.items.find(item => targetKey(item) === key)); },
+    choose: accept,
   });
   const activeHost = useRef(host);
   activeHost.current = host;
@@ -106,11 +119,10 @@ export function useReferenceInput(
     if (
       !value ||
       value.row_id !== row_id ||
-      !admitted ||
       value.message !== null ||
       value.raw !== state?.raw ||
       !target ||
-      !search.items.includes(target)
+      !query.search.items.includes(target)
     )
       return;
     if (host === null) return;
@@ -120,10 +132,7 @@ export function useReferenceInput(
       set({ ...value, message: "the link destination changed." });
       return;
     }
-    const selectedTarget =
-      target.kind === "resource"
-        ? { kind: "resource" as const, ref: target.item.ref }
-        : { kind: "passage" as const, candidate_ref: target.candidate_ref, passage_target: target.target, capture: { ...target.capture, locator: target.capture.locator === null ? null : captureLocator(target.capture.locator, target.target.owner_ref) } };
+    const selectedTarget = pickedTarget(target);
     const owner = value.host;
     const settling = owner.replacement !== null ? owner.onSelected(selectedTarget, target.item)
       : host.replacement === null ? host.consume?.(selectedTarget, target.item) ?? null : null;
@@ -147,10 +156,7 @@ export function useReferenceInput(
   return {
     state,
     owner: draft.owner,
-    search: { ...search, items: admitted ? search.items : [] },
-    selected,
-    bindings,
-    acceptSelected() { if (selected !== null) accept(search.items.find(item => targetKey(item) === selected)); },
+    ...query,
     reviewPosition() {
       const value = draft.read();
       const context = host ? referenceContext(host) : null;

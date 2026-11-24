@@ -1,6 +1,7 @@
 "use client";
 
 // Shared row evidence, spoken names, verbs and notices; the phone keeps its two-line body.
+import {itemLinkSource} from "@/lib/resourceGraph/links";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 
 // Row parts: resource bodies, menus, and visible search status.
@@ -202,6 +203,7 @@ export function nexusRowVerbs(
     pair: [...(here ? [] : [verb(false)]), ...(opensImport ? [] : [verb(true)])],
     menu: resourceRef === null && occurrence.length === 0 ? null : {
       title: row.label, subjectKey: `nexus:${row.key}`, resourceRef: resourceRef ?? undefined,
+      linkSource: row.item ? itemLinkSource(row.item) : undefined,
       showSourceSubject: row.item !== undefined && row.item.action_ref !== row.item.ref,
       navigation: { key: row.key, fork: null },
       sections: [{ id: "Occurrence", actions: occurrence }],

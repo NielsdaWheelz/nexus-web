@@ -1,0 +1,224 @@
+{
+  "$comment": "Generated from the serialized SavedReference shape at revision 0347. All serialized keys are required.",
+  "$defs": {
+    "EpubTextOffsetsTargetOut": {
+      "additionalProperties": false,
+      "properties": {
+        "start_offset": {"maximum": 2147483647, "minimum": 0, "type": "integer"},
+        "end_offset": {"maximum": 2147483647, "minimum": 0, "type": "integer"},
+        "kind": {"const": "EpubTextOffsets", "type": "string"},
+        "fragment_id": {"format": "uuid", "type": "string"}
+      },
+      "required": ["start_offset", "end_offset", "kind", "fragment_id"],
+      "type": "object"
+    },
+    "ExcerptBranch": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["p", "div", "span", "section", "article", "header", "footer", "nav", "aside", "main", "h1", "h2", "h3", "h4", "h5", "h6", "strong", "em", "b", "i", "u", "s", "cite", "sup", "sub", "code", "pre", "blockquote", "a", "xref", "ul", "dl", "dt", "dd", "figure", "figcaption", "table", "thead", "tbody", "tfoot", "tr"], "type": "string"},
+        "lang": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "dir": {"anyOf": [{"enum": ["ltr", "rtl", "auto"], "type": "string"}, {"type": "null"}]},
+        "children": {"items": {"oneOf": [{"$ref": "#/$defs/ExcerptText"}, {"$ref": "#/$defs/ExcerptBreak"}, {"$ref": "#/$defs/ExcerptMediaGap"}, {"$ref": "#/$defs/ExcerptBranch"}, {"$ref": "#/$defs/ExcerptOrderedList"}, {"$ref": "#/$defs/ExcerptListItem"}, {"$ref": "#/$defs/ExcerptCell"}]}, "type": "array"}
+      },
+      "required": ["kind", "lang", "dir", "children"],
+      "type": "object"
+    },
+    "ExcerptBreak": {"additionalProperties": false, "properties": {"kind": {"enum": ["br", "hr"], "type": "string"}}, "required": ["kind"], "type": "object"},
+    "ExcerptCell": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["td", "th"], "type": "string"},
+        "lang": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "dir": {"anyOf": [{"enum": ["ltr", "rtl", "auto"], "type": "string"}, {"type": "null"}]},
+        "children": {"items": {"oneOf": [{"$ref": "#/$defs/ExcerptText"}, {"$ref": "#/$defs/ExcerptBreak"}, {"$ref": "#/$defs/ExcerptMediaGap"}, {"$ref": "#/$defs/ExcerptBranch"}, {"$ref": "#/$defs/ExcerptOrderedList"}, {"$ref": "#/$defs/ExcerptListItem"}, {"$ref": "#/$defs/ExcerptCell"}]}, "type": "array"},
+        "col_span": {"type": "integer"},
+        "row_span": {"type": "integer"},
+        "scope": {"anyOf": [{"enum": ["row", "col", "rowgroup", "colgroup"], "type": "string"}, {"type": "null"}]}
+      },
+      "required": ["kind", "lang", "dir", "children", "col_span", "row_span", "scope"],
+      "type": "object"
+    },
+    "ExcerptExtent": {
+      "additionalProperties": false,
+      "properties": {
+        "reading_ref": {"type": "string"},
+        "document_identity": {"type": "string"},
+        "fragment_id": {"type": "string"},
+        "start_offset": {"type": "integer"},
+        "end_offset": {"type": "integer"}
+      },
+      "required": ["reading_ref", "document_identity", "fragment_id", "start_offset", "end_offset"],
+      "type": "object"
+    },
+    "ExcerptListItem": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"const": "li", "type": "string"},
+        "lang": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "dir": {"anyOf": [{"enum": ["ltr", "rtl", "auto"], "type": "string"}, {"type": "null"}]},
+        "children": {"items": {"oneOf": [{"$ref": "#/$defs/ExcerptText"}, {"$ref": "#/$defs/ExcerptBreak"}, {"$ref": "#/$defs/ExcerptMediaGap"}, {"$ref": "#/$defs/ExcerptBranch"}, {"$ref": "#/$defs/ExcerptOrderedList"}, {"$ref": "#/$defs/ExcerptListItem"}, {"$ref": "#/$defs/ExcerptCell"}]}, "type": "array"},
+        "value": {"anyOf": [{"type": "integer"}, {"type": "null"}]}
+      },
+      "required": ["kind", "lang", "dir", "children", "value"],
+      "type": "object"
+    },
+    "ExcerptMediaGap": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"const": "media_gap", "type": "string"},
+        "media_kind": {"enum": ["image", "svg", "embed"], "type": "string"},
+        "flow": {"enum": ["inline", "block"], "type": "string"}
+      },
+      "required": ["kind", "media_kind", "flow"],
+      "type": "object"
+    },
+    "ExcerptOrderedList": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"const": "ol", "type": "string"},
+        "lang": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "dir": {"anyOf": [{"enum": ["ltr", "rtl", "auto"], "type": "string"}, {"type": "null"}]},
+        "children": {"items": {"oneOf": [{"$ref": "#/$defs/ExcerptText"}, {"$ref": "#/$defs/ExcerptBreak"}, {"$ref": "#/$defs/ExcerptMediaGap"}, {"$ref": "#/$defs/ExcerptBranch"}, {"$ref": "#/$defs/ExcerptOrderedList"}, {"$ref": "#/$defs/ExcerptListItem"}, {"$ref": "#/$defs/ExcerptCell"}]}, "type": "array"},
+        "start": {"type": "integer"},
+        "reversed": {"type": "boolean"}
+      },
+      "required": ["kind", "lang", "dir", "children", "start", "reversed"],
+      "type": "object"
+    },
+    "ExcerptPoint": {
+      "additionalProperties": false,
+      "properties": {"path": {"items": {"type": "integer"}, "type": "array"}, "offset": {"type": "integer"}},
+      "required": ["path", "offset"],
+      "type": "object"
+    },
+    "ExcerptRange": {
+      "additionalProperties": false,
+      "properties": {"start": {"$ref": "#/$defs/ExcerptPoint"}, "end": {"$ref": "#/$defs/ExcerptPoint"}},
+      "required": ["start", "end"],
+      "type": "object"
+    },
+    "ExcerptText": {
+      "additionalProperties": false,
+      "properties": {"kind": {"const": "text", "type": "string"}, "text": {"type": "string"}},
+      "required": ["kind", "text"],
+      "type": "object"
+    },
+    "FrozenExcerpt": {
+      "additionalProperties": false,
+      "properties": {
+        "structure": {"enum": ["captured", "unknown", "plain"], "type": "string"},
+        "lang": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "dir": {"anyOf": [{"enum": ["ltr", "rtl"], "type": "string"}, {"type": "null"}]},
+        "content": {"items": {"oneOf": [{"$ref": "#/$defs/ExcerptText"}, {"$ref": "#/$defs/ExcerptBreak"}, {"$ref": "#/$defs/ExcerptMediaGap"}, {"$ref": "#/$defs/ExcerptBranch"}, {"$ref": "#/$defs/ExcerptOrderedList"}, {"$ref": "#/$defs/ExcerptListItem"}, {"$ref": "#/$defs/ExcerptCell"}]}, "type": "array"},
+        "selection": {"$ref": "#/$defs/ExcerptRange"},
+        "source_extent": {"anyOf": [{"$ref": "#/$defs/ExcerptExtent"}, {"type": "null"}]},
+        "truncated_before": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
+        "truncated_after": {"anyOf": [{"type": "boolean"}, {"type": "null"}]}
+      },
+      "required": ["structure", "lang", "dir", "content", "selection", "source_extent", "truncated_before", "truncated_after"],
+      "type": "object"
+    },
+    "HighlightTargetPdfQuadOut": {
+      "additionalProperties": false,
+      "properties": {
+        "x1": {"type": "number"},
+        "y1": {"type": "number"},
+        "x2": {"type": "number"},
+        "y2": {"type": "number"},
+        "x3": {"type": "number"},
+        "y3": {"type": "number"},
+        "x4": {"type": "number"},
+        "y4": {"type": "number"}
+      },
+      "required": ["x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4"],
+      "type": "object"
+    },
+    "PdfPageGeometryTargetOut": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"const": "PdfPageGeometry", "type": "string"},
+        "page_number": {"maximum": 2147483647, "minimum": 1, "type": "integer"},
+        "quads": {"items": {"$ref": "#/$defs/HighlightTargetPdfQuadOut"}, "maxItems": 512, "minItems": 1, "type": "array"}
+      },
+      "required": ["kind", "page_number", "quads"],
+      "type": "object"
+    },
+    "PdfPageTarget": {
+      "additionalProperties": false,
+      "properties": {"kind": {"const": "PdfPage", "type": "string"}, "page_number": {"maximum": 2147483647, "minimum": 1, "type": "integer"}},
+      "required": ["kind", "page_number"],
+      "type": "object"
+    },
+    "ReaderTimeRange": {
+      "additionalProperties": false,
+      "properties": {"start_ms": {"maximum": 9007199254740991, "minimum": 0, "type": "integer"}, "end_ms": {"maximum": 9007199254740991, "minimum": 0, "type": "integer"}},
+      "required": ["start_ms", "end_ms"],
+      "type": "object"
+    },
+    "ReferenceQuote": {
+      "additionalProperties": false,
+      "properties": {
+        "exact": {"minLength": 1, "pattern": "\\S", "type": "string"},
+        "prefix": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "suffix": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "excerpt": {"$ref": "#/$defs/FrozenExcerpt"}
+      },
+      "required": ["exact", "prefix", "suffix", "excerpt"],
+      "type": "object"
+    },
+    "TextOffsetsTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "start_offset": {"maximum": 2147483647, "minimum": 0, "type": "integer"},
+        "end_offset": {"maximum": 2147483647, "minimum": 0, "type": "integer"},
+        "kind": {"const": "TextOffsets", "type": "string"}
+      },
+      "required": ["start_offset", "end_offset", "kind"],
+      "type": "object"
+    },
+    "TimeRangeTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "start_ms": {"maximum": 9007199254740991, "minimum": 0, "type": "integer"},
+        "end_ms": {"maximum": 9007199254740991, "minimum": 0, "type": "integer"},
+        "kind": {"const": "TimeRange", "type": "string"}
+      },
+      "required": ["start_ms", "end_ms", "kind"],
+      "type": "object"
+    },
+    "TranscriptTextOffsetsTargetOut": {
+      "additionalProperties": false,
+      "properties": {
+        "start_offset": {"maximum": 2147483647, "minimum": 0, "type": "integer"},
+        "end_offset": {"maximum": 2147483647, "minimum": 0, "type": "integer"},
+        "kind": {"const": "TranscriptTextOffsets", "type": "string"},
+        "fragment_id": {"format": "uuid", "type": "string"},
+        "time_range": {"anyOf": [{"$ref": "#/$defs/ReaderTimeRange"}, {"type": "null"}]}
+      },
+      "required": ["start_offset", "end_offset", "kind", "fragment_id", "time_range"],
+      "type": "object"
+    },
+    "WebTextOffsetsTargetOut": {
+      "additionalProperties": false,
+      "properties": {
+        "start_offset": {"maximum": 2147483647, "minimum": 0, "type": "integer"},
+        "end_offset": {"maximum": 2147483647, "minimum": 0, "type": "integer"},
+        "kind": {"const": "WebTextOffsets", "type": "string"},
+        "fragment_id": {"format": "uuid", "type": "string"}
+      },
+      "required": ["start_offset", "end_offset", "kind", "fragment_id"],
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "resource_ref": {"type": "string"},
+    "field": {"anyOf": [{"const": "annotation", "type": "string"}, {"type": "null"}]},
+    "locator": {
+      "anyOf": [{"oneOf": [{"$ref": "#/$defs/WebTextOffsetsTargetOut"}, {"$ref": "#/$defs/EpubTextOffsetsTargetOut"}, {"$ref": "#/$defs/TranscriptTextOffsetsTargetOut"}, {"$ref": "#/$defs/PdfPageGeometryTargetOut"}, {"$ref": "#/$defs/PdfPageTarget"}, {"$ref": "#/$defs/TextOffsetsTarget"}, {"$ref": "#/$defs/TimeRangeTarget"}]}, {"type": "null"}]
+    },
+    "quote": {"anyOf": [{"$ref": "#/$defs/ReferenceQuote"}, {"type": "null"}]}
+  },
+  "required": ["resource_ref", "field", "locator", "quote"],
+  "type": "object"
+}

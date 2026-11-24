@@ -7,6 +7,7 @@ import type { Line } from "@/components/feedback/stage";
 import { insertionPositions, type Intent } from "@nexus/authored/commands";
 import { isVisible } from "@nexus/authored/merge";
 import { linkId, sortedEndpoints, normalizeQuote, passageId, passageKey } from "@nexus/authored/identity";
+import type { ResourceItem } from "@/lib/resources/items";
 import type { PassageCapture } from "@nexus/authored/types";
 import type { LinkState } from "@nexus/authored/types";
 import { type WritingRuntime, selectStates } from "@/lib/notes/runtime";
@@ -16,14 +17,31 @@ export type ConnectionOut = Schema<"ConnectionOut">;
 export type ConnectionMutation = NonNullable<ConnectionOut["mutation"]>;
 export type ConnectionCommand = { kind: "unlink"; link_id: string } | { kind: "remove_fact"; edge_id: string };
 export type LinkTarget = { kind: "resource"; ref: string } | { kind: "passage"; candidate_ref: string; passage_target: Schema<"CapturedPassageTarget"> | null; capture: PassageCapture | null };
-export type InsertionSource = LinkTarget | { kind: "daily_page"; local_date: string; page_id: string };
+/** Frozen at menu activation. A native passage without a captured target must
+ * prove the displayed occurrence before its endpoint can be prepared. */
+export interface ItemLinkSource {
+  readonly ref: string;
+  readonly label: string;
+  readonly target?: LinkTarget;
+  readonly passage?: {readonly revision: string | null; readonly readingMediaId: string | null};
+  readonly journalDate?: string;
+}
 export interface Position { after: string | null; before?: string | null; prelude?: readonly Intent[] }
 export interface LinkRequest { source_ref: string; target_ref: string; source_label: string | null; target_label: string | null; after: string | null; before?: string | null; prelude?: readonly Intent[] }
-export function endpointForResource(ref: string): LinkTarget | null {
-  const parsed = parseResourceRef(ref);
-  if (!parsed) return null;
-  const mode = RESOURCE_CAPABILITIES[parsed.scheme].link_mode;
-  return mode === "none" ? null : mode === "direct" ? { kind: "resource", ref } : { kind: "passage", candidate_ref: ref, passage_target: null, capture: null };
+export function directLinkSource(ref: string | null, label: string): ItemLinkSource | null {
+  const parsed = ref === null ? null : parseResourceRef(ref);
+  return ref !== null && parsed && RESOURCE_CAPABILITIES[parsed.scheme].link_mode === "direct"
+    ? {ref, label, target: {kind: "resource", ref}} : null;
+}
+export function itemLinkSource(item: ResourceItem, readingRef: string | null = null): ItemLinkSource | null {
+  if (item.missing) return null;
+  const direct = directLinkSource(item.ref, item.label);
+  if (direct) return direct;
+  const parsed = parseResourceRef(item.ref), body = item.preview.body;
+  if (!parsed || RESOURCE_CAPABILITIES[parsed.scheme].link_mode !== "materialize_passage" || body.kind !== "passage") return null;
+  const reading = readingRef ?? body.reading_ref;
+  return {ref: item.ref, label: item.label, passage: {revision: body.link_revision,
+    readingMediaId: reading?.startsWith("media:") ? reading.slice(6) : null}};
 }
 /** Fetch only the adjacent keys. A collision expands to its observed tie run,
  * never to the endpoint's resource bodies or unrelated relationships. */
@@ -125,7 +143,7 @@ export async function prepareLink(runtime: WritingRuntime, input: LinkRequest, s
     if (!parsed) throw new TypeError("Invalid link endpoint");
     if(parsed.scheme==="passage_anchor")continue;
     const existing=capturedSources.source_stubs.find(source=>source.source_ref===ref);
-    if(existing && label===null)continue;
+    if (existing && (label === null || existing.capture.value.label === label)) continue;
     intents.push({ kind: "capture_source", source_ref: ref, capture: { kind: parsed.scheme, label: label ?? resourceTypeLabel(parsed.scheme), publication: existing?.capture.value.publication??null } });
   }
   return { link_id: id, intents };

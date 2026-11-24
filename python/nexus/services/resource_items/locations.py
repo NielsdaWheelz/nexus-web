@@ -48,7 +48,12 @@ from nexus.services.media_text_scope import (
     text_scope_rows_sql,
     x_capture_scope_rows_sql,
 )
-from nexus.services.reader_excerpts import contains_table, read_captures, scope_excerpts
+from nexus.services.reader_excerpts import (
+    contains_table,
+    plain_excerpt,
+    read_captures,
+    scope_excerpts,
+)
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 
 if TYPE_CHECKING:
@@ -73,6 +78,38 @@ class CurrentPassage:
     owner: ResourceRef
     quote: LocationQuote
     locator: dict[str, Any] | None
+
+
+def canonical_source_quote[Q: LocationQuote](
+    quote: Q, locator: dict[str, Any]
+) -> tuple[Q, dict[str, Any]] | None:
+    """Native text evidence selects literal words, excluding outer source whitespace.
+
+    Canonical block separators have no native text token. Applying this rule before
+    either port runs keeps canonical and rich quotes at the same exact coordinates.
+    Internal whitespace, including poem line breaks, remains untouched.
+    """
+    if locator["type"] not in ("web_text_offsets", "epub_fragment_offsets", "x_capture_offsets"):
+        return quote, locator
+    exact = quote.exact.strip()
+    if not exact:
+        return None
+    before = len(quote.exact) - len(quote.exact.lstrip())
+    after = len(quote.exact.rstrip())
+    prefix = ((quote.prefix or "") + quote.exact[:before])[-64:] or None
+    suffix = (quote.exact[after:] + (quote.suffix or ""))[:64] or None
+    fields: dict[str, Any] = {"exact": exact, "prefix": prefix, "suffix": suffix}
+    if isinstance(quote, CapturedQuote):
+        fields["excerpt"] = plain_excerpt(exact, prefix, suffix)
+    return (
+        quote.model_copy(update=fields),
+        {
+            **locator,
+            "start_offset": locator["start_offset"] + before,
+            "end_offset": locator["start_offset"] + after,
+            "text_quote_selector": {"exact": exact, "prefix": prefix, "suffix": suffix},
+        },
+    )
 
 
 def reading_owner_sql(candidates_sql: str) -> str:
@@ -1205,12 +1242,20 @@ def location_reads(
         if fragment_ids or timed_ids
         else []
     )
+    relocation_ids = [
+        owner.id
+        for owner, target in zip(owners, targets, strict=True)
+        if isinstance(target.locator, (PdfPageGeometryLocator, PdfPageLocator))
+        and (target.source_identity is None or target.source_identity != before.get(owner.id))
+    ]
     pdfs = (
         {
             row.id: row
             for row in db.execute(
-                text("SELECT id, page_count, plain_text FROM media WHERE id = ANY(:ids)"),
-                {"ids": pdf_ids},
+                text(
+                    "SELECT id, page_count, CASE WHEN id=ANY(:relocate) THEN plain_text END AS plain_text FROM media WHERE id = ANY(:ids)"
+                ),
+                {"ids": pdf_ids, "relocate": relocation_ids},
             )
         }
         if pdf_ids
@@ -1454,21 +1499,28 @@ def current_locator(
             return None
         # Historical geometry has no publication proof: a unique current quote can recover
         # its page, never the old boxes.
-        candidates = text_quote.find_quote_candidates(
-            text_quote.normalize_for_match(media.plain_text or ""),
-            exact=_normal(exact),
+        words = media.plain_text or ""
+        normalized = _normal(exact)
+        hit = text_quote.match_quote_in_sources(
+            [
+                text_quote.NormalizedOwnerSource(
+                    None, None, None, text_quote.normalize_for_match(words)
+                )
+            ],
+            exact=normalized,
             prefix=_normal(prefix),
             suffix=_normal(suffix),
         )
-        if len(candidates) != 1:
+        hit = text_quote.project_note_match(words, hit, exact=normalized)
+        start, end = hit.raw_start, hit.raw_end
+        if start is None or end is None:
             return None
-        hit = candidates[0]
         pages = [
             page
             for page in reads.pages
             if page["media_id"] == owner.id
-            and page["start_offset"] <= hit.raw_start < page["end_offset"]
-            and hit.raw_end <= page["end_offset"]
+            and page["start_offset"] <= start < page["end_offset"]
+            and end <= page["end_offset"]
         ]
         if len(pages) != 1:
             return None

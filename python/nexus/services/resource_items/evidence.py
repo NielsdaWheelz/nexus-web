@@ -81,6 +81,7 @@ from nexus.services.resource_items.items import (
 )
 from nexus.services.resource_items.locations import (
     TIMED_KINDS,
+    canonical_source_quote,
     captured_quote,
     current_locator,
     current_passages,
@@ -299,7 +300,7 @@ def capture_reader_selection(
                     suffix=None,
                     color=None,
                 ),
-                source=_reader_source(
+                source=reader_source(
                     db, viewer_id, owner, location_label=f"page {locator.page_number}"
                 ),
                 target=CapturedPassageTarget(
@@ -405,7 +406,7 @@ def capture_reader_selection(
             suffix=capture.suffix,
             color=None,
         ),
-        source=_reader_source(db, viewer_id, owner),
+        source=reader_source(db, viewer_id, owner),
         target=CapturedPassageTarget(
             owner_ref=owner.uri,
             field=None,
@@ -462,7 +463,7 @@ def _passage_reading(
     )
 
 
-def _reader_source(
+def reader_source(
     db: Session, viewer_id: UUID, owner: ResourceRef, *, location_label: str | None = None
 ) -> CapturedSource:
     """Attribution for an already authorized reader; captured fragments need no body."""
@@ -475,27 +476,28 @@ def _reader_source(
             c.payload->>'attribution_text' AS attribution
             FROM fragments f JOIN x_post_captures c ON c.id=f.x_post_capture_id WHERE f.id=:id"""),
             {"id": owner.id},
-        ).one()
-        return CapturedSource(
-            ref=owner.uri,
-            title=None,
-            media_kind=None,
-            contributors=[
-                ContributorCreditOut(
-                    contributor_handle=None,
-                    contributor_display_name=None,
-                    href=None,
-                    credited_name=row.author,
-                    role="author",
-                    raw_role=None,
-                    ordinal=0,
-                )
-            ]
-            if row.kind == "complete_post"
-            else None,
-            attribution_text=row.attribution,
-            location_label=location_label,
-        )
+        ).one_or_none()
+        if row is not None:
+            return CapturedSource(
+                ref=owner.uri,
+                title=None,
+                media_kind=None,
+                contributors=[
+                    ContributorCreditOut(
+                        contributor_handle=None,
+                        contributor_display_name=None,
+                        href=None,
+                        credited_name=row.author,
+                        role="author",
+                        raw_role=None,
+                        ordinal=0,
+                    )
+                ]
+                if row.kind == "complete_post"
+                else None,
+                attribution_text=row.attribution,
+                location_label=location_label,
+            )
     source = source_attributions(db, viewer_id=viewer_id, refs=[owner]).get(owner.uri)
     if source is None:
         raise NotFoundError(ApiErrorCode.E_READER_SELECTION_NOT_FOUND, "Reading not found")
@@ -514,6 +516,7 @@ def capture_prompt_evidence(
     viewer_id: UUID,
     ref: ResourceRef,
     byte_limit: int,
+    use_captured_reading: bool = False,
 ) -> CapturedEvidence:
     """Freeze one explicitly attached passage without discovering or loading its source.
 
@@ -583,7 +586,23 @@ def capture_prompt_evidence(
                 if located is not None
                 else CapturedUnavailableTarget(owner_ref=owner.uri, field=field),
             )
-        return capture_evidence(db, viewer_id=viewer_id, ref=ref)
+        reading = None
+        if use_captured_reading and stored is not None:
+            from nexus.services.resource_graph.refs import (
+                ResourceRefParseFailure,
+                parse_resource_ref,
+            )
+
+            extent = stored["capture"]["value"]["excerpt"].get("source_extent")
+            if extent is not None:
+                captured_reading = parse_resource_ref(extent["reading_ref"])
+                if isinstance(captured_reading, ResourceRefParseFailure):
+                    raise missing
+                if captured_reading.scheme == "media":
+                    if not can_read_media(db, viewer_id, captured_reading.id):
+                        raise missing
+                    reading = captured_reading.id
+        return capture_evidence(db, viewer_id=viewer_id, ref=ref, reading_media_id=reading)
     queries = {
         "content_chunk": "SELECT c.owner_kind,c.owner_id,c.chunk_text AS body,c.summary_locator AS locator,NULL::text AS resolver_kind,NULL::jsonb AS selector,NULL::text AS label FROM content_chunks c WHERE c.id=:id",
         "evidence_span": "SELECT owner_kind,owner_id,span_text AS body,NULL::jsonb AS locator,resolver_kind,selector,citation_label AS label FROM evidence_spans WHERE id=:id",
@@ -708,7 +727,7 @@ def capture_prompt_evidence(
     if scoped_authority and locator is None:
         raise missing
     if owner.scheme in ("media", "fragment"):
-        source = _reader_source(db, viewer_id, owner, location_label=row.label)
+        source = reader_source(db, viewer_id, owner, location_label=row.label)
     else:
         source = CapturedSource(
             ref=owner.uri,
@@ -821,41 +840,6 @@ def _bounded_locator(
     if normalize_for_match(words).text.strip() != normalize_for_match(exact).text.strip():
         return None
     return locator
-
-
-def canonical_source_quote(
-    quote: CapturedQuote, locator: dict[str, Any]
-) -> tuple[CapturedQuote, dict[str, Any]] | None:
-    """Native text evidence selects literal words, excluding outer source whitespace.
-
-    Canonical block separators have no native text token. Applying this rule before
-    either port runs keeps canonical and rich quotes at the same exact coordinates.
-    Internal whitespace, including poem line breaks, remains untouched.
-    """
-    if locator["type"] not in ("web_text_offsets", "epub_fragment_offsets", "x_capture_offsets"):
-        return quote, locator
-    exact = quote.exact.strip()
-    if not exact:
-        return None
-    before = len(quote.exact) - len(quote.exact.lstrip())
-    after = len(quote.exact.rstrip())
-    prefix = ((quote.prefix or "") + quote.exact[:before])[-64:] or None
-    suffix = (quote.exact[after:] + (quote.suffix or ""))[:64] or None
-    return (
-        CapturedQuote(
-            excerpt=plain_excerpt(exact, prefix, suffix),
-            exact=exact,
-            prefix=prefix,
-            suffix=suffix,
-            color=quote.color,
-        ),
-        {
-            **locator,
-            "start_offset": locator["start_offset"] + before,
-            "end_offset": locator["start_offset"] + after,
-            "text_quote_selector": {"exact": exact, "prefix": prefix, "suffix": suffix},
-        },
-    )
 
 
 def read_evidence(
@@ -1112,7 +1096,7 @@ def _stored_reader_evidence(
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source passage not found")
     return admitted.model_copy(
         update={
-            "source": _reader_source(db, viewer_id, require_ref(admitted.target.owner_ref or ""))
+            "source": reader_source(db, viewer_id, require_ref(admitted.target.owner_ref or ""))
         }
     )
 
@@ -1532,7 +1516,7 @@ def _admitted_evidence(
                 target, quote = observation.target, observation.quote
                 attribution = observation.source
             else:
-                attribution = _reader_source(
+                attribution = reader_source(
                     db, viewer_id, assert_resource_ref(evidence.completion_ref)
                 )
             source = original.source.model_dump()
@@ -1612,6 +1596,27 @@ def admit_citation_snapshot(
     return snapshot.model_copy(
         update={"evidence": admit_evidence(db, viewer_id=viewer_id, evidence=snapshot.evidence)}
     )
+
+
+def publisher_prompt_evidence(
+    db: Session, *, viewer_id: UUID, edge_id: UUID, snapshot: dict
+) -> str | None:
+    """One authorized native occurrence contributes its retained words or declared url."""
+    evidence = CitationSnapshot.model_validate(snapshot).evidence
+    if evidence is not None:
+        admission = _admitted_evidence(
+            db, viewer_id=viewer_id, evidence=evidence, project_completion=True
+        )
+        if admission is not None and admission.projected.quote is not None:
+            quote = admission.projected.quote
+            if quote.exact:
+                return (
+                    ("[…] " if quote.excerpt.truncated_before else "")
+                    + quote.exact[:2000]
+                    + (" […]" if len(quote.exact) > 2000 or quote.excerpt.truncated_after else "")
+                )
+    declared = _citation_reference(db, edge_id=edge_id)
+    return declared[0] if declared else None
 
 
 def _citation_reference(db: Session, *, edge_id: UUID) -> tuple[str, str | None] | None:

@@ -7,7 +7,12 @@ import { isCanonicalUuid } from "@/lib/validation";
 import { MAX_WORKSPACE_HREF_LENGTH, parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 export type SourceTargetKey = Schema<"ResolveSourceTargetRequest">["target"];
-export type SourceArrivalTarget = SourceTargetKey
+export type MessageCitationArrival = {
+  readonly kind: "message_citation";
+  readonly message_id: string;
+  readonly edge_id: string;
+};
+export type SourceArrivalTarget = SourceTargetKey | MessageCitationArrival
   | { readonly kind: "reader_destination"; readonly destination: ReaderDestination }
   | { readonly kind: "invalid_destination"; readonly reason: "invalid_reader_destination" | "location_too_long" };
 export type SourceTarget = Schema<"SourceTargetOut">;
@@ -35,9 +40,15 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
       const message = query.get("message");
       const start = query.get("start_offset");
       const end = query.get("end_offset");
-      if (!message || !isCanonicalUuid(message) || query.getAll("message").length !== 1 || url.hash ||
+      if (!message || !isCanonicalUuid(message) || query.getAll("message").length !== 1 ||
           [...query.keys()].some(key => !["message", "start_offset", "end_offset", "via"].includes(key)))
         return { kind: "invalid_destination", reason: "invalid_reader_destination" };
+      if (url.hash) {
+        const edge = /^#citation-source-(.+)$/.exec(url.hash)?.[1];
+        return edge && isCanonicalUuid(edge) && start === null && end === null
+          ? { kind: "message_citation", message_id: message, edge_id: edge }
+          : { kind: "invalid_destination", reason: "invalid_reader_destination" };
+      }
       if (start === null && end === null) return { kind: "resource", field: null, resource_ref: `message:${message}` };
       if (start === null || end === null || query.getAll("start_offset").length !== 1 || query.getAll("end_offset").length !== 1 ||
           !/^(0|[1-9][0-9]*)$/.test(start) || !/^(0|[1-9][0-9]*)$/.test(end) ||
@@ -46,6 +57,7 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
       return { kind: "live_reference", reference: { resource_ref: `message:${message}`, field: null, quote: null,
         locator: { kind: "TextOffsets", start_offset: Number(start), end_offset: Number(end) } } };
     }
+    if (url.hash.startsWith("#citation-source-")) return { kind: "invalid_destination", reason: "invalid_reader_destination" };
   }
   if (query.has("post_revision")) {
     const revision = query.get("post_revision");

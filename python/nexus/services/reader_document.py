@@ -75,6 +75,7 @@ from nexus.services.reader_publication import (
     read_ready_publication_generation,
     ready_publication_rows_sql,
 )
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.transcript_navigation import (
     project_transcript_navigation,
     read_transcript_navigation_source,
@@ -1364,3 +1365,108 @@ def _units(
 
 def _point(point: NavigationTextPointOut) -> ReaderPointOut:
     return ReaderPointOut(unit_id=str(point.fragment_id), offset=point.offset)
+
+
+def ask_fragment_context(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    reading: ResourceRef,
+    fragment_id: UUID,
+    start: int,
+    end: int,
+    exact: str,
+) -> list[tuple[str, str]]:
+    """Read only the words on either side of a proved interval in this reading."""
+    from nexus.services.media_text_scope import passage_scope_rows_sql
+    from nexus.services.resource_items.items import ref_visible
+    from nexus.services.x_source import readable_x_capture_ids_sql
+
+    if reading.scheme not in ("media", "fragment") or not ref_visible(
+        db, viewer_id=viewer_id, ref=reading
+    ):
+        return []
+    if reading.scheme == "media":
+        scopes = passage_scope_rows_sql("SELECT CAST(:reading AS uuid) AS media_id")
+    elif reading.id == fragment_id:
+        scopes = """SELECT id AS fragment_id,0 AS start_offset,char_length(canonical_text) AS end_offset
+            FROM fragments WHERE id=:reading AND x_post_capture_id IS NOT NULL"""
+    else:
+        return []
+    row = db.execute(
+        text(f"""
+        SELECT f.idx,f.t_start_ms,f.t_end_ms,f.x_post_capture_id,
+            substring(f.canonical_text FROM greatest(s.start_offset,:lo-512)+1 FOR least(512,:lo-s.start_offset)) AS before,
+            substring(f.canonical_text FROM :hi+1 FOR least(512,s.end_offset-:hi)) AS after,
+            :lo-s.start_offset>512 AS cut_before,s.end_offset-:hi>512 AS cut_after,
+            char_length(f.canonical_text) AS length
+        FROM ({scopes}) s JOIN fragments f ON f.id=s.fragment_id
+        WHERE f.id=:fragment AND s.start_offset<=:lo AND :hi<=s.end_offset
+          AND substring(f.canonical_text FROM :lo+1 FOR :hi-:lo)=:exact
+          AND (f.x_post_capture_id IS NULL OR f.x_post_capture_id IN ({readable_x_capture_ids_sql()}))
+          AND NOT EXISTS (SELECT 1 FROM media_parts p LEFT JOIN reader_publications rp ON rp.media_id=p.source_media_id
+                          WHERE p.media_id=:reading AND p.source_generation IS DISTINCT FROM rp.generation)
+        ORDER BY s.end_offset-s.start_offset,s.start_offset LIMIT 1
+    """),
+        {
+            "viewer_id": viewer_id,
+            "reading": reading.id,
+            "fragment": fragment_id,
+            "lo": start,
+            "hi": end,
+            "exact": exact,
+        },
+    ).first()
+    if row is None:
+        return []
+    place = f"section {row.idx + 1} · fragment:{fragment_id} · characters {start}–{end}"
+    if row.t_start_ms is not None and row.t_end_ms is not None:
+        place += f" · {row.t_start_ms}–{row.t_end_ms} ms"
+    result = [("location", place)]
+    if row.before:
+        result.append(("before selection", ("[…] " if row.cut_before else "") + row.before))
+    if row.after:
+        result.append(("after selection", row.after + (" […]" if row.cut_after else "")))
+
+    # Document embeds are placed after the source character that carries them.
+    # A quoted post is attached to the end of its primary capture.
+    from nexus.services.resource_graph.citations import citation_source_visible_sql
+    from nexus.services.resource_graph.liveness import edge_live_sql
+    from nexus.services.resource_items.evidence import publisher_prompt_evidence
+
+    rows = db.execute(
+        text(f"""
+        WITH occurrence AS (
+            SELECT citation_id,canonical_end_offset AS point,'media' AS scheme,media_id AS owner
+            FROM document_embeds WHERE media_id=:reading AND fragment_id=:fragment AND citation_id IS NOT NULL
+              AND canonical_end_offset>:lo AND canonical_end_offset<=:hi
+            UNION ALL
+            SELECT citation_id,:length,'fragment',CAST(:fragment AS uuid)
+            FROM x_post_capture_contexts WHERE capture_id=:capture AND citation_id IS NOT NULL
+              AND :hi=:length AND (:direct OR EXISTS (SELECT 1 FROM x_post_media
+                      WHERE media_id=:reading AND capture_id=:capture)
+                  OR EXISTS (SELECT 1 FROM x_thread_posts WHERE thread_media_id=:reading AND capture_id=:capture))
+        )
+        SELECT e.id,e.ordinal,e.snapshot FROM occurrence o JOIN resource_edges e
+            ON e.id=o.citation_id AND e.source_id=o.owner AND e.source_scheme=o.scheme
+        WHERE e.origin='citation' AND e.ordinal IS NOT NULL AND {citation_source_visible_sql("e")}
+            AND {edge_live_sql("e")} ORDER BY o.point,e.ordinal,e.id
+    """),
+        {
+            "viewer_id": viewer_id,
+            "reading": reading.id,
+            "fragment": fragment_id,
+            "capture": row.x_post_capture_id,
+            "lo": start,
+            "hi": end,
+            "length": row.length,
+            "direct": reading.scheme == "fragment",
+        },
+    ).all()
+    for citation in rows:
+        retained = publisher_prompt_evidence(
+            db, viewer_id=viewer_id, edge_id=citation.id, snapshot=citation.snapshot
+        )
+        if retained:
+            result.append((f"publisher citation {citation.ordinal}", retained))
+    return result

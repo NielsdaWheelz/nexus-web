@@ -26,6 +26,7 @@ export function useLinkTargets(
   enabled: boolean,
   active: boolean,
   excludeRef: string | null = sourceRef,
+  remoteSource: string | null = sourceRef,
 ) {
   const host = useOptionalNoteEditorHost();
   const query = raw.slice(1).trim();
@@ -33,10 +34,11 @@ export function useLinkTargets(
   const settledQuery = settled.slice(1).trim();
   const stale = useChangeStamp("Notes", "NoteBodies", "Metadata");
   const admitted = enabled && query.length >= 2;
+  const exclusions = [...new Set([excludeRef, sourceRef].filter((ref): ref is string => ref !== null))];
   const list = usePaneFreeServerList<LinkTargetResult>({
     key:
       admitted && settledQuery.length >= 2 && host?.references !== "local"
-        ? `/resource-items/targets/search?${new URLSearchParams({ q: settledQuery, source_ref: JSON.stringify(sourceRef), exclude_refs: JSON.stringify(excludeRef ? [excludeRef] : []) })}`
+        ? `/resource-items/targets/search?${new URLSearchParams({ q: settledQuery, source_ref: JSON.stringify(remoteSource), exclude_refs: JSON.stringify(exclusions) })}`
         : null,
     stale,
     // The endpoint fixes its page size; no limit parameter is supported.
@@ -54,16 +56,17 @@ export function useLinkTargets(
         signal,
         body: JSON.stringify({
           q: settledQuery,
-          source_ref: sourceRef,
-          exclude_refs: excludeRef ? [excludeRef] : [],
+          reading_media_id: null,
+          source_ref: remoteSource,
+          exclude_refs: exclusions,
           cursor,
         }),
       });
       return { items: data.targets, next_cursor: data.next_cursor };
     },
   });
-  const local = useAuthoredPages(admitted && settledQuery.length >= 2 ? { kind: "search", text: settledQuery, cursor: null, limit: 100, scopes: [{ kind: "all", id: null }], families: null } : null);
-  const localTargets: LinkTargetResult[] = (local.data?.rows ?? []).filter(row => row.resource.ref !== excludeRef && row.resource.kind !== "highlight").map(row => ({ kind: "resource", item: authoredItem(row.resource, row.activation_ref, localResourceHref(row.resource, { activationRef: row.activation_ref })), existing_link_id: null }));
+  const local = useAuthoredPages(admitted && settledQuery.length >= 2 ? { kind: "search", text: settledQuery, link_from: sourceRef, cursor: null, limit: 100, scopes: [{ kind: "all", id: null }], families: null } : null);
+  const localTargets: LinkTargetResult[] = (local.data?.rows ?? []).filter(row => !exclusions.includes(row.resource.ref) && row.resource.kind !== "highlight").map(row => ({ kind: "resource", item: authoredItem(row.resource, row.activation_ref, localResourceHref(row.resource, { activationRef: row.activation_ref })), existing_link_id: row.link?.link_id ?? null }));
   const current = admitted && raw === settled && local.data !== null;
   const remoteTargets = list.current ? list.items.filter(target => !/^(note_block|page|highlight):/u.test(target.item.ref)) : [];
   const seen = new Set<string>();

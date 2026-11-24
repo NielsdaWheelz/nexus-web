@@ -93,6 +93,20 @@ class SavedReference(LiveReference):
         return self
 
 
+class CaptureScope(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    reading_ref: str
+    source_identity: str | None
+
+
+class QuestionAttachment(BaseModel):
+    """Private admission record. Presentation, citations and export use only reference."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    reference: SavedReference
+    capture_scope: CaptureScope | None
+
+
 class SavedResourceTarget(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
