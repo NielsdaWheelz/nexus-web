@@ -992,7 +992,7 @@ export class OutlineController {
     this.notify();
     const version = this.versions.get(parent_id)!;
     const request = this.requests.get(parent_id);
-    let released = false, failed = false, installed = false, topologyChanged = false;
+    let released = false, failed = false, installed = false, retryAdmission = false;
     this.admission = this.admission.then(async () => {
       if (!this.active || this.versions.get(parent_id) !== version || !this.requests.has(parent_id) || !this.navigationValid(parent_id)) return;
       if (this.windows.size && this.view && (this.hasPendingWriting() || !this.handle?.canArrange())) return;
@@ -1005,7 +1005,7 @@ export class OutlineController {
         if (!this.active || !accepted.every(part => this.requests.get(part.id) === part.request && this.versions.get(part.id) === part.version &&
           this.proposals.get(part.id) === part.window && this.compatibleWindow(part.id, part.window) && this.navigationValid(part.id))) return false;
         const actual = this.reachable(new Map([...this.windows, ...selected]));
-        if (actual.size !== next.size || [...actual].some(([id, part]) => next.get(id) !== part)) {topologyChanged = true; return false;}
+        if (actual.size !== next.size || [...actual].some(([id, part]) => next.get(id) !== part)) {retryAdmission = true; return false;}
         return [...this.pending.fields.values()].filter(field => field.relocating).length === placements.length && placements.every(field => {
           const current = this.pending.fields.get(field.row_id);
           if (!current) return false;
@@ -1016,9 +1016,9 @@ export class OutlineController {
         });
       };
       if (!valid()) return;
-      const missingRefs = [...this.refs(next)].filter(ref => !this.documents.has(ref));
+      const missingRefs = new Set([...this.refs(next)].filter(ref => !this.documents.has(ref)));
       const store = await this.runtime.store;
-      const snapshot = await store.readSnapshot({refs: missingRefs, link_ids: [], anchor_ids: [], source_refs: []});
+      const snapshot = await store.readSnapshot({refs: [...missingRefs], link_ids: [], anchor_ids: [], source_refs: []});
       if (!valid() || snapshot.replica.store_revision !== window.data.store_revision) return;
       const keep = this.refs(next), retired = [...this.documents].filter(([ref]) => !keep.has(ref));
       const activeRow = this.selectionRow ? this.rows.get(this.selectionRow) : null;
@@ -1043,6 +1043,8 @@ export class OutlineController {
       try {
         const editable = this.refs(next);
         for (const ref of editable) if (!this.documents.has(ref)) {
+          // A branch can retire a held document while the selected root is being read.
+          if (!missingRefs.has(ref)) {retryAdmission = true; return;}
           const resource = snapshot.states.resources.find(resource => resource.ref === ref);
           const prelude = ref === this.rootRef ? this.prelude : [];
           const document = await (resource && resource.kind !== "highlight"
@@ -1130,7 +1132,7 @@ export class OutlineController {
       this.reservedWindows = null; this.settlingRefs.clear();
       const newer = this.proposals.get(parent_id);
       if (installed && this.active) for (const [id, proposal] of this.proposals) this.resumeAdmission(id, proposal);
-      else if (topologyChanged && !failed && this.active && newer === window && this.versions.get(parent_id) === version) this.resumeAdmission(parent_id, window);
+      else if (retryAdmission && !failed && this.active && newer === window && this.versions.get(parent_id) === version) this.resumeAdmission(parent_id, window);
       else if (newer && newer !== window && this.active && !failed) this.resumeAdmission(parent_id, newer);
       else if (released && !failed && this.active && [...this.refs(this.windows)].some(ref => !this.documents.has(ref))) {
         const current = this.requests.get(parent_id);
