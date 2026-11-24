@@ -1,6 +1,6 @@
 /** One device schema. Canonical JSON and derived columns commit together; projections
  * are never an independent authority. Both hosts require FTS5 and synchronous FULL. */
-import { PAGE_TITLE_SQL, WORK_ACTIVE_HABIT, WORK_CAPTURE_ORDER, WORK_DESIGNATED_HABIT, WORK_OPEN_TASK, WORK_REGISTER_MEMBERSHIP, WORK_HABIT_HISTORY, WORK_TASK_DAY, WORK_TASK_HISTORY } from "./queries.ts";
+import { PAGE_TITLE_SQL, WORK_ACTIVE_HABIT, WORK_CAPTURE_ORDER, WORK_DESIGNATED_HABIT, WORK_OPEN_TASK, WORK_HABIT_HISTORY, WORK_TASK_DAY, WORK_TASK_HISTORY } from "./queries.ts";
 /** Both outboxes read the server's maximum 64 changes in immutable source order;
  * each host then takes the prefix fitting the existing upload byte budget. */
 export const PENDING_CHANGES_SQL = "SELECT change_json,byte_length FROM pending_changes ORDER BY command_seq LIMIT 64";
@@ -40,7 +40,6 @@ export const DEVICE_SCHEMA = [
     token TEXT NOT NULL, rank INTEGER NOT NULL, ref TEXT NOT NULL, group_name TEXT NOT NULL,
     PRIMARY KEY(token,rank), UNIQUE(token,ref)
   ) WITHOUT ROWID`,
-  `CREATE INDEX IF NOT EXISTS resources_work_capture ON resources(${WORK_CAPTURE_ORDER}) WHERE ${WORK_REGISTER_MEMBERSHIP}`,
   `CREATE INDEX IF NOT EXISTS resources_open_tasks ON resources(${WORK_CAPTURE_ORDER}) WHERE ${WORK_OPEN_TASK}`,
   `CREATE INDEX IF NOT EXISTS resources_task_days ON resources(${WORK_TASK_DAY},${WORK_CAPTURE_ORDER}) WHERE ${WORK_TASK_HISTORY}`,
   `CREATE INDEX IF NOT EXISTS resources_designated_habits ON resources(${WORK_CAPTURE_ORDER}) WHERE ${WORK_DESIGNATED_HABIT}`,
