@@ -37,19 +37,21 @@ export function journalOrder(description: Extract<DailyIndexResult, {kind: "desc
   });
   if (start !== count) throw new Error("journal date description has inconsistent extent");
   const byMonth = new Map(months.map(entry => [entry.month, entry]));
-  return {count, observation: JSON.stringify(description.months), dates,
-    dateAt(rank) {
-      if (rank < 0 || rank >= count) return undefined;
-      let low = 0, high = months.length;
-      while (low + 1 < high) {
-        const middle = (low + high) >>> 1;
-        if (months[middle].start <= rank) low = middle; else high = middle;
-      }
-      const {month, start, mask} = months[low];
-      let rest = mask;
-      for (let skip = start; skip < rank; skip++) rest ^= 1 << (31 - Math.clz32(rest));
-      return `${month}-${String(32 - Math.clz32(rest)).padStart(2, "0")}`;
-    },
+  const dateAt = (rank: number) => {
+    if (rank < 0 || rank >= count) return undefined;
+    let low = 0, high = months.length;
+    while (low + 1 < high) {
+      const middle = (low + high) >>> 1;
+      if (months[middle].start <= rank) low = middle; else high = middle;
+    }
+    const {month, start, mask} = months[low];
+    let rest = mask;
+    for (let skip = start; skip < rank; skip++) rest ^= 1 << (31 - Math.clz32(rest));
+    return `${month}-${String(32 - Math.clz32(rest)).padStart(2, "0")}`;
+  };
+  let complete: string[] | null = null;
+  return {count, observation: JSON.stringify(description.months), dateAt,
+    get dates() { return complete ??= Array.from({length: count}, (_, rank) => dateAt(rank)!); },
     rankOf(date) {
       const entry = byMonth.get(date.slice(0, 7));
       const day = Number(date.slice(8));
@@ -197,7 +199,7 @@ export function useJournalWindow(order: JournalOrder, root: RefObject<HTMLDivEle
     }
     measuredObservation.current = order.observation;
     frame.current = { revision: epoch, observation: order.observation ?? undefined, root: root.current, scrollport: port, origin,
-      anchors: order.observation === null ? order.dates : dates,
+      get anchors() { return order.dates; },
       firstVisible,
       position(date) {
         if (indexState === "failed") return { kind: "failed" };

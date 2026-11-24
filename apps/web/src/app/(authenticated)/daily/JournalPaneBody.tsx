@@ -108,8 +108,8 @@ function Journal({ arrival }: { arrival: string }) {
   const presented = useRef(current);
   const before = presented.current;
   const held = motion !== "still" && before.count > 0;
-  const append = motion === "travel" && current.observation === null && before.observation === null &&
-    current.count > before.count && before.dates.every((date, rank) => date === current.dateAt(rank));
+  const append = motion === "travel" && current.count > before.count &&
+    before.dates.every((date, rank) => date === current.dateAt(rank));
   const order = held && !append && (before.observation === null || before.observation !== current.observation) ? before : current;
   useLayoutEffect(() => { presented.current = order; }, [order]);
   const receiving = delivery !== null && ["RevealDailyDate", "AppendNote", "FocusNote", "EditPageTitle"].includes(delivery.entry.kind);
@@ -200,7 +200,7 @@ function Journal({ arrival }: { arrival: string }) {
           const member = byDate.get(local_date);
           const day = member?.recorded ? member : retained.get(local_date)?.day ?? member ?? null;
           const rank = order.rankOf(local_date) ?? -1;
-          const size = !held || rank < 0 ? undefined : (window.tops[rank + 1] ?? window.height) - window.tops[rank];
+          const size = rank < 0 || (!held && day !== null) ? undefined : (window.tops[rank + 1] ?? window.height) - window.tops[rank];
           return <JournalDay key={local_date} localDate={local_date} day={day} arrival={arrival} writing={writing} allowance={allowance} presentationAllowance={presentationAllowance}
             attached={(local_date === arrival || member?.recorded === true) && attached.has(local_date)}
             rank={rank} count={order.count} top={rank < 0 ? 0 : window.tops[rank]} size={size}
@@ -258,7 +258,8 @@ function JournalDay(props: {
     admit(localDate, resolved.error === null ? "pending" : "failed");
     return () => measure(localDate, null);
   }, [ref, value, localDate, measure, admit, resolved.error]);
-  return day === null || value === null ? <article ref={stub} className={styles.day} style={{top: props.top, maxBlockSize: props.size, overflow: props.size === undefined ? undefined : "clip"}} data-journal-date={localDate}
+  return day === null || value === null ? <article ref={stub} className={styles.day} style={{top: props.top, blockSize: day === null ? props.size : undefined, maxBlockSize: props.size,
+      overflow: props.size === undefined ? undefined : "clip"}} data-journal-date={localDate}
     data-last={props.rank >= 0 && props.rank + 1 === props.count || undefined}
     data-pane-return-scope="journal" data-collection-row-id={localDate} data-row-focusable={day === null ? undefined : "true"} tabIndex={day === null ? undefined : 0}
     aria-labelledby={heading} aria-posinset={props.rank + 1} aria-setsize={props.count} onKeyDown={event => {
