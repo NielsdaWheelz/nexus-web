@@ -239,7 +239,10 @@ export default function CollectionView<Row extends CollectionRowView>({
     };
     return <IndexRowWindow window={window} id={row.id}>{renderRow ? renderRow(props) : <CollectionRow {...props} />}</IndexRowWindow>;
   }, [orderedIds, rowControls, rowActionsAvailable, renderRow, recover, window, windowed, layout]);
-  const renderSortableRow = useCallback((row: Row) => renderCollectionRow(row, "div"), [renderCollectionRow]);
+  const renderSortableRow = useCallback((row: CollectionRowView) => {
+    const current = currentById.get(row.id);
+    return current === undefined ? null : renderCollectionRow(current, "div");
+  }, [currentById, renderCollectionRow]);
   usePaneReturnDescendantReady({
     rootRef: returnScopeRef,
     ready,
