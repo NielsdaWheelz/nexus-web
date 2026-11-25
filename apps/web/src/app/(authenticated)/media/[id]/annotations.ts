@@ -85,7 +85,7 @@ function remoteRoots(wire: WireDocumentMap, doc: ReaderDocument | null, mediaId:
     return resolutions.map(resolution => ({ ...root,
       resolution: resolution?.kind === "Resolved" && (doc === null || !rootExtent(resolution, doc))
         ? { kind: "Unavailable" as const, reason: "Unanchorable" as const } : resolution,
-      direct_facts: facts, continuation: null, authored_placement: null, source,
+      direct_facts: facts, source,
     }));
   });
 }

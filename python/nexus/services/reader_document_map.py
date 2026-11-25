@@ -168,7 +168,6 @@ def write_reader_document_map(
             viewer_id=viewer_id,
             media_id=media_id,
             canonical_media_id=source_media_id,
-            reading_identity=f"g{generation}" if generation is not None else identity,
             media_kind=scope.source_format if scope is not None else media_kind,
             embeds=embed_rows,
             highlights=highlights.list_highlights_for_media(
@@ -335,8 +334,6 @@ def get_capture_document_map(
                 anchor=ReaderEvidenceAnchorOut(locator=locator),
                 order_key=f"fragment:{indexes[str(anchor.fragment_id)]:010d}:{anchor.start_offset:010d}",
             ),
-            continuation=None,
-            authored_placement=None,
         )
     for fragment_id in owners:
         endpoint = ResourceRef("fragment", fragment_id)
@@ -356,8 +353,6 @@ def get_capture_document_map(
                     ref=ref,
                     content=ReaderEvidenceResourceOut(item=connection.other),
                     resolution=None,
-                    continuation=None,
-                    authored_placement=None,
                 )
                 roots[key] = root
             if all(fact.edge_id != connection.edge_id for fact in root.direct_facts):

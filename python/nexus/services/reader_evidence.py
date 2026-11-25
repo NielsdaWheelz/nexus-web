@@ -3,10 +3,6 @@
 Native roots use canonical refs; citation occurrences use their edge identities.
 Native owners retain their presentation and placement; graph facts add membership
 metadata, never an incoming relationship.
-Native passage continuation requires nonempty quote text, not a current locator.
-Apparatus producers trim canonical text, so its bounded head preserves emptiness.
-Unanchored continuation uses the group's first fact, while authored placement names
-only an eligible user link and its own predecessor in the complete endpoint order.
 Generic roots use current bounded items and only their own current source target.
 This projection is read-only and never inspects a root's descendants.
 """
@@ -25,9 +21,6 @@ from nexus.errors import NotFoundError
 from nexus.schemas.document_embeds import DocumentEmbedOut
 from nexus.schemas.highlights import FragmentAnchorOut, TypedHighlightOut
 from nexus.schemas.reader_document_map import (
-    Position,
-    ReaderAuthoredPlacementOut,
-    ReaderChildContinuationOut,
     ReaderDirectFactOut,
     ReaderDocumentMapMarkerOut,
     ReaderEvidenceAnchorOut,
@@ -40,11 +33,7 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceRootOut,
     ReaderEvidenceSourceReferenceOut,
     ReaderEvidenceUnavailableOut,
-    ReaderPdfPageLocatorOut,
-    ReaderSiblingContinuationOut,
 )
-from nexus.schemas.resource_evidence import CapturedPassageTarget
-from nexus.schemas.resource_graph import LinkEndpoint, LinkPassageEndpoint, LinkResourceEndpoint
 from nexus.schemas.resource_items import (
     CitationSourceTargetKey,
     LocatedSourceLocationOut,
@@ -53,7 +42,6 @@ from nexus.schemas.resource_items import (
     SourceTargetOut,
     UnavailableSourceLocationOut,
 )
-from nexus.schemas.retrieval import PdfPageLocator
 from nexus.services.reader_apparatus import ReaderApparatusResponse, apparatus_resolution
 from nexus.services.reader_connections import ReaderConnections
 from nexus.services.reader_evidence_markers import build_markers
@@ -64,7 +52,6 @@ from nexus.services.reader_locations import (
     timed_fragment_offset,
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
-from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.evidence import resolve_source_target
 from nexus.services.resource_items.items import (
     excerpt,
@@ -93,7 +80,6 @@ def build_reader_evidence(
     viewer_id: UUID,
     media_id: UUID,
     canonical_media_id: UUID,
-    reading_identity: str,
     media_kind: str,
     embeds: list[DocumentEmbedOut],
     highlights: list[TypedHighlightOut],
@@ -191,19 +177,6 @@ def build_reader_evidence(
                         if isinstance(marker_anchor_id, str) and marker_anchor_id.strip()
                         else None,
                     ),
-                    continuation=(
-                        _child_continuation(
-                            ResourceRef("reader_apparatus_item", item.id),
-                            media_id=media_id,
-                            identity=reading_identity,
-                            resolution=resolution,
-                        )
-                        if (
-                            item.body_text if item.body_text is not None else item.label or ""
-                        ).strip()
-                        else None
-                    ),
-                    authored_placement=None,
                     resolution=resolution,
                 )
                 slot = len(highlight_refs) + source_count
@@ -303,20 +276,11 @@ def build_reader_evidence(
                 is_owner=highlight.is_owner,
             ),
             resolution=resolution,
-            continuation=_child_continuation(
-                assert_resource_ref(ref),
-                media_id=media_id,
-                identity=reading_identity,
-                resolution=resolution,
-            ),
-            authored_placement=None,
         )
 
     roots.update(connected_apparatus)
 
     first_facts: dict[str, int] = {}
-    predecessor: UUID | None = None
-    endpoint = LinkResourceEndpoint(ref=f"media:{media_id}")
     for index, connection in enumerate(connections.items):
         ref = connection.other.ref
         cited = connection.origin == "citation" and connection.ordinal is not None
@@ -343,8 +307,6 @@ def build_reader_evidence(
             root = ReaderEvidenceRootOut(
                 ref=ref,
                 content=ReaderEvidenceResourceOut(item=item),
-                continuation=None,
-                authored_placement=None,
                 resolution=_resource_resolution(
                     target=target,
                     media_id=media_id,
@@ -356,33 +318,7 @@ def build_reader_evidence(
                     fragment_times=fragment_times,
                 ),
             )
-            if not item.missing:
-                root.continuation = (
-                    ReaderSiblingContinuationOut(
-                        source=endpoint,
-                        position=Position(after=connection.edge_id),
-                    )
-                    if root.resolution is None
-                    else _child_continuation(
-                        assert_resource_ref(ref),
-                        media_id=media_id,
-                        identity=reading_identity,
-                        resolution=root.resolution,
-                    )
-                )
             roots[key] = root
-        if (
-            root.resolution is None
-            and root.authored_placement is None
-            and connection.origin == "user"
-            and not connection.other.missing
-            and capability(assert_resource_ref(ref).scheme).link_mode == "direct"
-        ):
-            root.authored_placement = ReaderAuthoredPlacementOut(
-                endpoint=endpoint.ref,
-                link_id=connection.edge_id,
-                position=Position(after=predecessor),
-            )
         if all(fact.edge_id != connection.edge_id for fact in root.direct_facts):
             root.direct_facts.append(
                 ReaderDirectFactOut(
@@ -395,8 +331,6 @@ def build_reader_evidence(
                     else None,
                 )
             )
-
-        predecessor = connection.edge_id
 
     standalone_count = len(packed_roots)
     counts = {"highlights": 0, "citations": standalone_count, "links": 0, "machine_links": 0}
@@ -512,45 +446,6 @@ def _resolved(
         ),
         order_key=order_key_from_locator(ordered_locator, fragment_indexes) or ref,
     )
-
-
-def _child_continuation(
-    ref: ResourceRef,
-    *,
-    media_id: UUID,
-    identity: str,
-    resolution: ReaderEvidenceResolutionOut | None,
-) -> ReaderChildContinuationOut | None:
-    source: LinkEndpoint
-    match capability(ref.scheme).link_mode:
-        case "direct":
-            source = LinkResourceEndpoint(ref=ref.uri)
-        case "materialize_passage":
-            if not isinstance(resolution, ReaderEvidenceResolvedOut):
-                return None
-            locator = resolution.anchor.locator
-            if isinstance(locator, ReaderPdfPageLocatorOut):
-                locator = PdfPageLocator(media_id=locator.media_id, page_number=locator.page_number)
-            precision = (
-                "time"
-                if locator.type in ("transcript_time_range", "audio_time_range", "video_time_range")
-                else "page"
-                if locator.type == "pdf_page"
-                else "exact"
-            )
-            source = LinkPassageEndpoint(
-                candidate_ref=ref.uri,
-                passage_target=CapturedPassageTarget(
-                    field=None,
-                    owner_ref=f"media:{media_id}",
-                    locator=locator,
-                    precision=precision,
-                    source_identity=identity,
-                ),
-            )
-        case "none":
-            return None
-    return ReaderChildContinuationOut(source=source, position=None)
 
 
 def _root_sort_key(

@@ -138,7 +138,14 @@ def build_markers(
     for root in roots:
         if not isinstance(root.resolution, ReaderEvidenceResolvedOut):
             continue
-        locator = locator_json(root.resolution.anchor.locator)
+        anchor = root.resolution.anchor.locator
+        if (
+            isinstance(root.content, ReaderEvidenceSourceReferenceOut)
+            and anchor.type == "epub_fragment_offsets"
+        ):
+            # Mounted EPUB ranges own the source-reference tick and its target.
+            continue
+        locator = locator_json(anchor)
         position = fraction(locator)
         if position is None:
             continue
