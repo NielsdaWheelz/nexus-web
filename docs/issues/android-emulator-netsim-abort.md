@@ -11,3 +11,10 @@ the netsim wifi socket closing. the matching mac crash report
 reproduce with concurrent headless lab emulators on the same mac. resolve
 when ending a neighboring emulator leaves an admitted emulator and its adb
 transport usable through package setup and teardown.
+
+the exact `42656bc7a` epub offline rehearsal reproduced the same crash before
+app setup at 20:42:37 pst on 2026-11-24. the crash report is
+`qemu-system-aarch64-headless-2026-11-24-204243.ips` (pid 22579). adb then
+reported `emulator-5554` absent during both uptime polling and cleanup. the
+lab removed its owned backend runtime. private evidence is
+`integration-current-main/android-offline-42656bc7/` in the epub state directory.

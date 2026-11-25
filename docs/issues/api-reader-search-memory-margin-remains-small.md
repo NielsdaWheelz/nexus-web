@@ -206,3 +206,18 @@ and lexical search returned exact results, with 1,277 cumulative limit events,
 startup, map, reader and copy under the same cold profile and warm repeat.
 private evidence is
 `completion-implementation/full-note-capacity/e4bf4f72-capacity/full-note-capacity.json`.
+
+2026-11-24 native update. `42656bc7a` completed the verified reader, copy,
+search and citation workflow at 384 mib. at 352 mib the first lexical search
+timed out starting node, then linux killed the api during the montaigne
+browser journey. the exact lean `8e22d112` pair completed the same workload
+at 448 and 416 mib with zero oom, restarts or swap and at least 3,258,265,600
+host bytes available in verified api and worker overlap. the scoped reserve
+is proved. the remaining qualification is latency.
+
+alter's lean 15,185,737-byte map took 7.730–9.114 s against 6 s. the two 448
+map calls consumed about 7 s of api and postgres cpu apiece, with under 30 ms
+of api memory stalls. raising the memory limit did not accelerate the original
+25,685,462-byte map. the copy took about 10–12 s with 31 asset reads over a wan
+relay. benchmark copy timing against production-like object-store latency.
+private native results are in `epub-native-20261124/lean448/` and `lean416/`.

@@ -1,6 +1,7 @@
 # epub structure release and norton repair
 
-status: qualification open on the integrated native amd64 build.
+status: `8e22d112` proved the 448 mib memory reserve on native amd64.
+cutover remains held on response times.
 
 - pair backend, web, firefox and android on wire 26. the full-note item now
   carries its source, action and passage-link proof directly. review any other
@@ -62,8 +63,8 @@ text published. the excess member and overlong grapheme both refused atomically.
 private evidence is `completion-implementation/final-warm-worker-8a63f90a/`
 and `completion-implementation/final-warm-alter-first-8a63f90a/`.
 
-[hosted api reserve](api-reader-search-memory-margin-remains-small.md)
-still holds release. at `e4bf4f720fdc`, alter's first full-note request added
+the [earlier api rehearsal](api-reader-search-memory-margin-remains-small.md)
+at `e4bf4f720fdc` found that alter's first full-note request added
 no process, file charge or memory peak. with 113,094,656 file bytes already
 charged at service readiness, the map and reader exceeded the reserve ceiling
 before that request, and the reading copy reached the 384 mib cap. the warm
@@ -89,6 +90,65 @@ firefox and stock android each rendered the complete body once and preserved
 the saved reading place. source and action identities match the preceding
 implementation. private evidence is `completion-implementation/full-note-acceptance/`
 and `completion-implementation/lab-norton-android-hosted-companion-e4bf4f72/`.
+
+the integrated runtime is `42656bc7a` atop main `5a1ca39e2`. its direct
+predecessor `1ba95fbf2` matches all 9,878 audited cases in each of fresh and
+retained replay. all 434 readable originals match the verified baseline's
+logical graph and navigation. the remaining original is an empty source.
+compare fresh navigation by source coordinates and graph relationships, with
+newly generated heading and numbered ids resolved to their own edition's rows.
+
+on the integrated build the restored norton repair kept 1,400 notes and 266
+sections and published 1,455 notes. chromium and firefox opened the full note
+and held the saved position. stock android verified the companion at `1ba95fbf2`
+and the authored `rfn_81` jump and return at `42656bc7a`, preserving the
+separately saved `rfn_9` position through both native taps. the existing and
+reacquired offline copies on `42656bc7a` preserved the same reader digest,
+generation, saved position and authored jumps while disconnected. stock
+android repeated the ordinary jump and return on `8e22d112`.
+
+alter hit the 180 s parse clock on native amd64. the 300 s clock in `42656bc7a`
+let the same original publish 1,033 fragments at a 359,694,336-byte observed
+worker peak. both bibles passed one-shot preview, apply and replay at 384 mib
+with `1ba95fbf2` on macbook. the smallest observed repair reserve
+was 58,245,120 bytes. the exact `42656bc7a` native 384 mib alter preview
+also passed with a 297,631,744-byte peak in 273.408 s. it preserved the source
+pin and complete logical navigation and registered zero kills or restarts.
+evidence is in the private integration, android and native rehearsal directories.
+
+native serving trials on `42656bc7a` exercised alter's cold and warm maps,
+reader, full note and signed copies, real search overlapping a publishing
+worker, and montaigne citation navigation with a preserved reading cursor.
+
+| cap (mib) | raw peak (bytes) | full memory stalls (µs) | outcome |
+| --- | ---: | ---: | --- |
+| 384 | 402,685,952 | 1,828,849 | exact results, zero kills or restarts, latency missed |
+| 352 | 369,922,048 | 4,690,130 | last live sample before api oom kill |
+| 448 | 449,208,320 | 5,490,811 | exact results, zero kills or restarts, latency missed |
+| 416 | 436,207,616 | 1,185,220 | exact results, zero kills or restarts, latency missed |
+
+at 448 and 416 the host had at least 2,801,864,704 bytes available with the
+native api and worker active. the completed 416 run proves a 32 mib cushion
+at 448. the three successful profiles preserved matching reader, note, map,
+search, archive-reader and cursor digests. the larger limit left alter's
+server map around 11–13 s. the paired candidate `8e22d112` chooses 448 mib
+and removes 10,499,725 duplicate or unused map bytes. the exact native pair
+used external test storage, as production uses external object storage.
+
+| final cap (mib) | raw peak (bytes) | full memory stalls (µs) | outcome |
+| --- | ---: | ---: | --- |
+| 448 | 448,749,568 | 830,686 | exact results, zero kills or restarts |
+| 416 | 436,207,616 | 754,490 | exact results, zero kills or restarts |
+
+both final runs used zero swap. at least 3,258,265,600 bytes were available on
+the host during proven api, search and worker overlap. the final pair matched
+reader, map, complete note, archive-reader, search and saved-cursor digests.
+montaigne's three actual citation jumps and returns passed at each cap using a
+recreated settled chat. alter's map took 7.730–9.114 s against the 6 s timing
+target. reader, note and some lexical timings also missed the trial targets.
+the archive took 9.859–12.480 s over the lab's wan object store. production r2
+copy timing remains unmeasured. hold cutover until response times qualify.
+private summaries and raw receipts are in `epub-native-20261124/`.
 
 the read-only installed inventory binds media id, source digest and generation
 for 237 mounted publications. exact directed-edge comparison proves gaps in 21,

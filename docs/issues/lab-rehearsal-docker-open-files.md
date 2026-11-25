@@ -24,3 +24,10 @@ open paths after owned compose/auth teardown. resolved when the owned
 runtime and detached checkout both retire under the existing mount and
 open-file checks while other workloads continue. the open handles do
 not establish a docker ownership leak or a virtualization crash.
+
+the epub integration's hosted map and android rehearsals also reproduced the
+open handles under pid `10140` after their application checks and owned runtime
+teardown succeeded. artifacts were reopened and hashed outside scratch. see
+`integration-current-main/map-mounted-8664604a/cleanup-recheck.json` and
+`integration-current-main/android-hosted-1ba95fbf/exact-android.sha256` in the
+private epub state directory.
