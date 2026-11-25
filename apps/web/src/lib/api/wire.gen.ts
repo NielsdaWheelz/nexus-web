@@ -11331,6 +11331,19 @@ export interface components {
             /** Resolution */
             resolution: (components["schemas"]["ReaderEvidenceResolvedOut"] | components["schemas"]["ReaderEvidenceUnavailableOut"]) | null;
         };
+        /** ReaderEvidenceSourceItemOut */
+        ReaderEvidenceSourceItemOut: {
+            /** Action Ref */
+            action_ref: string;
+            activation: components["schemas"]["ResourceActivationOut"];
+            /** Label */
+            label: string;
+            /** Link Revision */
+            link_revision: string | null;
+            /** Ref */
+            ref: string;
+            source: components["schemas"]["SourceAttributionOut"] | null;
+        };
         /**
          * ReaderEvidenceSourceReferenceOut
          * @description A visible owner preview; its publication attribution is shared by Evidence.
@@ -11377,7 +11390,7 @@ export interface components {
             apparatus_kind: "footnote_ref" | "endnote_ref" | "bibliography_ref" | "sidenote_ref" | "margin_note_ref" | "footnote" | "endnote" | "bibliography_entry" | "sidenote" | "margin_note" | "reference_section";
             /** Content */
             content: components["schemas"]["ReaderSourceHtmlOut"] | components["schemas"]["ReaderSourceTextOut"] | components["schemas"]["ReaderSourceUnavailableOut"];
-            item: components["schemas"]["ResourceItemOut"];
+            item: components["schemas"]["ReaderEvidenceSourceItemOut"];
             /** Resolution */
             resolution: components["schemas"]["ReaderEvidenceResolvedOut"] | components["schemas"]["ReaderEvidenceUnavailableOut"];
             /** Stable Key */

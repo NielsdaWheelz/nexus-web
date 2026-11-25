@@ -9,22 +9,30 @@ breached budget `ResourceLimitError` with its dimension; anything else is the qu
 
 from __future__ import annotations
 
+import gzip
 import json
 import math
 import posixpath
 import re
 import sqlite3
+import sys
 import time
 import unicodedata
 import zipfile
-from collections.abc import Callable, Iterator, Sequence
+import zlib
+from collections import Counter
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from contextlib import closing
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import cache
 from html.entities import name2codepoint
+from itertools import batched, groupby, pairwise
+from operator import itemgetter
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import BinaryIO, Literal, cast
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 from uuid import UUID, uuid5
 from xml.etree import ElementTree as ET
 
@@ -33,7 +41,8 @@ from defusedxml.common import DefusedXmlException, DTDForbidden
 from defusedxml.ElementTree import DefusedXMLParser
 from lxml.etree import LxmlError
 from lxml.html import Element, HtmlElement
-from sqlalchemy import delete
+from psycopg import Binary
+from sqlalchemy import delete, text
 from sqlalchemy.orm import Session
 
 from nexus import web_paths
@@ -42,7 +51,6 @@ from nexus.db.models import (
     EpubNavLocation,
     EpubResource,
     EpubTocNode,
-    Fragment,
     Media,
 )
 from nexus.errors import ApiError, ApiErrorCode, ResourceLimitError
@@ -55,7 +63,6 @@ from nexus.schemas.source_issues import (
     MAX_SOURCE_ISSUES,
     MissingImage,
     SourceIssue,
-    TooManyNotes,
     UnresolvedNavigationTarget,
     source_issues_payload,
 )
@@ -81,15 +88,13 @@ from nexus.services.epub_structure import (
     build_epub_structure,
     recognize_epub_contents,
 )
-from nexus.services.fragment_blocks import (
-    FragmentBlockSpec,
-    insert_fragment_blocks,
-    parse_fragment_blocks,
-)
+from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.fragment_tables import insert_fragment_tables
 from nexus.services.html_apparatus import (
     HtmlApparatusEntryOpener,
     HtmlNoteBlockSignature,
+    HtmlNotePeerKey,
+    HtmlParagraphMarker,
     HtmlParagraphNoteEvidence,
     accepted_apparatus_spans,
     attach_fragment_locators,
@@ -97,23 +102,32 @@ from nexus.services.html_apparatus import (
     collect_html_apparatus_candidate_backlinks,
     collect_html_apparatus_marker_backlinks,
     collect_html_apparatus_note_window_evidence,
+    collect_html_apparatus_source_positions,
     collect_html_apparatus_targets,
     confirm_html_apparatus_target_refs,
     derive_fragment_note_groups,
     extract_html_apparatus,
+    html_apparatus_ref,
+    html_has_independent_apparatus_opening,
+    html_paragraph_note_page_shape,
     incomplete_epub_paragraph_note_keys,
+    normalize_html_rearnote_collections,
     prepare_apparatus_bodies,
     prune_epub_paragraph_note_stamps,
+    split_html_apparatus_ref,
 )
 from nexus.services.html_tree import inner_html, parse_html_document
 from nexus.services.image_placeholder import replace_image_with_placeholder
 from nexus.services.parser_temp import (
     StorageObjectIntegrityError,
-    parser_attempt_directory,
+    nested_utf8_byte_length,
     stream_storage_object_to_file,
     utf8_byte_length,
 )
-from nexus.services.reader_apparatus import note_regions_from_publication, replace_media_apparatus
+from nexus.services.reader_apparatus import (
+    iter_publication_note_regions,
+    replace_media_apparatus,
+)
 from nexus.services.reader_publication import (
     read_publication_source_issues,
     replace_source_issues,
@@ -139,15 +153,17 @@ logger = get_logger(__name__)
 
 EPUB_RENDERED_TEXT_MAX_BYTES = 64 * 1024 * 1024
 EPUB_XHTML_MAX_DECODED_BYTES = 16 * 1024 * 1024
-EPUB_APPARATUS_MAX_TARGETS = 10_000
-EPUB_APPARATUS_MAX_BACKLINKS = 10_000
-EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES = 8 * 1024 * 1024
+EPUB_APPARATUS_MAX_TARGETS = 16_000
+EPUB_APPARATUS_MAX_BACKLINKS = 24_000
+EPUB_APPARATUS_MAX_EVIDENCE_UTF8_BYTES = 8 * 1024 * 1024
+EPUB_APPARATUS_MAX_TARGET_UTF8_BYTES = 32 * 1024 * 1024
 EPUB_APPARATUS_MAX_CANDIDATE_INDEX_PAGES = 16_384
+EPUB_APPARATUS_PLAN_MAX_BYTES = 64 * 1024 * 1024
 _ARCHIVE_MAX_ENTRIES = 10_000
 _ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 _ARCHIVE_MAX_ENTRY_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
 _ARCHIVE_MAX_COMPRESSION_RATIO = 100
-_ARCHIVE_MAX_PARSE_MS = 30_000
+_ARCHIVE_MAX_PARSE_MS = 180_000
 
 _XHTML_DECODED_BYTES_MESSAGE = "EPUB XHTML decoded bytes exceed the 16 MiB per-entry limit"
 
@@ -261,16 +277,41 @@ class _PlannedFragment:
     id: UUID
     idx: int
     href: str
-    html_sanitized: str
+    html_path: Path
     canonical_text: str
-    blocks: list[FragmentBlockSpec]
     tables: tuple[CanonicalTable, ...]
-    apparatus_edges: list[dict[str, object]]
+
+
+@dataclass(frozen=True)
+class _ApparatusPlan:
+    """Repeatable rows owned by the parser attempt directory."""
+
+    item_path: Path
+    edge_path: Path
+    excluded: frozenset[str] = frozenset()
+
+    def items(self) -> Iterator[dict[str, object]]:
+        return self._rows(self.item_path, ("stable_key",))
+
+    def edges(self) -> Iterator[dict[str, object]]:
+        return self._rows(self.edge_path, ("from_stable_key", "to_stable_key"))
+
+    def _rows(self, path: Path, keys: tuple[str, ...]) -> Iterator[dict[str, object]]:
+        with gzip.open(path, "rb") as source:
+            for line in source:
+                row: dict[str, object] = json.loads(
+                    line,
+                    object_pairs_hook=lambda pairs: {
+                        sys.intern(key): value for key, value in pairs
+                    },
+                )
+                if all(row[key] not in self.excluded for key in keys):
+                    yield row
 
 
 @dataclass(frozen=True)
 class EpubPlan:
-    """Every row one publication installs, prepared outside any transaction."""
+    """Every row one publication installs, valid within the parser attempt scope."""
 
     storage_path: str
     created_at: datetime
@@ -278,7 +319,7 @@ class EpubPlan:
     fragments: tuple[_PlannedFragment, ...]
     toc_nodes: tuple[EpubStructureTocNode, ...]
     sections: tuple[EpubStructureSection, ...]
-    apparatus_items: tuple[dict[str, object], ...]
+    apparatus: _ApparatusPlan
     note_groups: tuple[NotesGroup, ...]
     assets: tuple[_WrittenAsset, ...]
     source_issues: tuple[SourceIssue, ...]
@@ -345,6 +386,8 @@ def _source_contents(
     media_id: UUID,
     toc: Sequence[EpubStructureTocNode],
     within_budget: Callable[[], None],
+    *,
+    opf_path: str,
 ) -> EpubContents:
     def documents() -> Iterator[tuple[str, str]]:
         for href in href_to_idx:
@@ -356,12 +399,19 @@ def _source_contents(
                 source = _decode_epub_text(zf.read(info))
             except _ZIP_ENTRY_READ_ERRORS as exc:
                 raise ApiError(
-                    ApiErrorCode.E_SOURCE_NOT_READABLE, "EPUB spine entry is missing or unreadable"
+                    ApiErrorCode.E_SOURCE_NOT_READABLE,
+                    "EPUB spine entry is missing or unreadable",
                 ) from exc
             yield href, source
 
+    original_spine = [
+        item.href if (item := manifest.get(row.get("idref", ""))) is not None else None
+        for row in opf.findall(".//opf:spine/opf:itemref", _NS)
+    ]
+    occurrences = Counter(original_spine)
     return recognize_epub_contents(
         media_id=media_id,
+        book_title=opf.findtext("opf:metadata/dc:title", "", _NS) or "",
         documents=documents(),
         toc_nodes=toc,
         package_navigation_hrefs={
@@ -370,6 +420,21 @@ def _source_contents(
             if "nav" in item.get("properties", "").split()
             and (item_id := item.get("id")) in manifest
         },
+        declared_contents_hrefs={
+            target
+            for reference in opf.findall(".//opf:guide/opf:reference", _NS)
+            if reference.get("type", "").strip() == "toc"
+            and (target := _resolve_nav_target(reference.get("href"), opf_path, href_to_idx)[0])
+            is not None
+        },
+        spine_positions={
+            href: index
+            for index, href in enumerate(original_spine)
+            if href is not None and occurrences[href] == 1
+        },
+        last_spine_member=(
+            original_spine[-1] if original_spine and occurrences[original_spine[-1]] == 1 else None
+        ),
         resolve_href=lambda base, href: _resolve_nav_target(href, base, href_to_idx)[0],
     )
 
@@ -380,7 +445,7 @@ def _plan_navigation(
     fragments: Sequence[EpubStructureFragment],
     toc: list[EpubStructureTocNode],
     contents: EpubContents,
-    note_regions: Sequence[NoteRegion],
+    note_regions: Iterable[NoteRegion],
 ) -> EpubNavigationPlan:
     try:
         detected = build_epub_structure(
@@ -408,7 +473,7 @@ def derive_epub_navigation(
     epub_path: Path,
     media_id: UUID,
     fragments: Sequence[RetainedEpubFragment],
-    note_regions: Sequence[NoteRegion],
+    note_regions: Iterable[NoteRegion],
 ) -> EpubNavigationPlan:
     """rebuild navigation from verified package bytes and unchanged retained text.
 
@@ -435,7 +500,16 @@ def derive_epub_navigation(
         manifest = _parse_manifest(opf, posixpath.dirname(opf_path))
         href_to_idx = {fragment.package_href: fragment.fragment_idx for fragment in fragments}
         toc = _optional_toc(zf, opf, manifest, href_to_idx, media_id, opf_path)
-        contents = _source_contents(zf, opf, manifest, href_to_idx, media_id, toc, within_budget)
+        contents = _source_contents(
+            zf,
+            opf,
+            manifest,
+            href_to_idx,
+            media_id,
+            toc,
+            within_budget,
+            opf_path=opf_path,
+        )
         retained: list[EpubStructureFragment] = []
         rendered_bytes = 0
         for fragment in fragments:
@@ -510,7 +584,6 @@ def replace_epub_navigation_projection(
     media_id: UUID,
     generation: int,
     plan: EpubNavigationPlan,
-    apparatus_issues: tuple[TooManyNotes, ...] | None = None,
 ) -> None:
     """replace only navigation under the caller's family/publication and exact claim fence.
 
@@ -524,14 +597,8 @@ def replace_epub_navigation_projection(
     replace_source_issues(
         db,
         media_id=media_id,
-        issues=tuple(
-            issue
-            for issue in issues
-            if not isinstance(issue, UnresolvedNavigationTarget)
-            and (apparatus_issues is None or not isinstance(issue, TooManyNotes))
-        )
-        + plan.navigation_issues
-        + (apparatus_issues or ()),
+        issues=tuple(issue for issue in issues if not isinstance(issue, UnresolvedNavigationTarget))
+        + plan.navigation_issues,
     )
 
 
@@ -542,44 +609,44 @@ def prepare_epub_source(
     storage_path: str,
     source_size_bytes: int,
     expected_source_sha256: str,
+    attempt_directory: Path,
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
 ) -> EpubPlan:
     """Materialize and parse one immutable EPUB, then write its images; no transaction."""
     storage_client = get_storage_client()
-    with parser_attempt_directory(attempt_id) as attempt_directory:
-        epub_path = attempt_directory / "source.epub"
+    epub_path = attempt_directory / "source.epub"
+    try:
+        stream_storage_object_to_file(
+            storage_client,
+            storage_path=storage_path,
+            destination=epub_path,
+            expected_size_bytes=source_size_bytes,
+            expected_source_sha256=expected_source_sha256,
+        )
+    except StorageObjectIntegrityError as exc:
+        raise ApiError(
+            ApiErrorCode.E_SOURCE_INTEGRITY,
+            "Stored EPUB bytes do not match the immutable source identity",
+        ) from exc
+    try:
+        zf = zipfile.ZipFile(epub_path)
+    except zipfile.BadZipFile as exc:
+        raise ApiError(ApiErrorCode.E_INVALID_FILE_TYPE, f"Invalid ZIP: {exc}") from exc
+    with zf:
         try:
-            stream_storage_object_to_file(
-                storage_client,
+            plan = _parse(
+                zf,
+                media_id=media_id,
+                attempt_id=attempt_id,
                 storage_path=storage_path,
-                destination=epub_path,
-                expected_size_bytes=source_size_bytes,
-                expected_source_sha256=expected_source_sha256,
+                storage_client=storage_client,
+                record_progress=record_progress,
+                attempt_directory=attempt_directory,
             )
-        except StorageObjectIntegrityError as exc:
-            raise ApiError(
-                ApiErrorCode.E_SOURCE_INTEGRITY,
-                "Stored EPUB bytes do not match the immutable source identity",
-            ) from exc
-        try:
-            zf = zipfile.ZipFile(epub_path)
-        except zipfile.BadZipFile as exc:
-            raise ApiError(ApiErrorCode.E_INVALID_FILE_TYPE, f"Invalid ZIP: {exc}") from exc
-        with zf:
-            try:
-                return _parse(
-                    zf,
-                    media_id=media_id,
-                    attempt_id=attempt_id,
-                    storage_path=storage_path,
-                    storage_client=storage_client,
-                    record_progress=record_progress,
-                    attempt_directory=attempt_directory,
-                )
-            except _InvalidEpub as exc:
-                raise ApiError(
-                    ApiErrorCode.E_INVALID_FILE_TYPE, f"Extraction failed: {exc}"
-                ) from exc
+        except _InvalidEpub as exc:
+            raise ApiError(ApiErrorCode.E_INVALID_FILE_TYPE, f"Extraction failed: {exc}") from exc
+    epub_path.unlink()
+    return plan
 
 
 def derive_retained_epub_apparatus(
@@ -654,252 +721,236 @@ def _parse(
     )
     if not staged:
         raise ApiError(
-            ApiErrorCode.E_SOURCE_NOT_READABLE, "Zero renderable XHTML spine items after extraction"
+            ApiErrorCode.E_SOURCE_NOT_READABLE,
+            "Zero renderable XHTML spine items after extraction",
         )
     staged_hrefs = {chapter.href: idx for idx, (chapter, _, _) in enumerate(staged)}
     toc_nodes = _optional_toc(zf, opf, manifest, staged_hrefs, media_id, opf_path)
-    contents = _source_contents(zf, opf, manifest, staged_hrefs, media_id, toc_nodes, within_budget)
-    external_targets = _index_epub_apparatus(
-        staged,
-        division_starts=contents.division_starts,
-        staging_directory=attempt_directory,
-        within_budget=within_budget,
+    contents = _source_contents(
+        zf,
+        opf,
+        manifest,
+        staged_hrefs,
+        media_id,
+        toc_nodes,
+        within_budget,
+        opf_path=opf_path,
     )
-    confirmed_target_refs: set[str] = set()
-    for chapter, html_path, _missing_refs in staged:
-        within_budget()
-        confirmed_target_refs.update(
-            confirm_html_apparatus_target_refs(
-                html_path.read_text(encoding="utf-8"),
-                document_href=chapter.href,
-                external_targets=external_targets,
-            )
-        )
-    external_targets = {
-        key: target
-        for key, target in external_targets.items()
-        if target["extraction_method"] not in ("html_note_boundary", "html_paragraph_note")
-        or key in confirmed_target_refs
-    }
-    chapter_total = len(staged)
-    record_progress(0, chapter_total, "Chapter")
-
-    sanitized: list[
-        tuple[
-            _ChapterSpec,
-            str,
-            list[dict[str, object]],
-            list[dict[str, object]],
-            list[_MissingImageRef],
-        ]
-    ] = []
+    created_at = datetime.now(UTC)
+    fragments: list[_PlannedFragment] = []
+    chapters: list[_ChapterSpec] = []
+    structure_fragments: list[EpubStructureFragment] = []
+    apparatus = _ApparatusPlan(
+        attempt_directory / "apparatus-items.jsonl.gz",
+        attempt_directory / "apparatus-edges.jsonl.gz",
+    )
+    apparatus_bytes = 0
+    fragment_groups: list[list[NotesGroup]] = []
+    source_issues: list[SourceIssue] = []
     rendered_text_bytes = 0
-    for chapter_index, (chapter, html_path, missing_refs) in enumerate(staged, start=1):
-        within_budget()
-        html_with_apparatus, apparatus_items, apparatus_edges = extract_html_apparatus(
-            html_path.read_text(encoding="utf-8"),
-            source_kind=f"epub:{chapter.spine_idx}",
-            document_href=chapter.href,
-            external_targets=external_targets,
-            confirmed_target_refs=confirmed_target_refs,
-            source_ref=_chapter_source_ref(chapter),
-        )
-        prepare_apparatus_bodies(apparatus_items, sanitize=sanitize_epub_chapter, media_kind="epub")
-        try:
-            html_sanitized = sanitize_epub_chapter(html_with_apparatus)
-        except (ValueError, LxmlError) as exc:
-            raise ApiError(
-                ApiErrorCode.E_SANITIZATION_FAILED,
-                f"Sanitization failed for spine item {chapter.spine_idx}: {exc}",
-            ) from exc
-        del html_with_apparatus
-        if not html_sanitized.strip():
-            record_progress(chapter_index, chapter_total, "Chapter")
-            continue
-        rendered_text_bytes += utf8_byte_length(html_sanitized)
-        if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
-            raise ResourceLimitError(
-                "EPUB rendered text exceeds the 64 MiB limit", dimension="Output"
+    readable_source = False
+    with (
+        gzip.open(apparatus.item_path, "wb", compresslevel=1) as staged_items,
+        gzip.open(apparatus.edge_path, "wb", compresslevel=1) as staged_edges,
+        closing(
+            _sanitize_epub_chapters(
+                staged,
+                contents=contents,
+                staging_directory=attempt_directory,
+                within_budget=within_budget,
+                record_progress=record_progress,
             )
-        sanitized.append((chapter, html_sanitized, apparatus_items, apparatus_edges, missing_refs))
-        record_progress(chapter_index, chapter_total, "Chapter")
+        ) as projection,
+    ):
+        for fragment_idx, (
+            chapter,
+            html_sanitized,
+            items,
+            apparatus_edges,
+            missing_refs,
+        ) in enumerate(projection):
+            within_budget()
+            try:
+                canonical = canonicalize_structure(html_sanitized)
+            except ValueError as exc:
+                raise ApiError(
+                    ApiErrorCode.E_SANITIZATION_FAILED,
+                    f"Canonicalization failed for spine item {chapter.spine_idx}: {exc}",
+                ) from exc
+            if retained_fragments is None:
+                try:
+                    canonical = bind_epub_source_structure(
+                        structure=canonical,
+                        source_html=_decode_epub_text(zf.read(chapter.href)),
+                    )
+                except ValueError as exc:
+                    raise ApiError(ApiErrorCode.E_SOURCE_NOT_READABLE, str(exc)) from exc
+            rendered_text_bytes += utf8_byte_length(html_sanitized) + utf8_byte_length(
+                canonical.text
+            )
+            if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
+                raise ResourceLimitError(
+                    "EPUB rendered text exceeds the 64 MiB limit", dimension="Output"
+                )
+            if retained_fragments is not None and fragment_idx >= len(retained_fragments):
+                raise ValueError("EPUB spine does not correspond to the retained fragments")
+            retained = None if retained_fragments is None else retained_fragments[fragment_idx]
+            if retained is not None and (retained.fragment_idx, retained.package_href) != (
+                fragment_idx,
+                chapter.href,
+            ):
+                raise ValueError("EPUB spine order does not correspond to retained fragments")
+            fragment = _PlannedFragment(
+                id=new_uuid7() if retained is None else retained.fragment_id,
+                idx=fragment_idx,
+                href=chapter.href,
+                html_path=attempt_directory / f"rendered-{fragment_idx}.html.gz",
+                canonical_text=canonical.text,
+                tables=canonical.tables,
+            )
+            retained_image, warning_markers = _retained_image_and_warning_markers(html_sanitized)
+            source_issues.extend(
+                MissingImage(
+                    fragment_id=fragment.id,
+                    marker_ordinal=ref.marker_ordinal,
+                    resource_path=ref.resource_path,
+                )
+                for ref in missing_refs
+                if ref.marker_ordinal in warning_markers
+            )
+            readable_source |= bool(canonical.text.strip()) or retained_image
+            accepted_spans = accepted_apparatus_spans(canonical, fragment.canonical_text)
+            bound = attach_fragment_locators(
+                media_id=media_id,
+                fragment_id=fragment.id,
+                media_kind="epub",
+                canonical_text=fragment.canonical_text,
+                items=items,
+                accepted_spans=accepted_spans,
+                html_sanitized=html_sanitized,
+            )
+            groups = derive_fragment_note_groups(
+                html_sanitized,
+                fragment.canonical_text,
+                fragment.id,
+                structure=canonical,
+                accepted_spans=accepted_spans,
+                source_html=_read_staged_html(
+                    attempt_directory / f"chapter-{chapter.spine_idx}.html.gz"
+                ),
+            )
+            if retained is not None:
+                if retained.canonical_text != fragment.canonical_text:
+                    raise ValueError("Retained EPUB canonical text does not match the source")
+                retained_structure = (
+                    canonical
+                    if retained.html_sanitized == html_sanitized
+                    else canonicalize_structure(retained.html_sanitized)
+                )
+                bound, groups = bind_retained_epub_apparatus(
+                    source_html=html_sanitized,
+                    retained_html=retained.html_sanitized,
+                    source=canonical,
+                    retained=retained_structure,
+                    source_fragment_id=fragment.id,
+                    retained_fragment_id=retained.fragment_id,
+                    items=bound,
+                    note_groups=groups,
+                )
+                original = _decode_epub_text(zf.read(chapter.href))
+                canonical = bind_epub_source_structure(
+                    structure=retained_structure, source_html=original
+                )
+            _write_staged_html(fragment.html_path, html_sanitized)
+            fragments.append(fragment)
+            chapters.append(chapter)
+            structure_fragments.append(
+                EpubStructureFragment(
+                    fragment.id,
+                    fragment_idx,
+                    chapter.href,
+                    replace(canonical, apparatus_items={}, x_embed_slots={}, tables=()),
+                )
+            )
+            for stream, rows in ((staged_items, bound), (staged_edges, apparatus_edges)):
+                for row in rows:
+                    encoded = json.dumps(row, ensure_ascii=False, separators=(",", ":")).encode()
+                    apparatus_bytes += len(encoded) + 1
+                    if apparatus_bytes > EPUB_APPARATUS_PLAN_MAX_BYTES:
+                        raise ResourceLimitError(
+                            "EPUB staged apparatus rows exceed the 64 MiB limit", dimension="Output"
+                        )
+                    stream.write(encoded)
+                    stream.write(b"\n")
+            fragment_groups.append(groups)
 
-    if not sanitized:
+    if not fragments:
         raise ApiError(
-            ApiErrorCode.E_SOURCE_NOT_READABLE, "Zero renderable chapters after sanitization"
+            ApiErrorCode.E_SOURCE_NOT_READABLE,
+            "Zero renderable chapters after sanitization",
         )
-    href_to_frag_idx = {chapter.href: index for index, (chapter, *_rest) in enumerate(sanitized)}
+    if retained_fragments is not None and len(retained_fragments) != len(fragments):
+        raise ValueError("EPUB spine does not correspond to the retained fragments")
+    if not readable_source:
+        raise ApiError(ApiErrorCode.E_SOURCE_NOT_READABLE, "No surviving source text or image")
+
+    href_to_frag_idx = {fragment.href: fragment.idx for fragment in fragments}
     if href_to_frag_idx != staged_hrefs:
         toc_nodes = _optional_toc(zf, opf, manifest, href_to_frag_idx, media_id, opf_path)
         contents = _source_contents(
-            zf, opf, manifest, href_to_frag_idx, media_id, toc_nodes, within_budget
-        )
-    if retained_fragments is not None and len(retained_fragments) != len(sanitized):
-        raise ValueError("EPUB spine does not correspond to the retained fragments")
-
-    created_at = datetime.now(UTC)
-    fragments: list[_PlannedFragment] = []
-    fragment_items: list[list[dict[str, object]]] = []
-    structure_fragments: list[EpubStructureFragment] = []
-    source_issues: list[SourceIssue] = []
-    readable_source = False
-    for fragment_idx, (
-        chapter,
-        html_sanitized,
-        apparatus_items,
-        apparatus_edges,
-        missing_refs,
-    ) in enumerate(sanitized):
-        within_budget()
-        try:
-            canonical = canonicalize_structure(html_sanitized)
-        except ValueError as exc:
-            raise ApiError(
-                ApiErrorCode.E_SANITIZATION_FAILED,
-                f"Canonicalization failed for spine item {chapter.spine_idx}: {exc}",
-            ) from exc
-        if retained_fragments is None:
-            try:
-                canonical = bind_epub_source_structure(
-                    structure=canonical,
-                    source_html=_decode_epub_text(zf.read(chapter.href)),
-                )
-            except ValueError as exc:
-                raise ApiError(ApiErrorCode.E_SOURCE_NOT_READABLE, str(exc)) from exc
-        rendered_text_bytes += utf8_byte_length(canonical.text)
-        if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
-            raise ResourceLimitError(
-                "EPUB rendered text exceeds the 64 MiB limit", dimension="Output"
-            )
-        retained = None if retained_fragments is None else retained_fragments[fragment_idx]
-        if retained is not None and (retained.fragment_idx, retained.package_href) != (
-            fragment_idx,
-            chapter.href,
-        ):
-            raise ValueError("EPUB spine order does not correspond to retained fragments")
-        fragment = _PlannedFragment(
-            id=new_uuid7() if retained is None else retained.fragment_id,
-            idx=fragment_idx,
-            href=chapter.href,
-            html_sanitized=html_sanitized,
-            canonical_text=canonical.text,
-            blocks=parse_fragment_blocks(canonical.text),
-            tables=canonical.tables,
-            apparatus_edges=apparatus_edges,
-        )
-        fragments.append(fragment)
-        fragment_items.append(apparatus_items)
-        retained_image, warning_markers = _retained_image_and_warning_markers(html_sanitized)
-        source_issues.extend(
-            MissingImage(
-                fragment_id=fragment.id,
-                marker_ordinal=ref.marker_ordinal,
-                resource_path=ref.resource_path,
-            )
-            for ref in missing_refs
-            if ref.marker_ordinal in warning_markers
-        )
-        readable_source |= bool(canonical.text.strip()) or retained_image
-        structure_fragments.append(
-            EpubStructureFragment(fragment.id, fragment_idx, chapter.href, canonical)
+            zf,
+            opf,
+            manifest,
+            href_to_frag_idx,
+            media_id,
+            toc_nodes,
+            within_budget,
+            opf_path=opf_path,
         )
 
-    if not readable_source:
-        raise ApiError(ApiErrorCode.E_SOURCE_NOT_READABLE, "No surviving source text or image")
-    del external_targets
-
-    apparatus_items: list[dict[str, object]] = []
-    fragment_groups: list[list[NotesGroup]] = []
-    for fragment, items, structure_fragment, (chapter, *_rest) in zip(
-        fragments, fragment_items, structure_fragments, sanitized, strict=True
-    ):
-        within_budget()
-        structure = structure_fragment.canonical
-        accepted_spans = accepted_apparatus_spans(structure, fragment.canonical_text)
-        bound = attach_fragment_locators(
-            media_id=media_id,
-            fragment_id=fragment.id,
-            media_kind="epub",
-            canonical_text=fragment.canonical_text,
-            items=items,
-            accepted_spans=accepted_spans,
-            html_sanitized=fragment.html_sanitized,
-        )
-        groups = derive_fragment_note_groups(
-            fragment.html_sanitized,
-            fragment.canonical_text,
-            fragment.id,
-            structure=structure,
-            accepted_spans=accepted_spans,
-            source_html=(attempt_directory / f"chapter-{chapter.spine_idx}.html").read_text(
-                encoding="utf-8"
-            ),
-        )
-        if retained_fragments is not None:
-            retained = retained_fragments[fragment.idx]
-            if retained.canonical_text != fragment.canonical_text:
-                raise ValueError("Retained EPUB canonical text does not match the source")
-            retained_structure = canonicalize_structure(retained.html_sanitized)
-            bound, groups = bind_retained_epub_apparatus(
-                source_html=fragment.html_sanitized,
-                retained_html=retained.html_sanitized,
-                source=structure,
-                retained=retained_structure,
-                source_fragment_id=fragment.id,
-                retained_fragment_id=retained.fragment_id,
-                items=bound,
-                note_groups=groups,
-            )
-            original = _decode_epub_text(zf.read(chapter.href))
-            structure_fragments[fragment.idx] = EpubStructureFragment(
-                fragment.id,
-                fragment.idx,
-                chapter.href,
-                bind_epub_source_structure(structure=retained_structure, source_html=original),
-            )
-        apparatus_items.extend(bound)
-        fragment_groups.append(groups)
-
-    excluded = incomplete_epub_paragraph_note_keys(
-        apparatus_items, (edge for fragment in fragments for edge in fragment.apparatus_edges)
-    )
+    excluded = incomplete_epub_paragraph_note_keys(apparatus.items(), apparatus.edges())
     if excluded:
-        apparatus_items = [item for item in apparatus_items if item["stable_key"] not in excluded]
         for idx, fragment in enumerate(fragments):
             within_budget()
-            edges = [
-                edge
-                for edge in fragment.apparatus_edges
-                if edge["from_stable_key"] not in excluded and edge["to_stable_key"] not in excluded
-            ]
-            html = prune_epub_paragraph_note_stamps(fragment.html_sanitized, excluded)
-            if html != fragment.html_sanitized:
-                chapter = sanitized[idx][0]
+            original_html = _read_staged_html(fragment.html_path)
+            html = prune_epub_paragraph_note_stamps(original_html, excluded)
+            if html != original_html:
+                chapter = chapters[idx]
                 structure = bind_epub_source_structure(
                     structure=canonicalize_structure(html),
                     source_html=_decode_epub_text(zf.read(chapter.href)),
                 )
-                structure_fragments[idx] = replace(structure_fragments[idx], canonical=structure)
+                if retained_fragments is None:
+                    structure_fragments[idx] = replace(
+                        structure_fragments[idx],
+                        canonical=replace(
+                            structure, apparatus_items={}, x_embed_slots={}, tables=()
+                        ),
+                    )
                 fragment_groups[idx] = derive_fragment_note_groups(
                     html,
                     fragment.canonical_text,
                     fragment.id,
                     structure=structure,
                     accepted_spans=accepted_apparatus_spans(structure, fragment.canonical_text),
-                    source_html=(attempt_directory / f"chapter-{chapter.spine_idx}.html").read_text(
-                        encoding="utf-8"
+                    source_html=_read_staged_html(
+                        attempt_directory / f"chapter-{chapter.spine_idx}.html.gz"
                     ),
                 )
-            fragments[idx] = replace(fragment, html_sanitized=html, apparatus_edges=edges)
+                _write_staged_html(fragment.html_path, html)
+    for _, path, _ in staged:
+        path.unlink()
     note_groups = [group for groups in fragment_groups for group in groups]
 
+    apparatus = replace(apparatus, excluded=excluded)
     navigation = _plan_navigation(
         media_id=media_id,
         fragments=structure_fragments,
         toc=toc_nodes,
         contents=contents,
-        note_regions=note_regions_from_publication(apparatus_items, note_groups),
+        note_regions=iter_publication_note_regions(apparatus.items(), note_groups),
     )
+    del structure_fragments
     source_issues.extend(navigation.navigation_issues)
     if len(source_issues) > 10_000:
         raise ResourceLimitError("EPUB source issues exceed 10000 records", dimension="Output")
@@ -927,7 +978,7 @@ def _parse(
         fragments=tuple(fragments),
         toc_nodes=navigation.toc_nodes,
         sections=navigation.sections,
-        apparatus_items=tuple(apparatus_items),
+        apparatus=apparatus,
         note_groups=tuple(note_groups),
         assets=assets,
         source_issues=tuple(source_issues),
@@ -946,29 +997,49 @@ def publish_epub_plan(
     An epub publishes once (`replace_reader_publication` refuses a second), so there is
     nothing to replace: every row is new, and so is every apparatus item id.
     """
-    for fragment in plan.fragments:
-        db.add(
-            Fragment(
-                id=fragment.id,
-                media_id=media.id,
-                idx=fragment.idx,
-                html_sanitized=fragment.html_sanitized,
-                canonical_text=fragment.canonical_text,
-                created_at=plan.created_at,
+    insert_fragments = text("""
+        INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text, created_at)
+        VALUES (:id, :media_id, :idx, convert_from(:html_utf8, 'UTF8'),
+                convert_from(:text_utf8, 'UTF8'), :created_at)
+    """)
+    for batch in batched(plan.fragments, 16):
+        rows: list[dict[str, object]] = []
+        pending_text_bytes = 0
+        for fragment in batch:
+            with gzip.open(fragment.html_path, "rb") as source:
+                html_utf8 = source.read()
+            text_utf8 = fragment.canonical_text.encode()
+            text_bytes = len(html_utf8) + len(text_utf8)
+            if rows and pending_text_bytes + text_bytes > 4 * 1024 * 1024:
+                db.execute(insert_fragments, rows)
+                rows.clear()
+                pending_text_bytes = 0
+            rows.append(
+                {
+                    "id": fragment.id,
+                    "media_id": media.id,
+                    "idx": fragment.idx,
+                    "html_utf8": Binary(html_utf8),
+                    "text_utf8": Binary(text_utf8),
+                    "created_at": plan.created_at,
+                }
             )
-        )
-    db.flush()
-    for fragment in plan.fragments:
-        insert_fragment_blocks(db, fragment.id, fragment.blocks)
-        insert_fragment_tables(db, fragment.id, fragment.tables)
-        db.add(
-            EpubFragmentSource(
-                media_id=media.id,
-                fragment_id=fragment.id,
-                package_href=fragment.href,
-                created_at=plan.created_at,
+            pending_text_bytes += text_bytes
+            del html_utf8, text_utf8
+        db.execute(insert_fragments, rows)
+        rows.clear()
+        for fragment in batch:
+            insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(fragment.canonical_text))
+            insert_fragment_tables(db, fragment.id, fragment.tables)
+            db.add(
+                EpubFragmentSource(
+                    media_id=media.id,
+                    fragment_id=fragment.id,
+                    package_href=fragment.href,
+                    created_at=plan.created_at,
+                )
             )
-        )
+        db.flush()
     for asset in plan.assets:
         db.add(
             EpubResource(
@@ -991,10 +1062,9 @@ def publish_epub_plan(
     replace_media_apparatus(
         db,
         media_id=media.id,
-        items=list(plan.apparatus_items),
-        edges=[edge for fragment in plan.fragments for edge in fragment.apparatus_edges],
+        item_rows=plan.apparatus.items,
+        edge_rows=plan.apparatus.edges,
         note_groups=list(plan.note_groups),
-        status="ready" if plan.apparatus_items else "empty",
     )
     metadata = plan.metadata
     title = metadata.title
@@ -1483,18 +1553,31 @@ def _candidate_backlink_exists(
     marker_id: str,
     source_href: str,
     require_note_context: bool,
+    marker_label: str | None,
 ) -> bool:
-    target_href = target_ref.partition("#")[0]
-    qualified = f"{source_href}#{marker_id}"
-    local = f"#{marker_id}" if target_href == source_href else qualified
     return (
         candidates.execute(
-            "SELECT 1 FROM backlinks WHERE target_ref = ? AND href IN (?, ?) "
-            "AND (? = 0 OR has_note_context = 1) LIMIT 1",
-            (target_ref, local, qualified, require_note_context),
+            "SELECT 1 FROM backlinks WHERE target_ref = ? AND href = ? "
+            "AND (? = 0 OR has_note_context = 1) AND marker_label IS ? LIMIT 1",
+            (
+                target_ref,
+                html_apparatus_ref(source_href, marker_id),
+                require_note_context,
+                marker_label,
+            ),
         ).fetchone()
         is not None
     )
+
+
+def _read_staged_html(path: Path) -> str:
+    with gzip.open(path, "rt", encoding="utf-8") as source:
+        return source.read()
+
+
+def _write_staged_html(path: Path, html: str) -> None:
+    with gzip.open(path, "wt", encoding="utf-8", compresslevel=1) as destination:
+        destination.write(html)
 
 
 def _stage_epub_chapters(
@@ -1521,36 +1604,127 @@ def _stage_epub_chapters(
             _decode_epub_text(raw), chapter.href, package
         )
         del raw
-        html_path = staging_directory / f"chapter-{chapter.spine_idx}.html"
-        html_path.write_text(rewritten_html, encoding="utf-8")
+        html_path = staging_directory / f"chapter-{chapter.spine_idx}.html.gz"
+        _write_staged_html(html_path, rewritten_html)
         staged.append((chapter, html_path, missing_refs))
         del rewritten_html
     return staged
 
 
-def _index_epub_apparatus(
+def _epub_paragraph_note_evidence(
     staged: Sequence[tuple[_ChapterSpec, Path, list[_MissingImageRef]]],
     *,
-    division_starts: dict[str, SourceDivisionStarts],
-    staging_directory: Path,
+    contents: EpubContents,
+    paragraph_backlinks: dict[str, dict[str, HtmlParagraphMarker]],
     within_budget: Callable[[], None],
-) -> dict[str, dict[str, object]]:
-    """Index reciprocal pairs and then complete bounded note bodies."""
-    targets: dict[str, dict[str, object]] = {}
-    target_count = 0
+) -> tuple[list[HtmlParagraphNoteEvidence], int]:
+    """Bind authored opening keys and assign reciprocals to unique chapter intervals."""
     retained_utf8_bytes = 0
-    backlink_count = 0
-    marker_backlinks: dict[str, set[str]] = {}
-    paragraph_backlinks: dict[str, dict[str, str]] = {}
-    entry_openers: dict[str, dict[str, HtmlApparatusEntryOpener]] = {}
-    marker_count = 0
-    marker_bytes = 0
     outside_signatures: set[HtmlNoteBlockSignature] = set()
     continuation_witnesses: dict[HtmlNoteBlockSignature, set[str]] = {}
     openings = [
-        division_starts.get(chapter.href, SourceDivisionStarts(frozenset(), False))
+        contents.division_starts.get(chapter.href, SourceDivisionStarts(frozenset(), False))
         for chapter, _, _ in staged
     ]
+    expected_returns: dict[str, dict[str, str]] = {}
+    editorial_by_href: dict[str, list[str]] = {}
+    chapter_keys_by_href: dict[str, list[list[str]]] = {}
+    if paragraph_backlinks:
+        for (href, name), (path, anchor) in contents.opening_returns.items():
+            expected_returns.setdefault(href, {})[name] = html_apparatus_ref(path, anchor)
+        for href, name in contents.editorial_openings:
+            editorial_by_href.setdefault(href, []).append(name)
+        for sequence in contents.chapter_sequences:
+            for href, keys in groupby(sequence, key=itemgetter(0)):
+                chapter_keys_by_href.setdefault(href, []).append([name for _, name in keys])
+    refs_by_href: dict[str, set[str]] = {}
+    if contents.chapter_sequences:
+        for target, markers in paragraph_backlinks.items():
+            for ref in (target, *markers):
+                href, name = split_html_apparatus_ref(ref)
+                if name is not None:
+                    refs_by_href.setdefault(href, set()).add(name)
+    staged_positions: dict[tuple[str, str], tuple[int, int]] = {}
+    qualified_openings: set[tuple[str, str]] = set()
+    bound_openings: dict[str, frozenset[str]] = {}
+    uncertain_openings: dict[str, tuple[tuple[str | None, str | None], ...]] = {}
+    start_openings: dict[str, str] = {}
+    for chapter, html_path, _missing in staged:
+        returns = expected_returns.get(chapter.href, {})
+        refs = refs_by_href.get(chapter.href, set())
+        editorial = editorial_by_href.get(chapter.href, [])
+        if not returns and not refs and not editorial:
+            continue
+        within_budget()
+        positions, title_first, first_opening = collect_html_apparatus_source_positions(
+            _read_staged_html(html_path),
+            document_href=chapter.href,
+            opening_returns=returns,
+            refs=refs,
+        )
+        uncertain: list[tuple[str | None, str | None]] = []
+        for group in [editorial, *chapter_keys_by_href.get(chapter.href, ())]:
+            neighbors = [
+                (-1, None),
+                *((i, name) for i, name in enumerate(group) if name in positions),
+                (len(group), None),
+            ]
+            bound = [positions[name] for _, name in neighbors if name is not None]
+            if any(left >= right for left, right in pairwise(bound)):
+                uncertain = [(None, None)]
+                break
+            uncertain.extend(
+                (left, right) for (i, left), (j, right) in pairwise(neighbors) if j > i + 1
+            )
+        uncertain_openings[chapter.href] = tuple(uncertain)
+        if (None, None) in uncertain:
+            continue
+        if first_opening and (chapter.href, first_opening) in contents.file_start_openings:
+            start_openings[chapter.href] = html_apparatus_ref(chapter.href, first_opening)
+        staged_positions.update(
+            ((chapter.href, name), (chapter.spine_idx, position))
+            for name, position in positions.items()
+        )
+        qualified_openings.update((chapter.href, name) for name in title_first)
+        bound_openings[chapter.href] = frozenset(title_first.intersection(editorial))
+
+    chapter_by_ref: dict[str, tuple[int, int]] = {}
+    chapter_closers: dict[tuple[int, int], str] = {}
+    boundaries: list[tuple[tuple[int, int], bool, tuple[int, int]]] = []
+    scope = 0
+    for chapters in contents.chapter_sequences:
+        scope += 1
+        bound = [staged_positions[key] for key in chapters if key in staged_positions]
+        if any(first >= last for first, last in pairwise(bound)):
+            continue
+        endpoints = [
+            staged_positions[key] if key in qualified_openings else None for key in chapters
+        ]
+        for index, (first, last) in enumerate(pairwise(endpoints)):
+            if first is None or last is None:
+                scope += 1
+                continue
+            chapter_key = scope, index
+            chapter_closers[chapter_key] = html_apparatus_ref(*chapters[index + 1])
+            boundaries.extend(((first, True, chapter_key), (last, False, chapter_key)))
+    boundaries.sort()
+    active: set[tuple[int, int]] = set()
+    boundary = 0
+    for (href, name), position in sorted(staged_positions.items(), key=lambda item: item[1]):
+        while boundary < len(boundaries) and boundaries[boundary][0] <= position:
+            _position, enters, chapter_key = boundaries[boundary]
+            if enters:
+                active.add(chapter_key)
+            else:
+                active.remove(chapter_key)
+            boundary += 1
+        if len(active) == 1 and name in refs_by_href.get(href, ()):
+            ref = html_apparatus_ref(href, name)
+            chapter_by_ref[ref] = next(iter(active))
+            retained_utf8_bytes += nested_utf8_byte_length((ref, chapter_by_ref[ref]))
+            if retained_utf8_bytes > EPUB_APPARATUS_MAX_EVIDENCE_UTF8_BYTES:
+                raise ResourceLimitError("EPUB chapter note index exceeded", dimension="Output")
+    peer_chapters: dict[HtmlNotePeerKey, set[int]] = {}
     evidence = [
         HtmlParagraphNoteEvidence(
             paragraph_backlinks,
@@ -1560,78 +1734,308 @@ def _index_epub_apparatus(
             and openings[idx + 1].at_file_start,
             outside_signatures,
             continuation_witnesses,
+            editorial_opening_ids=bound_openings.get(staged[idx][0].href, frozenset()),
+            uncertain_openings=uncertain_openings.get(staged[idx][0].href, ()),
+            chapter_by_ref=chapter_by_ref,
+            chapter_closers=chapter_closers,
+            next_file_opening=(
+                start_openings.get(staged[idx + 1][0].href)
+                if idx + 1 < len(staged)
+                and staged[idx + 1][0].spine_idx == staged[idx][0].spine_idx + 1
+                else None
+            ),
+            peer_chapters=peer_chapters,
         )
         for idx, opening in enumerate(openings)
     ]
+    return evidence, retained_utf8_bytes
+
+
+def _sanitize_epub_chapters(
+    staged: Sequence[tuple[_ChapterSpec, Path, list[_MissingImageRef]]],
+    *,
+    contents: EpubContents,
+    staging_directory: Path,
+    within_budget: Callable[[], None],
+    record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
+) -> Generator[
+    tuple[
+        _ChapterSpec, str, list[dict[str, object]], list[dict[str, object]], list[_MissingImageRef]
+    ]
+]:
+    """Resolve each chapter and release its unbound apparatus before reading the next."""
+    with (
+        TemporaryDirectory(dir=staging_directory) as directory,
+        closing(sqlite3.connect(Path(directory) / "apparatus-candidates.sqlite3")) as index,
+    ):
+        try:
+            _index_epub_apparatus(
+                staged, contents=contents, index=index, within_budget=within_budget
+            )
+        except sqlite3.OperationalError as exc:
+            if exc.sqlite_errorcode != sqlite3.SQLITE_FULL:
+                raise
+            raise ResourceLimitError(
+                "EPUB apparatus scratch index could not grow (64 MiB limit)", dimension="Output"
+            ) from exc
+
+        confirmed_target_refs: set[str] | None = None
+
+        def find_target(ref: str) -> dict[str, object] | None:
+            if not ref:
+                return None
+            row = index.execute("SELECT proof FROM targets WHERE address = ?", (ref,)).fetchone()
+            if row is None:
+                return None
+            proof: dict[str, object] = json.loads(zlib.decompress(row[0]))
+            if (
+                confirmed_target_refs is not None
+                and proof["extraction_method"] in ("html_note_boundary", "html_paragraph_note")
+                and ref not in confirmed_target_refs
+            ):
+                return None
+            return proof
+
+        confirmed: set[str] = set()
+        for chapter, html_path, _missing_refs in staged:
+            within_budget()
+            confirmed.update(
+                confirm_html_apparatus_target_refs(
+                    _read_staged_html(html_path),
+                    document_href=chapter.href,
+                    find_target=find_target,
+                )
+            )
+        confirmed_target_refs = confirmed
+
+        chapter_total = len(staged)
+        record_progress(0, chapter_total, "Chapter")
+        for chapter_index, (chapter, html_path, missing_refs) in enumerate(staged, start=1):
+            within_budget()
+            html_with_apparatus, items, edges = extract_html_apparatus(
+                _read_staged_html(html_path),
+                source_kind=f"epub:{chapter.spine_idx}",
+                document_href=chapter.href,
+                find_target=find_target,
+                confirmed_target_refs=confirmed,
+                source_ref=_chapter_source_ref(chapter),
+            )
+            prepare_apparatus_bodies(items, sanitize=sanitize_epub_chapter, media_kind="epub")
+            try:
+                html_sanitized = sanitize_epub_chapter(html_with_apparatus)
+            except (ValueError, LxmlError) as exc:
+                raise ApiError(
+                    ApiErrorCode.E_SANITIZATION_FAILED,
+                    f"Sanitization failed for spine item {chapter.spine_idx}: {exc}",
+                ) from exc
+            del html_with_apparatus
+            if html_sanitized.strip():
+                yield chapter, html_sanitized, items, edges, missing_refs
+            record_progress(chapter_index, chapter_total, "Chapter")
+
+
+def _index_epub_apparatus(
+    staged: Sequence[tuple[_ChapterSpec, Path, list[_MissingImageRef]]],
+    *,
+    contents: EpubContents,
+    index: sqlite3.Connection,
+    within_budget: Callable[[], None],
+) -> None:
+    """Index reciprocal pairs and then complete bounded note bodies."""
+    target_count = 0
+    backlink_count = 0
+    marker_backlinks: dict[str, set[str]] = {}
+    prose_note_markers: dict[str, str] = {}
+    paragraph_backlinks: dict[str, dict[str, HtmlParagraphMarker]] = {}
+    entry_openers: dict[str, dict[str, HtmlApparatusEntryOpener]] = {}
+    marker_count = 0
+    marker_bytes = 0
     target_hrefs = {chapter.href for chapter, _path, _missing in staged}
-    with closing(sqlite3.connect(staging_directory / "apparatus-candidates.sqlite3")) as candidates:
+    with index as candidates:
         candidates.execute("PRAGMA page_size = 4096")
+        candidates.execute("PRAGMA auto_vacuum = FULL")
         candidates.execute("PRAGMA journal_mode = OFF")
         candidates.execute(f"PRAGMA max_page_count = {EPUB_APPARATUS_MAX_CANDIDATE_INDEX_PAGES}")
         candidates.execute(
             "CREATE TABLE backlinks (target_ref TEXT NOT NULL, href TEXT NOT NULL, "
-            "has_note_context INTEGER NOT NULL, "
+            "has_note_context INTEGER NOT NULL, marker_label TEXT, "
             "PRIMARY KEY (target_ref, href)) WITHOUT ROWID"
         )
 
-        def record_candidate(target_ref: str, hrefs: Iterator[str], has_note_context: bool) -> None:
-            try:
-                candidates.execute("DELETE FROM backlinks WHERE target_ref = ?", (target_ref,))
-                candidates.executemany(
-                    "INSERT OR IGNORE INTO backlinks (target_ref, href, has_note_context) "
-                    "VALUES (?, ?, ?)",
-                    ((target_ref, href, has_note_context) for href in hrefs),
-                )
-            except sqlite3.OperationalError as exc:
-                pages = candidates.execute("PRAGMA page_count").fetchone()
-                if (
-                    str(exc) == "database or disk is full"
-                    and pages
-                    and pages[0] >= EPUB_APPARATUS_MAX_CANDIDATE_INDEX_PAGES
-                ):
-                    raise ResourceLimitError(
-                        "EPUB apparatus candidate index exceeded 64 MiB", dimension="Output"
-                    ) from exc
-                raise
+        def record_candidate(
+            target_ref: str, hrefs: Iterator[str], has_note_context: bool, marker_label: str | None
+        ) -> None:
+            candidates.execute("DELETE FROM backlinks WHERE target_ref = ?", (target_ref,))
+            candidates.executemany(
+                "INSERT OR IGNORE INTO backlinks (target_ref, href, has_note_context, marker_label) "
+                "VALUES (?, ?, ?, ?)",
+                ((target_ref, href, has_note_context, marker_label) for href in hrefs),
+            )
 
         for chapter, html_path, _missing in staged:
             within_budget()
             collect_html_apparatus_candidate_backlinks(
-                html_path.read_text(encoding="utf-8"),
+                _read_staged_html(html_path),
                 document_href=chapter.href,
                 record_candidate=record_candidate,
             )
         candidates.commit()
 
         def candidate_backlink_exists(
-            target_ref: str, marker_id: str, source_href: str, require_note_context: bool
+            target_ref: str,
+            marker_id: str,
+            source_href: str,
+            require_note_context: bool,
+            marker_label: str | None,
         ) -> bool:
             return _candidate_backlink_exists(
-                candidates, target_ref, marker_id, source_href, require_note_context
+                candidates, target_ref, marker_id, source_href, require_note_context, marker_label
             )
 
         for chapter, html_path, _missing in staged:
             within_budget()
             added, added_bytes = collect_html_apparatus_marker_backlinks(
-                html_path.read_text(encoding="utf-8"),
+                _read_staged_html(html_path),
                 document_href=chapter.href,
                 target_hrefs=target_hrefs,
                 candidate_backlink_exists=candidate_backlink_exists,
                 marker_backlinks=marker_backlinks,
                 paragraph_backlinks=paragraph_backlinks,
+                prose_note_markers=prose_note_markers,
                 entry_openers=entry_openers,
                 max_markers=EPUB_APPARATUS_MAX_BACKLINKS - marker_count,
-                max_retained_utf8_bytes=EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES - marker_bytes,
+                max_retained_utf8_bytes=EPUB_APPARATUS_MAX_EVIDENCE_UTF8_BYTES - marker_bytes,
             )
             marker_count += added
             marker_bytes += added_bytes
+        # Truncate the spent backlinks before the target and render passes.
+        candidates.execute("DROP TABLE backlinks")
+    evidence, retained_utf8_bytes = _epub_paragraph_note_evidence(
+        staged,
+        contents=contents,
+        paragraph_backlinks=paragraph_backlinks,
+        within_budget=within_budget,
+    )
+    spine_order = {chapter.href: chapter.spine_idx for chapter, _, _ in staged}
+    note_candidates: dict[str, dict[str, str]] = {}
+    for target, backlinks in marker_backlinks.items():
+        href, _ = split_html_apparatus_ref(target)
+        if href in contents.note_collection_ends:
+            continue
+        for marker in backlinks:
+            source, _ = split_html_apparatus_ref(marker)
+            if (
+                marker in prose_note_markers
+                and source in spine_order
+                and spine_order[source] < spine_order[href]
+            ):
+                note_candidates.setdefault(href, {})[marker] = prose_note_markers[marker]
+    note_pages: dict[str, tuple[str, ...]] = {}
+    unfinished_note_pages: dict[str, tuple[tuple[str, ...], Literal["Quotation", "Citations"]]] = {}
+    for chapter, html_path, _ in staged:
+        markers = note_candidates.get(chapter.href)
+        if not markers:
+            continue
+        within_budget()
+        if (
+            proof := html_paragraph_note_page_shape(
+                _read_staged_html(html_path),
+                document_href=chapter.href,
+                marker_backlinks=marker_backlinks,
+                earlier_prose_markers=markers,
+            )
+        ) is not None:
+            shape, tail = proof
+            if tail == "Closed":
+                note_pages[chapter.href] = shape
+            else:
+                unfinished_note_pages[chapter.href] = shape, tail
+    shape_counts = Counter(note_pages.values())
+    bounded_note_pages = {
+        chapter.href
+        for (chapter, _, _), (following, _, _) in pairwise(staged)
+        if following.spine_idx == chapter.spine_idx + 1
+        and chapter.href in note_pages
+        and following.href in note_pages
+    } | {href for href, shape in note_pages.items() if len(shape) > 1 and shape_counts[shape] >= 2}
+    for (prior, _, _), (chapter, _, _), (following, _, _) in zip(
+        staged, staged[1:], staged[2:], strict=False
+    ):
+        if prior.spine_idx + 1 != chapter.spine_idx or chapter.spine_idx + 1 != following.spine_idx:
+            continue
+        if (
+            following.href in contents.independent_openings
+            and (before := note_pages.get(prior.href)) is not None
+            and (current := note_pages.get(chapter.href)) is not None
+            and len(current) > 1
+            and current[1:] == before[1:]
+        ):
+            bounded_note_pages.add(chapter.href)
+        unfinished = unfinished_note_pages.get(chapter.href)
+        if unfinished is None:
+            continue
+        shape, tail = unfinished
+        if shape != note_pages.get(prior.href) or shape != note_pages.get(following.href):
+            continue
+        markers = [note_candidates[href] for href in (prior.href, chapter.href, following.href)]
+        if any(len(values) != 1 for values in markers):
+            continue
+        references, labels = zip(*(next(iter(values.items())) for values in markers), strict=True)
+        reading_members = tuple(split_html_apparatus_ref(reference)[0] for reference in references)
+        if (
+            tail == "Quotation"
+            and shape[0] == "Numeric"
+            and all(label.isdecimal() for label in labels)
+            and int(labels[0]) + 1 == int(labels[1]) == int(labels[2]) - 1
+            and reading_members[0] == reading_members[1] == reading_members[2]
+            or tail == "Citations"
+            and shape[0] == "Symbol"
+            and labels[0] == labels[1] == labels[2]
+            and spine_order[reading_members[0]]
+            <= spine_order[reading_members[1]]
+            <= spine_order[reading_members[2]]
+        ):
+            bounded_note_pages.add(chapter.href)
+    successors = {
+        chapter.href: (following.href, html_path)
+        for (chapter, _, _), (following, html_path, _) in pairwise(staged)
+        if following.spine_idx == chapter.spine_idx + 1
+    }
+
+    @cache
+    def closes_member(member: str) -> bool:
+        if member == contents.last_spine_member:
+            return True
+        following = successors.get(member)
+        if following is None:
+            return False
+        href, path = following
+        if href in contents.independent_openings:
+            return True
+        within_budget()
+        return html_has_independent_apparatus_opening(
+            _read_staged_html(path),
+            document_href=href,
+            marker_backlinks=marker_backlinks,
+            prose_markers=prose_note_markers,
+        )
+
+    index.execute("CREATE TABLE targets (address TEXT PRIMARY KEY, proof BLOB NOT NULL)")
+    target_utf8_bytes = 0
+    stored_bytes = 0
     for (chapter, html_path, _missing), per_file in zip(staged, evidence, strict=True):
         within_budget()
+        raw_html = _read_staged_html(html_path)
+        html = normalize_html_rearnote_collections(
+            raw_html, document_href=chapter.href, marker_backlinks=marker_backlinks
+        )
+        if html != raw_html:
+            _write_staged_html(html_path, html)
         retained_utf8_bytes += collect_html_apparatus_note_window_evidence(
-            html_path.read_text(encoding="utf-8"),
+            html,
             document_href=chapter.href,
             evidence=per_file,
-            max_retained_utf8_bytes=EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES - retained_utf8_bytes,
+            max_retained_utf8_bytes=EPUB_APPARATUS_MAX_EVIDENCE_UTF8_BYTES - retained_utf8_bytes,
         )
     for (chapter, html_path, _missing), per_file in zip(staged, evidence, strict=True):
         within_budget()
@@ -1641,23 +2045,44 @@ def _index_epub_apparatus(
             chapter_retained_utf8_bytes,
             chapter_backlink_count,
         ) = collect_html_apparatus_targets(
-            html_path.read_text(encoding="utf-8"),
+            _read_staged_html(html_path),
             document_href=chapter.href,
             source_kind=f"epub:{chapter.spine_idx}",
             source_ref=_chapter_source_ref(chapter),
             extraction_method="epub_noteref",
             max_targets=EPUB_APPARATUS_MAX_TARGETS - target_count,
             max_backlinks=EPUB_APPARATUS_MAX_BACKLINKS - backlink_count,
-            max_retained_utf8_bytes=EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES - retained_utf8_bytes,
+            max_retained_utf8_bytes=EPUB_APPARATUS_MAX_TARGET_UTF8_BYTES - target_utf8_bytes,
             marker_backlinks=marker_backlinks,
             entry_openers=entry_openers,
             paragraph_notes=per_file,
+            paragraph_markers=paragraph_backlinks,
+            prose_note_markers=prose_note_markers,
+            bounded_note_page=chapter.href in bounded_note_pages,
+            reading_titles=contents.reading_titles,
+            published_navigation=contents.published_navigation.get(chapter.href, frozenset()),
+            note_collection_end=(
+                True
+                if chapter.href in bounded_note_pages
+                else contents.note_collection_ends.get(chapter.href)
+            ),
+            closes_member=closes_member,
         )
-        targets.update(chapter_targets)
+        for key, target in chapter_targets.items():
+            proof = json.dumps(target, ensure_ascii=False, separators=(",", ":")).encode()
+            stored_bytes += utf8_byte_length(key) + len(proof)
+            if stored_bytes > EPUB_APPARATUS_MAX_TARGET_UTF8_BYTES:
+                raise ResourceLimitError(
+                    "EPUB serialized apparatus targets exceed the 32 MiB limit", dimension="Output"
+                )
+            index.execute(
+                "INSERT INTO targets (address, proof) VALUES (?, ?)",
+                (key, zlib.compress(proof, level=1)),
+            )
         target_count += chapter_target_count
-        retained_utf8_bytes += chapter_retained_utf8_bytes
+        target_utf8_bytes += chapter_retained_utf8_bytes
         backlink_count += chapter_backlink_count
-    return targets
+    index.commit()
 
 
 def _rewrite_chapter_resources(
@@ -1865,7 +2290,8 @@ def _rewrite_resource_url(
     resolved = _resolve_epub_path(base_dir, parsed.path or "")
     if resolved is None or attr_name != "href" or resolved not in readable_paths:
         return None
-    return f"{resolved}#{parsed.fragment}" if parsed.fragment else resolved
+    path = quote(resolved, safe="/!$&'()*+,;=:@")
+    return f"{path}#{parsed.fragment}" if parsed.fragment else path
 
 
 def _rewrite_srcset(value: str, base_dir: str, package: _Package, missing_paths: list[str]) -> str:

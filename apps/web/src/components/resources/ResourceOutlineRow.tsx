@@ -40,7 +40,7 @@ import {FactRemovalsContext, type FactRemovalCommand} from "@/lib/resourceGraph/
 import {hasAuthoredContent, parseResourceRef} from "@/lib/resourceGraph/resourceRef";
 import {resolveResourceItem} from "@/lib/resources/items";
 import {localResourceHref, localResourceLabel} from "@/lib/resources/localResource";
-import {resourceMetadata} from "@/lib/resources/metadata";
+import {resourceMetadata, sourceBibliographyMetadata} from "@/lib/resources/metadata";
 import {itemMediaKind, resourceType, resourceTypeName} from "@/lib/resources/type";
 import {classifyOutlineOccurrence, enterOutlineOccurrence} from "@/lib/resources/outlineProjection";
 import {assumeCanonicalResourceRef} from "@/lib/sharing/targets";
@@ -108,13 +108,17 @@ type Props = Shared & (
 );
 /** What the shared occurrence chrome shows for one resource. */
 interface Presentation {
-  localLinkSource?: ItemLinkSource | null;
+  linkSource?: ItemLinkSource | null;
   ref: string;
   /** null: nothing names it yet, so the row names its type, never its raw ref. */
   label: string | null;
   href: string | null;
   primary: ReactNode;
-  item: Item | null;
+  actionRef?: string;
+  activation?: Item["activation"];
+  missing?: boolean;
+  mediaKind?: ReturnType<typeof itemMediaKind>;
+  readingKey?: string;
   /** A local highlight's id; its annotation body remains distinct from related resources. */
   highlightId: string | null;
   status: ReactNode;
@@ -138,6 +142,31 @@ export default function ResourceOutlineRow({item, resourceRef, resource, ...shar
   return <LocalRow {...shared} subject={resourceRef!}/>;
 }
 
+/** A row whose host already holds the complete published source. */
+export function ResourceOutlineSourceRow({item, identity, children, ...props}: Shared & {
+  item: Schema<"ReaderEvidenceSourceItemOut">;
+  identity: string;
+  children: ReactNode;
+}) {
+  const {ref, action_ref: actionRef, label, activation, source} = item;
+  const {href} = activation;
+  const bibliography = sourceBibliographyMetadata(source);
+  const location = href === null ? null : source?.location_label?.trim();
+  return <Occurrence {...props} presentation={{
+    ref, label, href, actionRef, activation, highlightId: null,
+    readingKey: JSON.stringify([identity, actionRef, source?.ref ?? null, activation]),
+    primary: <>
+      <div className={styles.reference}>
+        <PrimaryLink href={href} label={label}>{source?.title?.trim() || label}</PrimaryLink>
+        {bibliography.length ? <span className={factualStyles.bibliography}><span className={styles.separator} aria-hidden="true"> · </span>
+          <ResourceMetadata parts={bibliography} linkSource/></span> : null}
+      </div>
+      {children}
+    </>,
+    status: location ? <div className={styles.metadata}>{location}</div> : null,
+  }}/>;
+}
+
 function LocalRow(props:Shared&{subject:string}){
   const read=useAuthoredQuery(props.readingRef && /^(highlight|passage_anchor):/u.test(props.subject) ? {kind:"excerpt",ref:props.subject,reading_ref:props.readingRef} : {kind:"resource",ref:props.subject});
   const resource=read.data?.rows[0]?.resource??null;
@@ -149,7 +178,7 @@ function LocalRow(props:Shared&{subject:string}){
   const status=read.data === null ? <AuthoredReadFailure {...read} noun={`this ${type}`}/> : null;
   if(props.authoredByViewer||resource?.authored_by_viewer||ownedRef===props.subject)return <AuthoredRow {...props} resource={resource} answered={read.data?.scope_available===true} status={status}/>;
   if(read.data)return <ReferenceRow {...props}/>;
-  return <Occurrence {...props} presentation={{ref:props.subject,label:null,href:null,item:null,highlightId:null,primary:<span data-resource-primary className={styles.pending}/>,status}}/>;
+  return <Occurrence {...props} presentation={{ref:props.subject,label:null,href:null,highlightId:null,primary:<span data-resource-primary className={styles.pending}/>,status}}/>;
 }
 
 /** The row's one link to its resource; a null href renders its children alone. */
@@ -181,7 +210,12 @@ function remotePresentation(item: Item, props: Shared): Presentation {
   const parts = metadata.parts.filter(({key}) => quote ? key !== "source" && key !== "location"
     : key !== "source" || body.kind !== "passage" || activation.href === null || !title);
   return {
-    ref: item.ref, label: item.label, href: activation.href, item, highlightId: null,
+    ref: item.ref, label: item.label, href: activation.href, actionRef: item.action_ref,
+    activation, missing: item.missing, mediaKind: itemMediaKind(item), highlightId: null,
+    linkSource: itemLinkSource(item, props.readingRef),
+    ...(body.kind === "passage" && !item.ref.startsWith("passage_anchor:") ? {
+      readingKey: JSON.stringify([item.action_ref, item.preview.source?.ref ?? null, body.excerpt, body.capture_revision, activation]),
+    } : {}),
     primary: quote ? quote.excerpt.kind === "content"
       ? <SelectedQuote excerpt={quote.excerpt} color={quote.color} href={activation.href} label={item.label}/> : content
       : <div className={styles.reference}>
@@ -217,7 +251,7 @@ function ReferenceRow(props: Shared & {subject: string}) {
   if(remote.status==="ready"&&remote.data.authored_by_viewer&&hasAuthoredContent(props.subject))return <LocalRow {...props} authoredByViewer/>;
   return <Occurrence {...props} presentation={remote.status === "ready" ? {...remotePresentation(remote.data, props), ref: props.subject} : {
     ref: props.subject, label,
-    href: stub ? localResourceHref(stub) : null, item: null, highlightId: null,
+    href: stub ? localResourceHref(stub) : null, highlightId: null,
     primary: label === null ? <span data-resource-primary className={styles.pending}/> : <span data-resource-primary className={factualStyles.named}>{label}</span>,
     status: remote.status === "failed" ? <Failed error={remote.error} noun="this item’s details" retry={{run: remote.refetch, busy: remote.retrying}}/> : null,
   }}/>;
@@ -250,8 +284,8 @@ function AuthoredRow({resource, answered, status, ...props}: Shared & {subject: 
     </div>
     : <span data-resource-primary className={factualStyles.named}>{label}</span>;
   return <Occurrence {...props} presentation={{
-    ref: props.subject, label, href, item: null, primary,
-    localLinkSource: resource?.visible ? directLinkSource(resource.ref, label) : null,
+    ref: props.subject, label, href, primary,
+    linkSource: resource?.visible ? directLinkSource(resource.ref, label) : null,
     highlightId: resource?.kind === "highlight" ? parsed.id : null,
     ...(resource?.kind === "highlight" ? {annotation: {resource, editable}} : {}),
     status,
@@ -261,11 +295,11 @@ function AuthoredRow({resource, answered, status, ...props}: Shared & {subject: 
 function Occurrence({presentation, occurrenceKey, incoming, connection, onChanged,
   sourceContent, resourceDetails, details, rootProps, rowRef,
   historical = false, editable: _editable = true, annotationFocusRequest = null, onAnnotationClose, rowActions, inRow = false, ...props}: Shared & {presentation: Presentation}) {
-  const {ref, href, item, highlightId} = presentation;
+  const {ref, href, actionRef, activation, missing, highlightId} = presentation;
   const parsed = parseResourceRef(ref);
   // justify-defect: every occurrence names a canonical displayed resource.
   if (parsed === null) throw new Error(`invalid canonical resource ref: ${ref}`);
-  const type = resourceType(parsed.scheme, item === null ? null : itemMediaKind(item));
+  const type = resourceType(parsed.scheme, presentation.mediaKind ?? null);
   const identity = resourceTypeName(type);
   const label = presentation.label ?? identity;
   const marker = parsed.scheme === "note_block" ? "•" : <ResourceTypeIcon type={type}/>;
@@ -312,10 +346,9 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
     arrow.current=node;
   },[]);
   const excludedEdgeIds=useMemo(()=>[...childrenBranch.traversedEdgeIds].sort(),[childrenBranch]);
-  const aliasMeaning=item?.preview.body.kind==="passage"&&!ref.startsWith("passage_anchor:")?[item.action_ref,item.preview.source?.ref??null,item.preview.body.excerpt,item.preview.body.capture_revision,item.activation]:null;
-  const descriptor=projection.kind==="resource"&&item?.missing!==true?{
+  const descriptor=projection.kind==="resource"&&missing!==true?{
     resource_ref:ref,excluded_edge_ids:excludedEdgeIds,
-    identity:JSON.stringify([ref,excludedEdgeIds,aliasMeaning]),
+    identity:JSON.stringify([ref,excludedEdgeIds,presentation.readingKey??null]),
   }:null;
   const latestDescriptor=useRef(descriptor);latestDescriptor.current=descriptor;
   const descriptorIdentity=descriptor?.identity??null;
@@ -399,7 +432,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
     onClick={() => outline?.reveal(projection.target)} data-row-focusable="true"><Icon.Locate size={14}/></button>
     : hasChildren ? <button ref={attachDisclosure} type="button" className={styles.control}
       aria-label={`${open ? "collapse" : "expand"} linked resources for ${label}`} aria-expanded={open}
-      aria-controls={open ? childrenId : undefined} disabled={item?.missing === true || disclosureDisabled}
+      aria-controls={open ? childrenId : undefined} disabled={missing === true || disclosureDisabled}
       onClick={toggle} data-row-focusable="true"><Icon.Disclose open={open} size={14}/></button>
     : null;
   const anchor = commands.length ? <ContextualActionMenu navigation={null} title={label} subjectKey={`relationship:${occurrenceKey}`}
@@ -427,15 +460,13 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
 
         </div>
         <div className={styles.actions}><ContextualActionMenu omitResourceActions={props.omitResourceActions}
-          linkSource={props.linkSource === undefined
-            ? item ? itemLinkSource(item, props.readingRef) : presentation.localLinkSource ?? null
-            : props.linkSource}
-          title={label} subjectKey={occurrenceKey} resourceRef={assumeCanonicalResourceRef(item?.action_ref ?? ref)}
-          navigation={item === null ? null : {
-            key: `${occurrenceKey}:${JSON.stringify(item.activation)}`,
-            fork: touch && runtime && item.activation.kind === "route" && item.activation.href !== null
-              ? paneForkLink({ runtime, target: { href: item.activation.href, labelHint: label }, disabledReason: null }) : null,
-          }} showSourceSubject={item !== null && item.action_ref !== item.ref}
+          linkSource={props.linkSource === undefined ? presentation.linkSource ?? null : props.linkSource}
+          title={label} subjectKey={occurrenceKey} resourceRef={assumeCanonicalResourceRef(actionRef ?? ref)}
+          navigation={activation === undefined ? null : {
+            key: `${occurrenceKey}:${JSON.stringify(activation)}`,
+            fork: touch && runtime && activation.kind === "route" && activation.href !== null
+              ? paneForkLink({ runtime, target: { href: activation.href, labelHint: label }, disabledReason: null }) : null,
+          }} showSourceSubject={actionRef !== undefined && actionRef !== ref}
           sections={rowActions ? [{id: "Occurrence", actions: rowActions}] : []} label={`more actions for ${label}`}/>
           {inRow ? anchor : null}{disclosure}</div>
       </div>

@@ -157,6 +157,7 @@ def resource_activations_for_refs(
     scoped = media_passages(
         db,
         include_excerpts=False,
+        include_apparatus_quote=False,
         viewer_id=viewer_id,
         refs=visible,
         reading_media_ids=reading_media_ids,

@@ -117,3 +117,92 @@ selectors and retain source-target keys plus bounded excerpts. the paired clone
 32,123 bytes with grouped source/child evidence. strict internal candidates and
 on-demand source resolution still preserve full extents. these response changes
 do not qualify simultaneous reader/search memory on the production host.
+
+2026-11-24 epub rehearsal, candidate `eea8826a951c`: alter's complete reader,
+document map, note detail, stale-identity refusal and downloaded copy passed in
+the 384 mib api profile with no oom. cgroup peak reached 403,296,256 bytes,
+above the required 369,098,752-byte ceiling for 32 mib of reserve. the small
+public clip met the margin at 365,301,760 bytes. private evidence
+`completion-implementation/lab-budgeted-reader-api/` in the epub corpus state.
+verify the final image with the complete large-book sequence and record both
+anonymous and file memory. the combined epub release remains open.
+
+the later streamed-document rehearsal ended at macbook host admission after
+waiting 1,800 s for a lab slot. the driver did not start. no capacity result
+was measured. a separately reviewed universal-memory client import change is
+available locally for evaluation after the nexus-only benchmark.
+
+the resumed `4d2cfb2b3a7e` rehearsal answered alter's map, reader, note detail
+and reading-copy requests, with no oom. the 384 mib api peaked at 404,324,352
+bytes against a 369,098,752-byte qualification ceiling. note detail invokes
+the authored excerpt helper for the first time, bringing the node executable
+into the cgroup. measure the complete sequence again after addressing that
+boundary. private evidence is in
+`completion-implementation/resume-alter-exact-4d2cfb2/`.
+
+a matched linux import probe with the prospective universal-memory pin and
+worker-only atlas import saved 7.25 mib of anonymous memory. a direct node
+helper still incurred the runtime load. the pin remains held. note rendering
+now retains only the requested anchor names, with byte-identical output on
+eleven binding cases. verify its effect on the complete capped hosted sequence.
+
+the sealed `352634fb36ae` image answered the full hosted sequence, including
+wrong-identity refusal and a downloaded archive whose reader document matched
+the hosted document. peak was 405,065,728 bytes against the same 369,098,752
+byte qualification ceiling, with zero oom events. the private receipt is
+`completion-implementation/resume-sealed-bibles-352634fb/alter/api-capacity.json`.
+
+the `dc27a75af57c` image again answered alter's complete hosted sequence in
+the 384 mib no-swap profile. its kernel peak reached 403,292,160 bytes with
+zero oom events. the document map alone reached 383,950,848 bytes, above the
+369,098,752-byte ceiling. private evidence is
+`completion-implementation/final-capped-dc27a75a/alter/api-capacity.json`.
+
+an eager pydantic 2.14.4 and universal-memory client overlay matched the full
+response and downloaded member digests on the same mounted alter. its warmed
+sequence still peaked at 396,161,024 bytes, leaving 6,492,160 bytes of reserve.
+the first note detail added about 77.8 mb of file charge and the repeated map
+raised anonymous usage. cold import savings alone leave a warm-path gap.
+the pins remain in place. private evidence is
+`completion-implementation/final-capped-dc27a75a/eager-overlay/checks.json`.
+
+`f99763d0676a` again completed the exact hosted alter sequence. the document
+map reached 371,683,328 bytes, and note detail reached the 402,653,184 byte
+cap with zero oom events. the memory gate requires at most 369,098,752 bytes.
+the representative clipped public share passed with a 311,840,768-byte peak.
+see `completion-implementation/final-capped-f99763d0/`.
+
+`c7c026e172e7` completed the same hosted reads at a 290,447,360-byte peak.
+the cgroup had only 163,840 bytes of file memory after note detail and
+reading copy. the comparable `f99763d0676a` note request charged 120,012,800
+file bytes with similar anonymous usage. the latest run proves the responses.
+qualification still needs a run that accounts for file-backed pages under
+the 384 mib cap. see `completion-implementation/final-capped-c7c026e1/`.
+
+the repeated exact c7 serving image charged 74,518,528 file bytes by ready.
+the map and reader answered below the qualification ceiling. the first note
+detail lifted file memory to 118,640,640 bytes, with anonymous memory steady
+at about 271 mb, and reached the hard cap. the complete copy and stale request
+checks still passed. the worker in this lab carried phase instrumentation;
+the separate serving container used the exact pinned image without bind mounts.
+see `completion-implementation/final-capped-c7c026e1-phase-trace/alter/api-capacity.json`.
+
+`3c28bf1e7a5d` passed the hosted alter response checks and capped public clip.
+alter peaked at 297,824,256 bytes while only 7,544,832 bytes of file memory
+were charged after reading copy. the api's effective allocator settings
+are unchanged at `8a63f90a6aee`. close only after the same hosted workload
+meets the reserve with the cold file charge accounted for.
+
+`e4bf4f720fdc` removes the short resource preview from complete note detail.
+the same alter note retained exact body, location and actions. the first
+detail added no processes, file bytes or peak on the new image. the old
+image added 44,032,000 file bytes during that request.
+
+the new image charged 113,094,656 file bytes by readiness. the cold map
+and reader exceeded the reserve before detail. the first reading copy hit
+the cap, and warm reader replay reached 403,181,568 bytes. concurrent note
+and lexical search returned exact results, with 1,277 cumulative limit events,
+8,963 microseconds of measured memory stalls and zero oom events. qualify
+startup, map, reader and copy under the same cold profile and warm repeat.
+private evidence is
+`completion-implementation/full-note-capacity/e4bf4f72-capacity/full-note-capacity.json`.

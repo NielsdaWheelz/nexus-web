@@ -71,9 +71,40 @@ an inferred heading reference requires independent target note context and an
 exact backlink before it can delimit another note. reciprocity alone establishes
 neither note direction nor a complete body.
 
-imports allow 10,000 opener facts and 8 MiB of retained target data, within
-the 10,000 target and emitted-backlink caps, the 8 MiB opener-data cap and the
-archive/parse fences.
+declared epub note roles are interpreted at the source, including contextual
+`rearnote` bodies and `rearnotes` collections. a publisher can also identify an
+individual body with a list item, a note wrapper, or a named paragraph next to
+its standalone return. the named source marker must resolve back from that
+entry before its body is published as a note. an explicit file-level marker
+can address a first anonymous declared body with the matching leading return.
+ordered note runs, explicitly grouped lettered entries, and a standalone
+note file can establish a complete individual body. the marker and return
+must agree at the exact source addresses and carry the same printed label
+where the source provides a label at each end.
+
+a package notes entry corroborated by a printed heading can establish the
+scope of split notes. independently proved consecutive note-only pages can
+also bound a note. a file boundary never licenses taking subsequent prose or
+another note into the body. a note whose direction or extent stays unproved
+remains an ordinary link.
+
+a named editorial opening can close a run when package and printed contents
+identify the title and it links back to that exact printed entry. staged
+binding verifies unique names and exact links. for a lone chapter note, the
+return must occupy the only meaningful block between its divider and the exact
+next chapter opening. a matching pair in a bounded multi-note group in another
+chapter of the same contiguous sequence proves its role. unproved pairs keep
+their authored link behavior.
+
+the attempt's sqlite index joins source backlinks and target addresses. it
+holds at most 64 mib. sqlite reports exhaustion of that index or its backing
+storage as a typed output-limit refusal. collection permits 24,000 marker or backlink facts,
+8 mib of retained evidence, 16,000 target bodies and 32 mib of target data.
+bind a member before reading the next. close and discard the index after
+binding. keep rendered markup and up to 64 mib of bound apparatus rows in
+compressed attempt files. release navigation structures before publication.
+bind fragment text as utf-8 bytes and read the staged rows in bounded batches
+inside the publication transaction.
 
 ## contents and sections
 
@@ -155,6 +186,9 @@ that presentation hides (a zero font size, no fill) or that is drawn elsewhere
 document, a fragment or an http(s) url; any other href (mailto, tel and protocol
 handlers included) is removed and its text stays.
 
+the staged local link is a package-root-relative url. consumers decode its
+path and fragment once before matching an archive member and authored name.
+
 An absent or unparseable optional entry is absence: the book imports with a
 smaller table of contents. Only a required entry (`container.xml`, the OPF)
 turns an unparseable entry into a terminal `E_INVALID_FILE_TYPE`. A raster image
@@ -166,11 +200,13 @@ the svg drew goes with it). A missing, undeclared or unparseable SVG image still
 refuses the book (`E_INVALID_FILE_TYPE`).
 
 The declared budgets are the archive ones (entry count, per-entry and total
-uncompressed size, compression ratio), the 30 s parse wall clock (checked before
+uncompressed size, compression ratio), the 180 s parse wall clock (checked before
 every chapter of every pass and at the end, so a slow book stops near it), the
 16 MiB an XHTML, navigation or NCX entry may declare in its ZIP header, the 64 MiB
-of rendered text one book may produce, and the bounded apparatus index. A refused
-source raises from `prepare_epub_source`: `ApiError` with its code, or a breach as
+of rendered text one book may produce, and the bounded apparatus index.
+canonical normalization refuses a single grapheme over 16,384 code points
+before normalizing it. a refused source raises from `prepare_epub_source` as
+`ApiError` with its code, or a breach as
 `ResourceLimitError`, terminal `E_RESOURCE_LIMIT` carrying a safe dimension. `E_ARCHIVE_UNSAFE` remains
 reserved for archive path safety. A stored object that does not match the media
 source's persisted digest is terminal `E_SOURCE_INTEGRITY`, refused before the

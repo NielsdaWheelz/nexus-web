@@ -150,26 +150,42 @@ export default function TextSurface({
         if ("identity" in to && to.identity !== identity) {
           return { kind: "Unavailable", reason: "SourceChanged" };
         }
+        if (signal.aborted) return { kind: "Cancelled" };
         const before = port.scrollTop;
-        const release = text.realize(to);
         const arrived = (): NavOutcome => {
           placement.current = handle.capture();
           return {
             kind: Math.abs(port.scrollTop - before) < 1 ? "Unchanged" : "Arrived",
           };
         };
+        const anchor = "kind" in to && to.kind === "anchor";
+        if (anchor && text.arrived(to)) return arrived();
+        let release = text.realize(to);
         try {
-          if (signal.aborted) return { kind: "Cancelled" };
           // A resize below the passage needs no correction. Waiting a frame
           // here would mistake continuing native inertia for a failed move.
-          if (text.arrived(to)) return arrived();
+          if (!anchor && text.arrived(to)) return arrived();
           for (let attempt = 0; attempt < 12; attempt += 1) {
             if (signal.aborted) return { kind: "Cancelled" };
             if (!text.scrollTo(to))
               return { kind: "Unavailable", reason: "TargetUnavailable" };
             await nextFrame(signal);
             if (signal.aborted) return { kind: "Cancelled" };
-            if (text.arrived(to)) return arrived();
+            if (!text.arrived(to)) continue;
+            if (anchor) {
+              // Give the browser a paint at the realized size, then check the
+              // destination under its normal content visibility.
+              await nextFrame(signal);
+              if (signal.aborted) return { kind: "Cancelled" };
+              release();
+              await nextFrame(signal);
+              if (signal.aborted) return { kind: "Cancelled" };
+              if (!text.arrived(to)) {
+                release = text.realize(to);
+                continue;
+              }
+            }
+            return arrived();
           }
           return { kind: "Unavailable", reason: "PositioningFailed" };
         } finally {

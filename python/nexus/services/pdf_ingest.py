@@ -339,8 +339,8 @@ def publish_pdf_plan(
     replace_media_apparatus(
         db,
         media_id=media.id,
-        items=plan.apparatus_items,
-        edges=plan.apparatus_edges,
+        item_rows=lambda: iter(plan.apparatus_items),
+        edge_rows=lambda: iter(plan.apparatus_edges),
         note_groups=[],
         status=plan.apparatus_status,
     )

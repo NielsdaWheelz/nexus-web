@@ -4,16 +4,18 @@ The document response prepares its complete JSON in a temporary file before
 headers, releasing its snapshot and model before bounded body transfer.
 """
 
-import json
+import gzip
 import tempfile
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from io import TextIOWrapper
+from io import BufferedIOBase
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID, uuid4
 
 from anyio import to_thread
 from fastapi import APIRouter, Depends, Request, Response
+from sqlalchemy.orm import Session
 from starlette.types import Receive, Scope, Send
 
 from nexus.auth.middleware import Viewer, get_viewer
@@ -49,34 +51,23 @@ router = APIRouter(tags=["media"])
 _WRITE_CHUNK_BYTES = 64 * 1024
 
 
-class _ReaderDocumentResponse(Response):
+class _ReaderJsonResponse(Response):
     """Own preparation and file transfer; worker calls finish before cancellation propagates."""
 
-    def __init__(self, *, viewer_id: UUID, media_id: UUID) -> None:
+    def __init__(self, write: Callable[[Session, BufferedIOBase], None]) -> None:
         super().__init__()
-        self.viewer_id = viewer_id
-        self.media_id = media_id
+        self.write = write
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         with tempfile.TemporaryFile() as output:
 
             def prepare() -> int:
-                with get_session_factory()() as db:
-                    payload = reader_document.read_hosted_reader(
-                        get_repeatable_read_db(db), self.viewer_id, self.media_id
-                    ).model_dump(mode="json")
-                writer = TextIOWrapper(output, encoding="utf-8")
-                try:
-                    json.dump(
-                        payload,
-                        writer,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                        allow_nan=False,
-                    )
-                finally:
-                    writer.detach()
-                size_bytes = output.tell()
+                with (
+                    get_session_factory()() as db,
+                    gzip.GzipFile(fileobj=output, mode="wb", compresslevel=1) as staged,
+                ):
+                    self.write(get_repeatable_read_db(db), staged)
+                    size_bytes = staged.tell()
                 output.seek(0)
                 return size_bytes
 
@@ -91,8 +82,9 @@ class _ReaderDocumentResponse(Response):
                     "headers": response.raw_headers,
                 }
             )
-            while chunk := await to_thread.run_sync(output.read, _WRITE_CHUNK_BYTES):
-                await send({"type": "http.response.body", "body": chunk, "more_body": True})
+            with gzip.GzipFile(fileobj=output, mode="rb") as staged:
+                while chunk := await to_thread.run_sync(staged.read, _WRITE_CHUNK_BYTES):
+                    await send({"type": "http.response.body", "body": chunk, "more_body": True})
             await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 
@@ -102,26 +94,30 @@ def get_reader_document(
     viewer: Annotated[Viewer, Depends(get_viewer)],
 ) -> Response:
     """The whole publication the reader mounts, from one snapshot."""
-    return _ReaderDocumentResponse(viewer_id=viewer.user_id, media_id=media_id)
+
+    return _ReaderJsonResponse(
+        lambda db, output: reader_document.write_hosted_reader(
+            db, viewer.user_id, media_id, output.write
+        )
+    )
 
 
-@router.get("/media/{media_id}/document-map")
+@router.get("/media/{media_id}/document-map", response_model=Data[ReaderDocumentMapOut])
 def get_reader_document_map(
     request: Request,
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: RepeatableReadDbSession,
-) -> Data[ReaderDocumentMapOut]:
+) -> Response:
     unsupported_params = sorted(request.query_params)
     if unsupported_params:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             f"Unsupported Document Map params: {', '.join(unsupported_params)}",
         )
-    return Data(
-        data=reader_document_map.get_reader_document_map(
-            db, viewer_id=viewer.user_id, media_id=media_id
-        )
+    return _ReaderJsonResponse(
+        lambda db, output: reader_document_map.write_reader_document_map(
+            db, viewer_id=viewer.user_id, media_id=media_id, output=output
+        ),
     )
 
 
@@ -189,12 +185,12 @@ def create_reading_copy(
     storage orphan sweep reclaims it after its minimum age; a retry builds another.
     """
     key = build_reading_copy_storage_path(media_id, uuid4())
-    storage = get_storage_client()
     with tempfile.TemporaryDirectory(prefix="nexus-reading-copy-") as directory:
         path = Path(directory) / "copy.zip"
         generation = reading_copy.build_reading_copy(
             db, viewer_id=viewer.user_id, media_id=media_id, path=path
         )
+        storage = get_storage_client()
         with path.open("rb") as file:
             storage.put_object(key, file, content_type="application/zip")
     expiry = get_settings().signed_url_expiry_s

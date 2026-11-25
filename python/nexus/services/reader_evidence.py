@@ -13,7 +13,9 @@ This projection is read-only and never inspects a root's descendants.
 
 from __future__ import annotations
 
+import zlib
 from dataclasses import dataclass
+from itertools import batched, chain
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -74,11 +76,15 @@ from nexus.services.resource_items.items import (
 from nexus.services.resource_items.locations import media_passages
 from nexus.services.resource_items.routing import activations_from_resolved_passages
 
+ReaderRootOrder = tuple[int, str, int, str]
+ReaderMarkerOrder = tuple[float, str, str]
+
 
 @dataclass(frozen=True, slots=True)
 class ReaderEvidenceProjection:
     evidence: ReaderEvidenceOut
-    markers: list[ReaderDocumentMapMarkerOut]
+    roots: list[tuple[ReaderRootOrder, bytes]]
+    markers: list[tuple[ReaderMarkerOrder, bytes]]
 
 
 def build_reader_evidence(
@@ -102,14 +108,126 @@ def build_reader_evidence(
 ) -> ReaderEvidenceProjection:
     """Merge direct facts by exact far ref after constructing domain-owned roots."""
     highlight_refs = {f"highlight:{highlight.id}" for highlight in highlights}
-    native_refs = set(highlight_refs)
-    if apparatus.status in ("ready", "partial"):
-        native_refs.update(item.resource_ref for item in apparatus.items)
-    generic_refs = {
+    direct_refs = {
         connection.other.ref
         for connection in connections.items
         if not (connection.origin == "citation" and connection.ordinal is not None)
-    } - native_refs
+    }
+
+    def markers_for(
+        local_embeds: list[DocumentEmbedOut], local_roots: list[ReaderEvidenceRootOut]
+    ) -> list[ReaderDocumentMapMarkerOut]:
+        return build_markers(
+            media_id=media_id,
+            embeds=local_embeds,
+            roots=local_roots,
+            fragment_ranges=fragment_ranges,
+            fragment_times=fragment_times,
+            total_fragment_chars=total_fragment_chars,
+            page_count=page_count,
+            pdf_page_heights=pdf_page_heights,
+        )
+
+    # Source references with authored facts stay live until those facts are merged.
+    # The rest are complete. Keep their encoded wire values and ordering keys only.
+    packed_roots: list[tuple[ReaderRootOrder, bytes]] = []
+    packed_markers: list[tuple[ReaderMarkerOrder, bytes]] = []
+    connected_apparatus: dict[str, ReaderEvidenceRootOut] = {}
+    connected_order: dict[str, int] = {}
+    source_count = 0
+    apparatus_source = None
+    source_batches = batched(apparatus.items, 128)
+    first_batch = next(source_batches, ()) if apparatus.status in ("ready", "partial") else ()
+    if first_batch:
+        owner = ResourceRef("media", media_id)
+        apparatus_source = source_attributions(db, viewer_id=viewer_id, refs=[owner]).get(owner.uri)
+        for batch in chain((first_batch,), source_batches):
+            refs = [ResourceRef("reader_apparatus_item", item.id) for item in batch]
+            passages = media_passages(
+                db,
+                viewer_id=viewer_id,
+                refs=refs,
+                reading_media_ids={ref.uri: media_id for ref in refs},
+                include_excerpts=False,
+            )
+            activations = activations_from_resolved_passages(
+                db,
+                viewer_id=viewer_id,
+                refs=refs,
+                missing_ref_uris=frozenset(),
+                scoped=passages,
+            )
+            standalone: list[ReaderEvidenceRootOut] = []
+            for item in batch:
+                resolution = apparatus_resolution(
+                    item,
+                    media_id=canonical_media_id,
+                    fragment_indexes=fragment_indexes,
+                    page_count=page_count,
+                )
+                marker_anchor_id = item.source_ref.get("marker_id")
+                selection = excerpt((item.body_text or "")[:601])
+                passage = passages.get(item.resource_ref)
+                root = ReaderEvidenceRootOut(
+                    ref=item.resource_ref,
+                    content=ReaderEvidenceSourceReferenceOut(
+                        resource_ref=item.resource_ref,
+                        action_ref=owner.uri,
+                        label=passage_label(selection.text),
+                        excerpt=selection,
+                        activation=activations[item.resource_ref],
+                        location_label=(item.label or None)
+                        if apparatus_source is not None
+                        else None,
+                        stable_key=item.stable_key,
+                        apparatus_kind=item.kind,
+                        confidence=item.confidence,
+                        link_revision=passage_link_revision(
+                            passage.owner, passage.quote, passage.locator
+                        )
+                        if passage is not None
+                        else None,
+                        marker_anchor_id=marker_anchor_id
+                        if isinstance(marker_anchor_id, str) and marker_anchor_id.strip()
+                        else None,
+                    ),
+                    continuation=(
+                        _child_continuation(
+                            ResourceRef("reader_apparatus_item", item.id),
+                            media_id=media_id,
+                            identity=reading_identity,
+                            resolution=resolution,
+                        )
+                        if (
+                            item.body_text if item.body_text is not None else item.label or ""
+                        ).strip()
+                        else None
+                    ),
+                    authored_placement=None,
+                    resolution=resolution,
+                )
+                slot = len(highlight_refs) + source_count
+                source_count += 1
+                if item.resource_ref in direct_refs:
+                    connected_apparatus[item.resource_ref] = root
+                    connected_order[item.resource_ref] = slot
+                else:
+                    standalone.append(root)
+                    packed_roots.append(
+                        (
+                            _root_sort_key(root, {}, slot),
+                            zlib.compress(root.model_dump_json().encode(), level=1),
+                        )
+                    )
+            packed_markers.extend(
+                (
+                    (marker.position, marker.kind, marker.item_id),
+                    zlib.compress(marker.model_dump_json().encode(), level=1),
+                )
+                for marker in markers_for([], standalone)
+            )
+
+    generic_refs = direct_refs - highlight_refs - connected_apparatus.keys()
     targets: dict[str, SourceTargetOut] = {}
     reading_media_ids = {ref: media_id for ref in highlight_refs}
     for ref in sorted(generic_refs):
@@ -194,69 +312,7 @@ def build_reader_evidence(
             authored_placement=None,
         )
 
-    apparatus_source = None
-    if apparatus.status in ("ready", "partial") and apparatus.items:
-        owner = ResourceRef("media", media_id)
-        apparatus_source = source_attributions(db, viewer_id=viewer_id, refs=[owner]).get(owner.uri)
-        refs = [ResourceRef("reader_apparatus_item", item.id) for item in apparatus.items]
-        passages = media_passages(
-            db,
-            viewer_id=viewer_id,
-            refs=refs,
-            reading_media_ids={ref.uri: media_id for ref in refs},
-            include_excerpts=False,
-        )
-        activations = activations_from_resolved_passages(
-            db,
-            viewer_id=viewer_id,
-            refs=refs,
-            missing_ref_uris=frozenset(),
-            scoped=passages,
-        )
-        for item in apparatus.items:
-            resolution = apparatus_resolution(
-                item,
-                media_id=canonical_media_id,
-                fragment_indexes=fragment_indexes,
-                page_count=page_count,
-            )
-            marker_anchor_id = item.source_ref.get("marker_id")
-            selection = excerpt((item.body_text or "")[:601])
-            passage = passages.get(item.resource_ref)
-            roots[item.resource_ref] = ReaderEvidenceRootOut(
-                ref=item.resource_ref,
-                content=ReaderEvidenceSourceReferenceOut(
-                    resource_ref=item.resource_ref,
-                    action_ref=owner.uri,
-                    label=passage_label(selection.text),
-                    excerpt=selection,
-                    activation=activations[item.resource_ref],
-                    location_label=(item.label or None) if apparatus_source is not None else None,
-                    stable_key=item.stable_key,
-                    apparatus_kind=item.kind,
-                    confidence=item.confidence,
-                    link_revision=passage_link_revision(
-                        passage.owner, passage.quote, passage.locator
-                    )
-                    if passage is not None
-                    else None,
-                    marker_anchor_id=marker_anchor_id
-                    if isinstance(marker_anchor_id, str) and marker_anchor_id.strip()
-                    else None,
-                ),
-                continuation=(
-                    _child_continuation(
-                        ResourceRef("reader_apparatus_item", item.id),
-                        media_id=media_id,
-                        identity=reading_identity,
-                        resolution=resolution,
-                    )
-                    if (item.body_text if item.body_text is not None else item.label or "").strip()
-                    else None
-                ),
-                authored_placement=None,
-                resolution=resolution,
-            )
+    roots.update(connected_apparatus)
 
     first_facts: dict[str, int] = {}
     predecessor: UUID | None = None
@@ -342,13 +398,19 @@ def build_reader_evidence(
 
         predecessor = connection.edge_id
 
-    owner_order = {ref: index for index, ref in enumerate(roots)}
-    roots_out = sorted(
-        roots.values(),
-        key=lambda root: _root_sort_key(root, first_facts, owner_order),
-    )
-    counts = {"highlights": 0, "citations": 0, "links": 0, "machine_links": 0}
-    for root in roots_out:
+    standalone_count = len(packed_roots)
+    counts = {"highlights": 0, "citations": standalone_count, "links": 0, "machine_links": 0}
+    roots_out = list(roots.values())
+    for index, (key, root) in enumerate(roots.items()):
+        slot = connected_order.get(
+            key, index if key in highlight_refs else index + standalone_count
+        )
+        packed_roots.append(
+            (
+                _root_sort_key(root, first_facts, slot),
+                zlib.compress(root.model_dump_json().encode(), level=1),
+            )
+        )
         facets: set[str] = set()
         if isinstance(root.content, ReaderEvidenceHighlightOut):
             facets.add("highlights")
@@ -363,22 +425,21 @@ def build_reader_evidence(
                 facets.add("links")
         for facet in facets:
             counts[facet] += 1
+    packed_markers.extend(
+        (
+            (marker.position, marker.kind, marker.item_id),
+            zlib.compress(marker.model_dump_json().encode(), level=1),
+        )
+        for marker in markers_for(embeds, roots_out)
+    )
     return ReaderEvidenceProjection(
         evidence=ReaderEvidenceOut(
             apparatus_source=apparatus_source,
-            roots=roots_out,
+            roots=[],
             counts=ReaderEvidenceCountsOut(**counts),
         ),
-        markers=build_markers(
-            media_id=media_id,
-            embeds=embeds,
-            roots=roots_out,
-            fragment_ranges=fragment_ranges,
-            fragment_times=fragment_times,
-            total_fragment_chars=total_fragment_chars,
-            page_count=page_count,
-            pdf_page_heights=pdf_page_heights,
-        ),
+        roots=packed_roots,
+        markers=packed_markers,
     )
 
 
@@ -493,8 +554,8 @@ def _child_continuation(
 
 
 def _root_sort_key(
-    root: ReaderEvidenceRootOut, first_facts: dict[str, int], owner_order: dict[str, int]
-) -> tuple[int, str, int, str]:
+    root: ReaderEvidenceRootOut, first_facts: dict[str, int], owner_slot: int
+) -> ReaderRootOrder:
     from nexus.services.reader_evidence_markers import evidence_root_key
 
     key = evidence_root_key(root)
@@ -502,4 +563,4 @@ def _root_sort_key(
         return (0, root.resolution.order_key, 0, root.ref)
     if root.resolution is None:
         return (1, "", first_facts[key], key)
-    return (2, root.resolution.sort_order_key or "", owner_order[key], key)
+    return (2, root.resolution.sort_order_key or "", owner_slot, key)

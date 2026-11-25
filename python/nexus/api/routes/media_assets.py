@@ -1,7 +1,7 @@
 """External image proxy and private EPUB asset serving.
 
 Both own static ``/media/<literal>`` prefixes, so this router is registered
-before the media router (see create_api_router).
+before the media router (see mount_api_routes).
 """
 
 from tempfile import TemporaryFile

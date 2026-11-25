@@ -24,7 +24,7 @@ import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetAnchor, activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
-import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
+import { ResourceOutlineSourceRow } from "@/components/resources/ResourceOutlineRow";
 import { readerDestinationHref } from "../hostedReader";
 import type { EvidenceOpenRequest } from "./EvidenceRow";
 import styles from "./EvidencePane.module.css";
@@ -93,7 +93,7 @@ function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, read
   if (detail.status === "failed") return <Failed error={detail.error} noun="note details" retry={{ run: detail.refetch, busy: detail.retrying }} />;
   if (!detail.data.targets.length) return <Fact line={{ fact: "couldn’t find where this note points." }} speak={speak} />;
   return <ResourceOutlineList scope={`reader-source:${referenceRef}`} ariaLabel="source targets">{detail.data.targets.map((target) => {
-    const { content } = target;
+    const { content, item } = target;
     let body: ReactNode;
     switch (content.kind) {
       case "Html": body = <HtmlRenderer htmlSanitized={content.html_sanitized} />; break;
@@ -101,18 +101,18 @@ function SourceNoteDetail({ occurrenceKey, referenceRef, mediaId, identity, read
       case "Unavailable": body = <p className={styles.text}>this text isn’t available.</p>; break;
       default: return assertNever(content);
     }
-    const { activation } = target.item;
+    const { activation } = item;
     const href = activation.kind === "route" ? activation.href : null;
     const locator = target.resolution.kind === "Resolved" ? target.resolution.anchor.locator : null;
     const unit = locator && "fragment_id" in locator ? locator.fragment_id : null;
-    return <ResourceOutlineRow incoming={null} key={target.item.ref} item={target.item} occurrenceKey={`${occurrenceKey}/source:${target.item.ref}`}
-      sourceContent={<SourceContent reader={reader} mediaId={mediaId} identity={identity} unit={unit}>{body}</SourceContent>}
+    return <ResourceOutlineSourceRow incoming={null} key={item.ref} item={item} identity={identity} occurrenceKey={`${occurrenceKey}/source:${item.ref}`}
+      linkSource={{ref: item.ref, label: item.label, passage: {revision: item.link_revision, readingMediaId: mediaId}}}
       resourceDetails={<div className={styles.sourceActions}>
         {href ? <a className={styles.sourceLink} href={href} data-workspace-rich-target="true"
-          onClick={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: target.item.label } })}
-          onKeyDown={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: target.item.label } })}>view in source</a>
-          : <span className={styles.quiet}>location unavailable</span>}
-      </div>} />;
+          onClick={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}
+          onKeyDown={(event) => activateTargetLink({ event, runtime, target: { href, labelHint: item.label } })}>view in source</a>
+          : <span className={styles.quiet}>{activation.unavailable_reason === "source_unavailable" ? "source unavailable" : "location unavailable"}</span>}
+      </div>}><SourceContent reader={reader} mediaId={mediaId} identity={identity} unit={unit}>{body}</SourceContent></ResourceOutlineSourceRow>;
   })}</ResourceOutlineList>;
 }
 

@@ -25,7 +25,7 @@ type SectionFormat = Literal["epub", "web_article"]
 
 
 def section_detector_revision(format: SectionFormat) -> int:
-    return 4 if format == "epub" else 3
+    return 5 if format == "epub" else 3
 
 
 @dataclass(frozen=True)

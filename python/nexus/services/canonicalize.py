@@ -34,6 +34,8 @@ from typing import Literal
 import regex
 from lxml.etree import HTMLParser
 
+from nexus.errors import ResourceLimitError
+
 HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 STRUCTURAL_TAGS = frozenset({"section", "article"})
 STRUCTURE_CAPTURE_TAGS = STRUCTURAL_TAGS | {
@@ -52,6 +54,8 @@ BLOCK_ELEMENTS = frozenset(
 SKIP_ELEMENTS = frozenset({"script", "style", "noscript", "template"})
 WHITESPACE_RE = re.compile(r"[\s\u00a0]+")
 _NFC_BATCHES = regex.compile(r"(?:\X){1,4096}")
+_GRAPHEME = regex.compile(r"\X")
+_MAX_GRAPHEME_CODE_POINTS = 16_384
 
 
 @dataclass(slots=True)
@@ -383,18 +387,25 @@ def _transform(raw_text: str, boundaries: Sequence[int] | None) -> tuple[str, ar
 
 
 def _normalize_nfc(text: str, boundaries: Sequence[int] | None) -> tuple[str, array | None]:
-    if boundaries is None:
-        return "".join(normalized for _start, _raw, normalized in _normalized_batches(text)), None
-    source_type = "B" if len(boundaries) <= 255 else "H" if len(boundaries) <= 65_535 else "I"
-    chunks: list[str] = []
-    sources = array(source_type)
+    sources = None
+    if boundaries is not None:
+        source_type = "B" if len(boundaries) <= 255 else "H" if len(boundaries) <= 65_535 else "I"
+        sources = array(source_type)
+    parts: list[str] = []
+    previous_end = 0
     for start, raw, normalized in _normalized_batches(text):
-        chunks.append(normalized)
-        sources.extend(
-            bisect_right(boundaries, first)
-            for first, _last in _nfc_contributors(start, raw, normalized)
-        )
-    return "".join(chunks), sources
+        if raw != normalized:
+            parts.extend((text[previous_end:start], normalized))
+            previous_end = start + len(raw)
+        if boundaries is not None and sources is not None:
+            sources.extend(
+                bisect_right(boundaries, first)
+                for first, _last in _nfc_contributors(start, raw, normalized)
+            )
+    if parts:
+        parts.append(text[previous_end:])
+        text = "".join(parts)
+    return text, sources
 
 
 def _nfc_contributors(start: int, raw: str, normalized: str) -> Iterator[tuple[int, int]]:
@@ -592,6 +603,13 @@ def _normalized_batches(text: str) -> Iterator[tuple[int, str, str]]:
         yield 0, text, text
         return
     for match in _NFC_BATCHES.finditer(text):
+        if match.end() - match.start() > _MAX_GRAPHEME_CODE_POINTS and any(
+            cluster.end() - cluster.start() > _MAX_GRAPHEME_CODE_POINTS
+            for cluster in _GRAPHEME.finditer(text, match.start(), match.end())
+        ):
+            raise ResourceLimitError(
+                "Unicode grapheme exceeds 16,384 code points", dimension="Output"
+            )
         raw = match[0]
         yield match.start(), raw, unicodedata.normalize("NFC", raw)
 

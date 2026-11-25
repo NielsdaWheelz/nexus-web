@@ -13,9 +13,11 @@ An anchored `[n] <em>incipit` sequence remains a supported source division.
 
 import re
 import unicodedata
-from collections.abc import Callable, Collection, Iterable, Sequence
+from collections import Counter
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
-from itertools import pairwise
+from hashlib import sha256
+from itertools import islice, pairwise
 from typing import Literal
 from urllib.parse import unquote
 from uuid import UUID, uuid4, uuid5
@@ -24,7 +26,7 @@ from lxml.etree import iterwalk
 from lxml.html import HtmlElement
 
 from nexus.errors import ResourceLimitError
-from nexus.schemas.reader_apparatus import NoteGroupRegion, NoteRegion
+from nexus.schemas.reader_apparatus import NoteRegion
 from nexus.services.canonicalize import (
     HEADING_TAGS,
     STRUCTURAL_TAGS,
@@ -34,19 +36,23 @@ from nexus.services.canonicalize import (
     canonicalize_structure,
     generate_canonical_text,
 )
+from nexus.services.html_apparatus import is_printed_note_heading, reading_title_key
 from nexus.services.html_tree import parse_html_document, serialize_html
 from nexus.services.reader_structure import (
     DocumentPoint,
     DomCut,
     FragmentIntervals,
     NavigationNoteIndex,
+    SectionBoundary,
+    SectionEnd,
     SectionRangeInput,
     resolve_section_extents,
 )
-from nexus.services.sanitize_html import element_id, sanitize_epub_chapter
+from nexus.services.sanitize_html import element_id, hides, sanitize_epub_chapter
 from nexus.text import normalize_whitespace
 
 type SectionSource = Literal["Publisher", "Heading", "Both", "InferredNumberedEntry"]
+type _SourceKey = tuple[str, str]
 _PARATEXT_ROLES = frozenset(
     {
         "titlepage",
@@ -58,6 +64,22 @@ _PARATEXT_ROLES = frozenset(
         "backmatter",
     }
 )
+_NON_CONTENTS_ROLES = frozenset(
+    {
+        "page-list",
+        "pagelist",
+        "landmarks",
+        "bibliography",
+        "biblioentry",
+        "index",
+        "glossary",
+        "footnote",
+        "footnotes",
+        "endnote",
+        "endnotes",
+    }
+)
+_OPENING_REFERENCE_LABEL = re.compile(r"(?:\[?\d{1,4}\]?\.?|[*†‡])")
 
 
 @dataclass(frozen=True)
@@ -123,6 +145,7 @@ class _Section:
     boundary_scope: str | None
     owns_container: bool = False
     publisher_parent: str | None = None
+    publisher_depth: int | None = None
     start_cut: DomCut | None = None
     container_end_cut: DomCut | None = None
 
@@ -161,17 +184,22 @@ def bind_epub_source_structure(
 ) -> CanonicalStructure:
     """Bind authored roles and heading groups without changing retained coordinates.
 
-    Temporary ids track source nodes through the current sanitizer. They never
-    leave this copy. Equal complete canonical text permits ordered element
-    correspondence; otherwise an exact body and surrounding text must identify
-    one retained occurrence. An ambiguous authored fact refuses publication.
+    Temporary ids track authored facts and heading groups through the sanitizer.
+    Other nodes keep their authored ids and sanitization behavior. Equal canonical
+    text permits ordered element correspondence. Otherwise an exact body and
+    surrounding text must identify one retained occurrence. An ambiguous authored
+    fact refuses publication.
     """
     source = parse_html_document(source_html)
     body = source.body if source.body is not None else source
     body_id = element_id(body)
 
-    prefix = "nexus-structure-" + uuid4().hex + "-"
-    facts: list[tuple[HtmlElement, frozenset[str], bool, str | None]] = []
+    body_roles = frozenset(
+        token
+        for attribute in ("role", "epub:type", "{http://www.idpf.org/2007/ops}type", "type")
+        for token in (body.get(attribute) or "").lower().split()
+    )
+    facts: list[tuple[HtmlElement, frozenset[str], bool, HtmlElement | None]] = []
     original_nodes = [node for node in body.iterdescendants() if isinstance(node, HtmlElement)]
     body_id_reused = body_id is not None and any(
         body_id in (element_id(node), node.get("name")) for node in original_nodes
@@ -184,7 +212,6 @@ def bind_epub_source_structure(
         )
         for node in original_nodes
     }
-    marker_ids = {node: prefix + str(index) for index, node in enumerate(original_nodes)}
     for node in original_nodes:
         tag = str(node.tag).lower()
         if (
@@ -205,11 +232,18 @@ def bind_epub_source_structure(
             ancestor_tag = str(ancestor.tag).lower()
             in_navigation |= ancestor_tag == "nav"
             if group is None and ancestor_tag in {"header", "hgroup"}:
-                group = marker_ids.get(ancestor)
+                group = ancestor
             ancestor = ancestor.getparent()
         in_navigation |= bool(roles & {"toc", "doc-toc", "landmarks", "page-list"})
         if roles or in_navigation or group is not None:
             facts.append((node, frozenset(roles), in_navigation, group))
+    if not facts and body_id is None and not body_roles:
+        return structure
+
+    marked = {node for node, _roles, _navigation, _group in facts}
+    marked.update(group for _node, _roles, _navigation, group in facts if group is not None)
+    prefix = "nexus-structure-" + uuid4().hex + "-"
+    marker_ids = {node: prefix + str(index) for index, node in enumerate(marked)}
     for node, marker in marker_ids.items():
         node.set("id", marker)
     source_structure = canonicalize_structure(sanitize_epub_chapter(serialize_html(body)))
@@ -238,11 +272,11 @@ def bind_epub_source_structure(
             raise ValueError("EPUB authored structure has no unique retained correspondence")
         return position + len(before), position + len(before) + len(content)
 
-    grouped_headings: dict[str, list[CanonicalElement]] = {}
+    grouped_headings: dict[HtmlElement, list[CanonicalElement]] = {}
     for node, _source_roles, _navigation, group in facts:
         src = source_structure.anchors.get(marker_ids[node])
         if (
-            group
+            group is not None
             and src is not None
             and (node.tag in HEADING_TAGS or _aria_heading_level(node) is not None)
         ):
@@ -291,7 +325,7 @@ def bind_epub_source_structure(
         if tag not in HEADING_TAGS:
             element.heading_level = _aria_heading_level(node)
         if group is not None and element.heading_level is not None:
-            group_index = source_structure.anchors.get(group)
+            group_index = source_structure.anchors.get(marker_ids[group])
             if group_index is not None:
                 source_group = source_structure.elements[group_index]
                 headings = grouped_headings[group]
@@ -315,11 +349,6 @@ def bind_epub_source_structure(
         elif same_text:
             anchors[body_id] = len(elements)
             elements.append(CanonicalElement("span", 0, 0, None, None, (), False, dom_path=()))
-    body_roles = frozenset(
-        token
-        for attribute in ("role", "epub:type", "{http://www.idpf.org/2007/ops}type", "type")
-        for token in (body.get(attribute) or "").lower().split()
-    )
     body_labels = tuple((body.get("aria-labelledby") or "").split())
     if body_roles and body_id is None:
         start, end = retained_span(0, 0)
@@ -374,6 +403,19 @@ class EpubContents:
     nodes: tuple[EpubStructureTocNode, ...]
     entry_anchors: dict[str, dict[str, str | None]]
     division_starts: dict[str, SourceDivisionStarts]
+    # Source order. If an editorial opening has no return key, its position
+    # constrains a gap but cannot close a note.
+    editorial_openings: tuple[_SourceKey, ...]
+    chapter_sequences: tuple[tuple[_SourceKey, ...], ...]
+    opening_returns: dict[_SourceKey, _SourceKey]
+    file_start_openings: frozenset[_SourceKey]
+    note_collection_ends: dict[str, bool]
+    last_spine_member: str | None
+    independent_openings: frozenset[str]
+    printed_note_members: frozenset[str]
+    # Keyed by reading member, and only carried within one unique published title.
+    reading_titles: dict[str, str]
+    published_navigation: dict[str, set[str]]
 
 
 @dataclass(frozen=True)
@@ -394,19 +436,94 @@ class _Return:
     designation: str
     standalone: bool
     at_file_start: bool
+    visible_names: tuple[str, ...]
 
 
-def _link_key(href: str) -> tuple[str, str]:
+def _link_key(href: str) -> _SourceKey:
     path, _, anchor = href.partition("#")
     return path, unquote(anchor)
+
+
+def _source_anchor_names(element: HtmlElement) -> set[str]:
+    return {
+        name
+        for name in (element_id(element), element.get("name") if element.tag == "a" else None)
+        if name
+    }
+
+
+def _first_content(root: HtmlElement, *, prose_only: bool = False) -> HtmlElement | None:
+    for event, element in iterwalk(root, events=("start", "end")):
+        if not isinstance(element, HtmlElement):
+            continue
+        if event == "start" and (
+            not prose_only
+            and element.tag in {"img", "svg", "table"}
+            or (element.text or "").strip()
+        ):
+            return element
+        if event == "end" and (element.tail or "").strip():
+            return element.getparent()
+    return None
+
+
+def _leading_link(root: HtmlElement) -> HtmlElement | None:
+    first = _first_content(root)
+    if first is not None:
+        for owner in (first, *first.iterancestors()):
+            if owner.tag == "a":
+                return owner
+            if owner is root:
+                break
+    return None
+
+
+def _contents_roles(element: HtmlElement) -> frozenset[str]:
+    return frozenset(
+        (
+            element.get("epub:type") or element.get("{http://www.idpf.org/2007/ops}type") or ""
+        ).split()
+    ) | set((element.get("role") or "").split())
+
+
+def _visible_contents_link(element: HtmlElement) -> bool:
+    for owner in (element, *element.iterancestors()):
+        roles = {role.removeprefix("doc-") for role in _contents_roles(owner)}
+        style = re.sub(r"\s+", "", owner.get("style", "")).lower()
+        if (
+            roles & _NON_CONTENTS_ROLES
+            or owner.tag in {"fn", "footnote", "script", "template"}
+            or hides(owner)
+            or owner.get("aria-hidden", "").strip().lower() == "true"
+            or "display:none" in style
+            or "visibility:hidden" in style
+        ):
+            return False
+    return True
+
+
+def _visible_contents_text(element: HtmlElement) -> Iterator[str]:
+    walk = iterwalk(element, events=("start", "end", "comment", "pi"))
+    for event, node in walk:
+        if event == "start":
+            if not isinstance(node, HtmlElement) or not _visible_contents_link(node):
+                walk.skip_subtree()
+            elif node.text:
+                yield node.text
+        elif node is not element and node.tail:
+            yield node.tail
 
 
 def recognize_epub_contents(
     *,
     media_id: UUID,
+    book_title: str,
     documents: Iterable[tuple[str, str]],
     toc_nodes: Sequence[EpubStructureTocNode],
     package_navigation_hrefs: Collection[str],
+    declared_contents_hrefs: Collection[str],
+    spine_positions: Mapping[str, int],
+    last_spine_member: str | None,
     resolve_href: Callable[[str, str], str | None],
 ) -> EpubContents:
     """Read one bounded source document at a time; no apparatus evidence is needed.
@@ -416,13 +533,41 @@ def recognize_epub_contents(
     even when the index and printed title use different words.
     """
     package: dict[str, list[EpubStructureTocNode]] = {}
+    publisher_targets: set[_SourceKey] = set()
+    verified_package_headings: dict[str, str] = {}
+    independent_openings: set[str] = set()
+    printed_note_members: set[str] = set()
+    promotional_cards: dict[bytes, list[str]] = {}
     for node in toc_nodes:
         if node.nav_type == "toc" and node.href is not None:
-            package.setdefault(_link_key(node.href)[0], []).append(node)
+            path, name = _link_key(node.href)
+            package.setdefault(path, []).append(node)
+            if name:
+                publisher_targets.add((path, name))
+    title_paths: dict[str, set[str]] = {}
+    for path, published in package.items():
+        for node in published:
+            if key := reading_title_key(node.label):
+                title_paths.setdefault(key, set()).add(path)
+    verified_titles: dict[str, str] = {}
+    published_navigation: dict[str, set[str]] = {}
+    guide_scopes: dict[str, set[str]] = {}
+    for href in declared_contents_hrefs:
+        path, name = _link_key(href)
+        guide_scopes.setdefault(path, set()).add(name)
+    guide_arrivals: dict[str, set[_SourceKey]] = {}
+    physical_publisher_targets: set[_SourceKey] = set()
+    printed_links: dict[_SourceKey, _SourceKey] = {}
+    printed_openings: dict[_SourceKey, tuple[tuple[int, int], _SourceKey | None, bool]] = {}
+    chapter_sequences: list[tuple[_SourceKey, ...]] = []
+    opening_returns: dict[_SourceKey, _SourceKey] = {}
+    file_start_openings: set[_SourceKey] = set()
+    readable_spine: dict[str, int] = {}
     entries: list[_ContentsEntry] = []
     runs: list[list[_ContentsEntry]] = []
-    returns: dict[tuple[str, str], _Return] = {}
+    returns: dict[_SourceKey, _Return] = {}
     file_openings: set[str] = set()
+    note_group_openings: set[str] = set()
     raw_starts: dict[str, set[str]] = {}
     by_id = {node.node_id: node for node in toc_nodes}
     material_bytes = 0
@@ -437,60 +582,385 @@ def recognize_epub_contents(
                 "EPUB embedded contents exceed the source evidence budget", dimension="Output"
             )
 
+    def opening_title_key(title: str) -> str:
+        # Publisher navigation can insert spacing around typography or a
+        # subtitle colon. Preserve punctuation between numbers.
+        return "".join(
+            re.sub(r"(?<=[^\W\d_]):(?=\s+[^\W\d_])", "", title.casefold(), count=1).split()
+        )
+
+    work_title = opening_title_key(book_title)
+
+    def grouped_opening_title_keys(heading: HtmlElement) -> set[str]:
+        label = normalize_whitespace("".join(heading.itertext())).casefold()
+        if not re.fullmatch(
+            r"(?:[1-9][0-9]{0,3}\.?|(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)"
+            r" (?:chapter|essay|part|book|volume))",
+            label,
+        ):
+            return set()
+        prefix = label.rstrip(".")
+        title_parts = []
+        keys: set[str] = set()
+        for _ in range(2):
+            following = heading.getnext()
+            if (
+                not isinstance(following, HtmlElement)
+                or following.tag != heading.tag
+                or not _visible_contents_link(following)
+                or (heading.tail or "").strip()
+            ):
+                break
+            label = normalize_whitespace("".join(following.itertext()))
+            if (
+                len(following)
+                and (link := following[-1]).tag == "a"
+                and link.get("href")
+                and len(link) == 1
+                and link[0].tag == "sup"
+                and not (link.tail or "").strip()
+                and _OPENING_REFERENCE_LABEL.fullmatch(
+                    glyph := normalize_whitespace("".join(link.itertext()))
+                )
+            ):
+                label = label.removesuffix(glyph).rstrip()
+            if not label:
+                break
+            if "continued" in opening_title_key(label):
+                return set()
+            title_parts.append(label)
+            subtitle = " ".join(title_parts)
+            keys.update(
+                opening_title_key(title)
+                for title in (f"{prefix} {subtitle}", f"{prefix}: {subtitle}")
+            )
+            heading = following
+        return keys
+
     def read_document(spine_index: int, source_href: str, source_html: str) -> None:
         source = parse_html_document(source_html)
         original_body = source.body if source.body is not None else source
         body_id = element_id(original_body)
+        if (
+            source_href in package
+            and not (original_body.text or "").strip()
+            and all(
+                not (block.tail or "").strip()
+                and (
+                    not isinstance(block, HtmlElement)
+                    or hides(block)
+                    or _first_content(block) is None
+                    or block.tag == "p"
+                    and any(
+                        re.fullmatch(r"(?:foot|end)?notes?[0-9]*[a-z]?", style)
+                        for style in (block.get("class") or "").casefold().split()
+                    )
+                )
+                for block in original_body
+            )
+        ):
+            printed_note_members.add(source_href)
+        if "announcement_page" in (original_body.get("class") or "").casefold().split():
+            first = _first_content(original_body)
+            if (
+                first is not None
+                and first.tag == "img"
+                and any(
+                    node.tag == "a"
+                    and (node.get("href") or "").casefold().startswith(("https://", "http://"))
+                    for node in first.iterancestors()
+                )
+            ):
+                independent_openings.add(source_href)
+        if any(
+            node.label.casefold().strip() == "copyright" for node in package.get(source_href, ())
+        ):
+            first = _first_content(original_body, prose_only=True)
+            if first is not None:
+                block = next(
+                    (node for node in (first, *first.iterancestors()) if node.tag == "p"), None
+                )
+                if (
+                    block is not None
+                    and normalize_whitespace("".join(block.itertext())).casefold() == "copyright"
+                    and any(
+                        isinstance(line, HtmlElement)
+                        and normalize_whitespace("".join(line.itertext()))
+                        .casefold()
+                        .startswith("copyright ©")
+                        for line in block.itersiblings()
+                    )
+                ):
+                    independent_openings.add(source_href)
         # Only these direct source declarations need transfer through sanitation.
         # Transient titles leave the real ids and link identities intact.
         stamp = "nexus-source-" + uuid4().hex
-        for element in original_body.iter():
+        original_anchors: dict[str, HtmlElement | None] = {}
+        original_order: dict[str, int] = {}
+        printed_scopes: set[HtmlElement] = set()
+        for index, element in enumerate(original_body.iter()):
             if not isinstance(element, HtmlElement):
                 continue
-            roles = set(
-                (
-                    element.get("epub:type")
-                    or element.get("{http://www.idpf.org/2007/ops}type")
-                    or ""
-                ).split()
-            ) | set((element.get("role") or "").split())
+            for name in _source_anchor_names(element):
+                original_anchors[name] = element if name not in original_anchors else None
+                if (source_href, name) in publisher_targets:
+                    original_order[name] = index
+            roles = _contents_roles(element)
             if roles & {"toc", "doc-toc"}:
                 element.set("title", stamp + "-toc")
-            elif {role.removeprefix("doc-") for role in roles} & {
-                "page-list",
-                "pagelist",
-                "landmarks",
-                "bibliography",
-                "biblioentry",
-                "index",
-                "glossary",
-                "footnote",
-                "footnotes",
-                "endnote",
-                "endnotes",
-            }:
+                printed_scopes.add(element)
+            elif {role.removeprefix("doc-") for role in roles} & _NON_CONTENTS_ROLES:
                 element.set("title", stamp + "-other")
             elif (
                 _aria_heading_level(element) is not None or _declared_division(element) is not None
             ):
                 element.set("title", stamp + "-division")
+        if guide_scopes:
+            physical_publisher_targets.update(
+                (source_href, name)
+                for name in original_order
+                if (anchor := original_anchors[name]) is not None and _visible_contents_link(anchor)
+            )
+        # The sanitizer drops half-title classes. Join the original first
+        # title and its physical anchor to the publisher's contents here.
+        if (first := _first_content(original_body)) is not None:
+            for title in (first, *first.iterancestors()):
+                if title.tag != "p" or not any(
+                    re.fullmatch(r"halftitle[0-9]*", style)
+                    for style in (title.get("class") or "").casefold().split()
+                ):
+                    continue
+                printed = opening_title_key("".join(title.itertext()))
+                if "continued" in printed:
+                    continue
+                for node in package.get(source_href, ()):
+                    if node.href is None or opening_title_key(node.label) != printed:
+                        continue
+                    _, name = _link_key(node.href)
+                    target = original_anchors.get(name)
+                    if (
+                        not name
+                        or target is not None
+                        and (target is title or title in target.iterancestors())
+                    ):
+                        independent_openings.add(source_href)
+                        break
+            if (
+                scope := next(
+                    (
+                        node
+                        for node in (first, *first.iterancestors())
+                        if node.getparent() is original_body
+                    ),
+                    None,
+                )
+            ) is not None and _visible_contents_link(scope):
+                if scope.tag in HEADING_TAGS and not (scope.text or "").strip():
+                    printed = opening_title_key("".join(_visible_contents_text(scope)))
+                    if printed and "continued" not in printed:
+                        for node in package.get(source_href, ()):
+                            if node.href is None or opening_title_key(node.label) != printed:
+                                continue
+                            _, name = _link_key(node.href)
+                            owner = original_anchors.get(name)
+                            if (
+                                owner is not None
+                                and owner.tag == "a"
+                                and owner.getparent() is scope
+                                and not (
+                                    owner.get("href") or len(owner) or (owner.text or "").strip()
+                                )
+                                and _visible_contents_link(owner)
+                                and all(
+                                    _first_content(peer) is None
+                                    for peer in owner.itersiblings(preceding=True)
+                                )
+                            ):
+                                independent_openings.add(source_href)
+                                break
+                publisher_title = None
+                if (
+                    scope.tag == "div"
+                    and "noteontext" in (scope.get("class") or "").casefold().split()
+                    and _first_content(scope, prose_only=True) is first
+                    and _visible_contents_link(first)
+                ):
+                    publisher_title = r"notes? on (?:the )?text"
+                elif (
+                    scope.tag == "section"
+                    and _declared_division(scope) in {"part", "volume"}
+                    and first.tag == "img"
+                    and _visible_contents_link(first)
+                    and re.search(r"\S\s+logo$", (first.get("alt") or "").strip(), re.IGNORECASE)
+                    and _first_content(original_body, prose_only=True) is None
+                    and sum(1 for _ in original_body.iter("img", "svg", "table")) == 1
+                ):
+                    publisher_title = r"(?:part|volume) [a-z0-9]+"
+                if publisher_title is not None:
+                    for node in package.get(source_href, ()):
+                        if not node.href or not re.fullmatch(
+                            publisher_title, _match_label(node.label)
+                        ):
+                            continue
+                        _, name = _link_key(node.href)
+                        if original_anchors.get(name) in {scope, original_body} or (
+                            not name and scope.tag == "div"
+                        ):
+                            independent_openings.add(source_href)
+                            break
+                if (
+                    work_title
+                    and scope.tag == "h1"
+                    and opening_title_key("".join(_visible_contents_text(scope))) == work_title
+                ):
+                    lead = next(
+                        (
+                            block
+                            for block in scope.itersiblings()
+                            if isinstance(block, HtmlElement) and _first_content(block) is not None
+                        ),
+                        None,
+                    )
+                    if (
+                        lead is not None
+                        and lead.tag == "p"
+                        and "center" in (lead.get("class") or "").split()
+                        and re.match(
+                            r"^dedicated to the memory of\b",
+                            _match_label("".join(_visible_contents_text(lead))),
+                        )
+                        and (dedicatee := lead.getnext()) is not None
+                        and dedicatee.tag == "p"
+                        and dedicatee.get("class") == lead.get("class")
+                        and len(dedicatee) == 1
+                        and dedicatee[0].tag in {"b", "strong"}
+                        and not (dedicatee.text or "").strip()
+                        and not (dedicatee[0].tail or "").strip()
+                        and any(text.strip() for text in _visible_contents_text(dedicatee[0]))
+                    ):
+                        independent_openings.add(source_href)
+        if (
+            source_href in spine_positions
+            and first is not None
+            and first.tag == "h1"
+            and first.getparent() is original_body
+        ):
+            blocks = list(
+                islice(
+                    (
+                        child
+                        for child in original_body
+                        if isinstance(child, HtmlElement) and _first_content(child) is not None
+                    ),
+                    6,
+                )
+            )
+            if [block.tag for block in blocks] == ["h1", "p", "ul", "p", "ul"] and not any(
+                (child.tail or "").strip() for child in original_body
+            ):
+                _, account_block, services, site, resources = blocks
+                links = list(
+                    islice((link for link in original_body.iter("a") if link.get("href")), 2)
+                )
+                if (
+                    all(_visible_contents_link(block) for block in blocks)
+                    and all(
+                        (label := _first_content(block)) is not None
+                        and label.tag == "strong"
+                        and label.getparent() is block
+                        and _visible_contents_link(label)
+                        for block in (account_block, site)
+                    )
+                    and re.match(
+                        r"^公众号[：:]\s*\S",
+                        _match_label("".join(_visible_contents_text(account_block))),
+                    )
+                    and re.match(
+                        r"^网站[：:]\s*\S", _match_label("".join(_visible_contents_text(site)))
+                    )
+                    and len(links) == 1
+                    and links[0].getparent() is site
+                    and any(text.strip() for text in _visible_contents_text(links[0]))
+                    and re.match(r"^https?://[^\s/#?]+", links[0].get("href") or "", re.IGNORECASE)
+                    and all(
+                        any(
+                            child.tag == "li"
+                            and any(text.strip() for text in _visible_contents_text(child))
+                            for child in menu
+                        )
+                        for menu in (services, resources)
+                    )
+                ):
+                    digest = sha256()
+                    chunk_chars = 64 * 1024
+                    for offset in range(0, len(source_html), chunk_chars):
+                        digest.update(source_html[offset : offset + chunk_chars].encode())
+                    promotional_cards.setdefault(digest.digest(), []).append(source_href)
+        for name in guide_scopes.get(source_href, ()):
+            scope = original_anchors.get(name) if name else original_body
+            if scope is not None:
+                printed_scopes.add(scope)
+                if (
+                    name
+                    and first is not None
+                    and _first_content(scope) is first
+                    and (
+                        heading := next(
+                            (
+                                node
+                                for node in (first, *first.iterancestors())
+                                if node.tag in HEADING_TAGS | {"p"}
+                            ),
+                            None,
+                        )
+                    )
+                    is not None
+                    and _match_label("".join(_visible_contents_text(heading)))
+                    in {"contents", "table of contents"}
+                ):
+                    guide_arrivals.setdefault(source_href, set()).update(
+                        key
+                        for link in scope.iter("a")
+                        if (href := link.get("href"))
+                        and (target := resolve_href(source_href, href)) is not None
+                        and (key := _link_key(target)) in publisher_targets
+                        and any(text.strip() for text in _visible_contents_text(link))
+                    )
         body_toc = original_body.get("title") == stamp + "-toc"
         if original_body.get("title") == stamp + "-division":
             file_openings.add(source_href)
         clean = sanitize_epub_chapter(serialize_html(source))
         if not clean.strip():
             return
+        if (original_index := spine_positions.get(source_href)) is not None:
+            readable_spine[source_href] = original_index
         doc = parse_html_document(clean)
         body = doc.body if doc.body is not None else doc
         elements = [e for e in body.iter() if isinstance(e, HtmlElement)]
         position = {e: i for i, e in enumerate(elements)}
         anchors: dict[str, HtmlElement | None] = {}
         for element in elements:
-            for name in {element_id(element), element.get("name") if element.tag == "a" else None}:
-                if name:
-                    anchors[name] = element if name not in anchors else None
+            for name in _source_anchor_names(element):
+                anchors[name] = element if name not in anchors else None
         if body_id:
             anchors[body_id] = body if body_id not in anchors else None
+        if printed_scopes and source_href not in package_navigation_hrefs:
+            for original_link in original_body.iter("a"):
+                name = element_id(original_link) or original_link.get("name")
+                if (
+                    not name
+                    or original_anchors.get(name) is not original_link
+                    or (clean_link := anchors.get(name)) is None
+                    or not (raw_href := original_link.get("href"))
+                    or not (target := resolve_href(source_href, raw_href))
+                    or (key := _link_key(target)) not in publisher_targets
+                    or not normalize_whitespace("".join(clean_link.itertext()))
+                    or not any(owner in printed_scopes for owner in original_link.iterancestors())
+                    or not _visible_contents_link(original_link)
+                ):
+                    continue
+                account(source_href, name, *key)
+                printed_links[(source_href, name)] = key
         suppliers: dict[HtmlElement, list[str]] = {}
         for node in package.get(source_href, []):
             assert node.href is not None
@@ -498,6 +968,8 @@ def recognize_epub_contents(
             source_element = anchors.get(name) if name else body
             if source_element is not None:
                 suppliers.setdefault(source_element, []).append(node.node_id)
+                if name and original_anchors.get(name) is not None:
+                    published_navigation.setdefault(source_href, set()).add(name)
 
         def source_nodes(element: HtmlElement) -> list[str]:
             for owner in (element, *element.iterancestors()):
@@ -516,6 +988,29 @@ def recognize_epub_contents(
                 name
                 for el in (link, row)
                 if (name := element_id(el) or el.get("name")) and anchors.get(name) is el
+            )
+
+        def authored_return(name: str) -> str | None:
+            owner = original_anchors.get(name)
+            link = _leading_link(owner) if owner is not None else None
+            if (
+                link is not None
+                and _visible_contents_link(link)
+                and not any(scope in printed_scopes for scope in link.iterancestors())
+            ):
+                return link.get("href") or None
+            return None
+
+        def return_key(href: str | None) -> _SourceKey | None:
+            resolved = resolve_href(source_href, href) if href else None
+            return _link_key(resolved) if resolved else None
+
+        def only_glyphs(full: str, title: str, links: list[HtmlElement]) -> bool:
+            labels = [normalize_whitespace("".join(link.itertext())) for link in links]
+            return (
+                bool(labels)
+                and all(_OPENING_REFERENCE_LABEL.fullmatch(label) for label in labels)
+                and full.replace(" ", "") == "".join([title, *labels]).replace(" ", "")
             )
 
         def entry(
@@ -580,15 +1075,80 @@ def recognize_epub_contents(
             excluded.add(body)
         # An element before any text need not be the first meaningful block:
         # images and tables are content too; a framing rule contains no prose.
-        first = None
-        for event, el in iterwalk(body, events=("start", "end")):
-            if event == "start" and (el.tag in {"img", "svg", "table"} or (el.text or "").strip()):
-                first = el
-                break
-            if event == "end" and (el.tail or "").strip():
-                first = el.getparent()
-                break
+        first = _first_content(body)
         first_chain = set((first, *first.iterancestors())) if first is not None else set()
+        if first is not None and (toc := package.get(source_href)):
+            lead = first
+            after_logo = first.tag == "img"
+            if after_logo:
+                # An authored logo can frame the heading, a figure cannot.
+                logo = _first_content(original_body)
+                lead = _first_content(body, prose_only=True)
+                if (
+                    logo is None
+                    or logo.tag != "img"
+                    or not logo.get("src")
+                    or not re.search(r"\S\s+logo$", (logo.get("alt") or "").strip(), re.IGNORECASE)
+                    or logo.get("alt") != first.get("alt")
+                    or not _visible_contents_link(logo)
+                    or lead is None
+                    or lead not in position
+                    or any(
+                        element.tag in {"img", "svg", "table"}
+                        for element in elements[position[first] + 1 : position[lead]]
+                    )
+                ):
+                    lead = None
+            if lead is not None:
+                heading_chain = (lead, *lead.iterancestors())
+                start_heading = next(
+                    (node for node in heading_chain if node.tag in HEADING_TAGS), None
+                )
+                if (
+                    start_heading is not None
+                    and _visible_contents_link(start_heading)
+                    and (title_keys := grouped_opening_title_keys(start_heading))
+                ):
+                    for node in toc:
+                        if not node.href or opening_title_key(node.label) not in title_keys:
+                            continue
+                        _, anchor = _link_key(node.href)
+                        owner = anchors.get(anchor)
+                        if anchor and original_anchors.get(anchor) is None:
+                            continue
+                        if not (
+                            owner is start_heading
+                            if after_logo
+                            else not anchor or owner in heading_chain
+                        ):
+                            continue
+                        independent_openings.add(source_href)
+                        break
+        for heading in first_chain:
+            if heading.tag not in {"p", "div"} or set(
+                (heading.get("class") or "").casefold().split()
+            ).isdisjoint({"fmht", "bmht"}):
+                continue
+            printed = normalize_whitespace("".join(heading.itertext())).casefold()
+            if "continued" not in printed and any(
+                node.href is not None
+                and _link_key(node.href)[1] in {"", element_id(heading)}
+                and " ".join(node.label.casefold().split()) == printed
+                for node in package.get(source_href, ())
+            ):
+                independent_openings.add(source_href)
+        first_note_heading = None
+        if any(is_printed_note_heading(node.label) for node in package.get(source_href, ())):
+            first_prose = _first_content(body, prose_only=True)
+            if first_prose is not None:
+                first_note_heading = next(
+                    (
+                        node
+                        for node in (first_prose, *first_prose.iterancestors())
+                        if node.tag in HEADING_TAGS
+                    ),
+                    None,
+                )
         for heading in elements:
             if heading.tag in HEADING_TAGS or heading.get("title") == stamp + "-division":
                 if any(owner in excluded for owner in (heading, *heading.iterancestors())):
@@ -596,24 +1156,111 @@ def recognize_epub_contents(
                 name = element_id(heading)
                 if name and anchors.get(name) is heading:
                     raw_starts.setdefault(source_href, set()).add(name)
-                if heading in first_chain:
+                if heading in first_chain or heading is first_note_heading:
                     file_openings.add(source_href)
+                    heading_text = normalize_whitespace("".join(heading.itertext()))
+                    if heading.tag in HEADING_TAGS and (
+                        is_printed_note_heading(heading_text)
+                        or re.match(r"^(?:chapter|part|book|volume)\b", heading_text, re.IGNORECASE)
+                        or (
+                            len(paths := title_paths.get(reading_title_key(heading_text), set()))
+                            == 1
+                            and (prior := spine_positions.get(next(iter(paths)))) is not None
+                            and prior < spine_index
+                            and verified_titles.get(next(iter(paths)))
+                            == reading_title_key(heading_text)
+                        )
+                    ):
+                        first_entry = next(
+                            (
+                                peer
+                                for peer in heading.itersiblings()
+                                if isinstance(peer, HtmlElement)
+                                and peer.tag not in HEADING_TAGS
+                                and _first_content(peer) is not None
+                            ),
+                            None,
+                        )
+                        if (
+                            first_entry is not None
+                            and (lead := _leading_link(first_entry)) is not None
+                        ):
+                            printed = normalize_whitespace("".join(lead.itertext()))
+                            destination = return_key(lead.get("href"))
+                            if (
+                                _OPENING_REFERENCE_LABEL.fullmatch(printed)
+                                and destination
+                                and destination[1]
+                                and (prior := spine_positions.get(destination[0])) is not None
+                                and prior < spine_index
+                            ):
+                                note_group_openings.add(source_href)
+                    if heading.tag in HEADING_TAGS:
+                        label = heading_text.casefold()
+                        compact_label = opening_title_key(label)
+                        title_key = (
+                            reading_title_key(heading_text) if len(heading_text) <= 512 else ""
+                        )
+                        for node in package.get(source_href, ()):
+                            name = _link_key(node.href or "")[1]
+                            owner = anchors.get(name) if name else None
+                            if (
+                                name
+                                and owner not in first_chain
+                                and not (heading is first_note_heading and owner is heading)
+                            ):
+                                continue
+                            if (
+                                compact_label
+                                and "continued" not in compact_label
+                                and opening_title_key(node.label) == compact_label
+                            ):
+                                verified_package_headings[source_href] = label
+                            if (
+                                title_key
+                                and reading_title_key(node.label) == title_key
+                                and title_paths.get(title_key) == {source_href}
+                            ):
+                                verified_titles[source_href] = title_key
         if source_href in package_navigation_hrefs:
             return
         run: list[_ContentsEntry] = []
         last_block: HtmlElement | None = None
         for block in elements:
-            if (
-                block.tag not in {"p", "li"} | HEADING_TAGS
-                and block.get("title") != stamp + "-division"
-            ):
+            regular_block = (
+                block.tag in {"p", "li"} | HEADING_TAGS or block.get("title") == stamp + "-division"
+            )
+            if not regular_block and block.tag != "figcaption":
                 continue
-            links = [
-                a
-                for a in block.iterdescendants("a")
-                if isinstance(a, HtmlElement) and a.get("href")
-            ]
-            if not links or any(owner in excluded for owner in (block, *block.iterancestors())):
+            all_links = [a for a in block.iterdescendants("a") if isinstance(a, HtmlElement)]
+            if not all_links or any(owner in excluded for owner in (block, *block.iterancestors())):
+                continue
+            links = [a for a in all_links if a.get("href")]
+            if original_order and (title := _leading_link(block)) is not None:
+                names = [name for name in row_names(title, block) if name in original_order]
+                if names:
+                    printed = normalize_whitespace("".join(title.itertext()))
+                    full = normalize_whitespace("".join(block.itertext()))
+                    glyphs = [other for other in links if other is not title]
+                    if (
+                        0 < len(printed) <= 512
+                        and any(char.isalpha() for char in printed)
+                        and (full == printed and not glyphs or only_glyphs(full, printed, glyphs))
+                        and not block.xpath(".//img|.//svg|.//table")
+                    ):
+                        clean_key = return_key(title.get("href"))
+                        for name in names:
+                            key = source_href, name
+                            if key in printed_openings or not (raw_href := authored_return(name)):
+                                continue
+                            authored_key = return_key(raw_href)
+                            account(*key, *(authored_key or ()))
+                            printed_openings[key] = (
+                                (spine_index, original_order[name]),
+                                authored_key,
+                                authored_key is not None and authored_key == clean_key,
+                            )
+            if not regular_block or not links:
                 continue
             link = links[0]
             printed = normalize_whitespace("".join(link.itertext()))
@@ -640,17 +1287,10 @@ def recognize_epub_contents(
                 continue
             unique_link = len(links) == 1 and full == printed
             designation = _boundary_label(printed)
+            numbered_title = re.fullmatch(r"chapter [1-9][0-9]*", designation) is not None
             # The designation is a whole opening. An attached reference glyph,
             # as in Norton's chapter 41, adds no prose to that opening.
-            reference_labels = [normalize_whitespace("".join(a.itertext())) for a in links[1:]]
-            if unique_link or (
-                re.fullmatch(r"chapter [1-9][0-9]*", designation)
-                and reference_labels
-                and all(
-                    re.fullmatch(r"(?:\[?\d{1,4}\]?\.?|[*†‡])", text) for text in reference_labels
-                )
-                and full.replace(" ", "") == "".join([printed, *reference_labels]).replace(" ", "")
-            ):
+            if unique_link or numbered_title and only_glyphs(full, printed, links[1:]):
                 account(*names, target, designation)
                 opening = _Return(
                     (spine_index, position[link]),
@@ -658,6 +1298,11 @@ def recognize_epub_contents(
                     designation,
                     unique_link,
                     link in first_chain,
+                    tuple(
+                        name
+                        for name in names
+                        if numbered_title and return_key(authored_return(name)) == _link_key(target)
+                    ),
                 )
                 for name in names:
                     returns[(source_href, name)] = opening
@@ -679,12 +1324,33 @@ def recognize_epub_contents(
 
     for index, (href, html) in enumerate(documents):
         read_document(index, href, html)
+    for members in promotional_cards.values():
+        if len(members) > 1:
+            independent_openings.update(members)
+    independent_openings.update(
+        path
+        for path, targets in guide_arrivals.items()
+        if len(targets & physical_publisher_targets) >= 2
+    )
+
+    spine_segments: dict[str, int] = {}
+    previous_spine = -2
+    segment_start = -1
+    for path, position in sorted(readable_spine.items(), key=lambda item: item[1]):
+        if position != previous_spine + 1:
+            segment_start = position
+        spine_segments[path] = segment_start
+        previous_spine = position
+
+    def accept_sequence(sequence: list[_SourceKey]) -> None:
+        if len(sequence) >= 2:
+            chapter_sequences.append(tuple(sequence))
 
     for run in runs:
-        accepted: list[tuple[_ContentsEntry, _Return]] = []
+        accepted: list[tuple[int, _ContentsEntry, _Return, int | None]] = []
         previous_number: str | None = None
         numbers = 0
-        for item in run:
+        for row, item in enumerate(run):
             if item.parent_id is None or item.target is None:
                 continue
             candidate = returns.get(_link_key(item.target))
@@ -707,18 +1373,55 @@ def recognize_epub_contents(
                 numbers += 1
             elif not candidate.standalone or candidate.designation != _boundary_label(item.label):
                 continue
-            if accepted and candidate.position <= accepted[-1][1].position:
+            if accepted and candidate.position <= accepted[-1][2].position:
                 break
-            accepted.append((item, candidate))
+            accepted.append((row, item, candidate, int(number[1]) if number is not None else None))
         else:
             if numbers >= 2:
-                for item, opening in accepted:
+                target_counts = Counter(_link_key(item.target) for item in run if item.target)
+                sequence: list[_SourceKey] = []
+                previous: tuple[int, int, int] | None = None
+                for row, item, opening, number in accepted:
                     entries.append(item)
                     assert item.target is not None
                     path, name = _link_key(item.target)
                     raw_starts.setdefault(path, set()).add(name)
                     if opening.at_file_start:
                         file_openings.add(path)
+                    key = path, name
+                    segment = spine_segments.get(path)
+                    if (
+                        number is None
+                        or not name
+                        or name not in opening.visible_names
+                        or target_counts[key] != 1
+                        or segment is None
+                    ):
+                        continue
+                    if previous != (row - 1, number - 1, segment):
+                        accept_sequence(sequence)
+                        sequence = []
+                    return_key = _link_key(opening.href)
+                    account(*key, *return_key)
+                    sequence.append(key)
+                    opening_returns[key] = return_key
+                    if opening.at_file_start:
+                        file_start_openings.add(key)
+                    previous = row, number, segment
+                accept_sequence(sequence)
+
+    editorial_openings: list[_SourceKey] = []
+    printed_targets = set(printed_links.values())
+    for key, (_, expected, matched) in sorted(
+        printed_openings.items(), key=lambda item: item[1][0]
+    ):
+        if expected is None:
+            if key in printed_targets:
+                editorial_openings.append(key)
+        elif printed_links.get(expected) == key:
+            editorial_openings.append(key)
+            if matched:
+                opening_returns[key] = expected
 
     nodes: list[EpubStructureTocNode] = []
     next_order: dict[str | None, int] = {}
@@ -765,6 +1468,51 @@ def recognize_epub_contents(
         )
         nodes.append(node)
         by_id[node.node_id] = node
+    note_collection_ends: dict[str, bool] = {}
+    package_starts = sorted(package.keys() & readable_spine.keys(), key=readable_spine.__getitem__)
+    spine_at = {index: path for path, index in readable_spine.items()}
+    for start, stop in pairwise([*package_starts, None]):
+        label = verified_package_headings.get(start, "") if start is not None else ""
+        if start is None or not is_printed_note_heading(label):
+            continue
+        if stop is None:
+            boundary = max(spine_positions.values(), default=-1) + 1
+            if any(index not in spine_at for index in range(readable_spine[start], boundary)):
+                continue
+            boundary = next(
+                (
+                    index
+                    for index in range(readable_spine[start] + 1, boundary)
+                    if spine_at[index] in file_openings
+                    and spine_at[index] not in note_group_openings
+                    and not is_printed_note_heading(
+                        verified_package_headings.get(spine_at[index], "")
+                    )
+                ),
+                boundary,
+            )
+        else:
+            if spine_segments[start] != spine_segments[stop]:
+                continue
+            boundary = readable_spine[stop]
+        for index in range(readable_spine[start], boundary):
+            # The next package entry limits the scope, but only its own
+            # verified opening can close an otherwise unbounded final note.
+            note_collection_ends[spine_at[index]] = (
+                index + 1 not in spine_at or spine_at[index + 1] in file_openings
+            ) and (stop is None or index + 1 < boundary or stop in verified_package_headings)
+
+    reading_titles: dict[str, str] = {}
+    current_title = None
+    previous_spine_index = -2
+    for index, path in sorted(spine_at.items()):
+        if index != previous_spine_index + 1 or path in package:
+            current_title = verified_titles.get(path)
+        if current_title is not None:
+            reading_titles[path] = current_title
+        previous_spine_index = index
+
+    chapter_openings = {key for sequence in chapter_sequences for key in sequence}
     return EpubContents(
         tuple(nodes),
         entry_anchors,
@@ -774,6 +1522,20 @@ def recognize_epub_contents(
             )
             for path in raw_starts.keys() | file_openings
         },
+        tuple(editorial_openings),
+        tuple(chapter_sequences),
+        {
+            key: opening_returns[key]
+            for key in chapter_openings.union(editorial_openings)
+            if key in opening_returns
+        },
+        frozenset(file_start_openings & chapter_openings),
+        note_collection_ends,
+        last_spine_member if last_spine_member in readable_spine else None,
+        frozenset(independent_openings | verified_package_headings.keys()),
+        frozenset(printed_note_members),
+        reading_titles,
+        published_navigation,
     )
 
 
@@ -1000,7 +1762,7 @@ def build_epub_structure(
     media_id: UUID,
     fragments: Sequence[EpubStructureFragment],
     toc_nodes: Sequence[EpubStructureTocNode],
-    note_regions: Sequence[NoteRegion],
+    note_regions: Iterable[NoteRegion],
     contents: EpubContents,
 ) -> EpubStructureResult:
     """Build the exact semantic rows one publication installs."""
@@ -1024,6 +1786,8 @@ def build_epub_structure(
     by_element: dict[tuple[int, int], list[_Section]] = {}
     used_ids: set[str] = set()
     claimed_headings: set[tuple[int, int]] = set()
+    detached_note_boundaries: list[SectionBoundary] = []
+    checked_note_members: dict[int, bool] = {}
 
     headings_by_label: dict[str, list[tuple[EpubStructureFragment, int]]] = {}
     for fragment in fragments:
@@ -1144,10 +1908,23 @@ def build_epub_structure(
                     == _match_label(node.label)
                 ):
                     claimed_headings.add((fragment.fragment_idx, element_index))
-        if (
-            not routine(DocumentPoint(fragment.fragment_idx, node.target_offset))
-            or not fragment.canonical.text.strip()
-        ):
+        target = DocumentPoint(fragment.fragment_idx, node.target_offset)
+        if not routine(target) or not fragment.canonical.text.strip():
+            if (
+                node.node_id not in embedded
+                and target == arrival.point == DocumentPoint(fragment.fragment_idx, 0)
+                and fragment.package_href in contents.printed_note_members
+            ):
+                if fragment.fragment_idx not in checked_note_members:
+                    checked_note_members[fragment.fragment_idx] = note_index.covers_member(
+                        fragment.fragment_idx, fragment.canonical.text
+                    )
+                if checked_note_members[fragment.fragment_idx]:
+                    detached_note_boundaries.append(
+                        SectionBoundary(
+                            "publisher", node.depth, SectionEnd(target, DomCut((), "before"))
+                        )
+                    )
             continue
         if DocumentPoint(fragment.fragment_idx, node.target_offset) != arrival_target:
             repaired_path = (
@@ -1195,6 +1972,7 @@ def build_epub_structure(
             container_end=None,
             source="Publisher",
             boundary_scope=None if node.node_id in embedded else "publisher",
+            publisher_depth=None if node.node_id in embedded else node.depth,
             start_cut=arrival_cut,
         )
         sections.append(section)
@@ -1392,7 +2170,7 @@ def build_epub_structure(
                 or item.roles & _PARATEXT_ROLES
                 for item in following
             )
-            or any(region.range.start.fragment_id == last.fragment_id for region in note_regions)
+            or note_index.has_notes(last.fragment_idx)
         ):
             continue
         section.container_end = DocumentPoint(last.fragment_idx, len(last.canonical.text))
@@ -1407,6 +2185,7 @@ def build_epub_structure(
             section.boundary_scope,
             section.start_cut,
             section.container_end_cut,
+            source_rank=section.publisher_depth,
         )
         for section in eligible
     ]
@@ -1415,8 +2194,9 @@ def build_epub_structure(
         None,
         unproved_boundaries=[
             *competing_openings,
-            *_unproved_spine_boundaries(fragments, eligible, range_inputs, note_regions),
+            *_unproved_spine_boundaries(fragments, eligible, range_inputs, note_index),
         ],
+        closing_boundaries=detached_note_boundaries,
     )
     for section in sections:
         if section.publisher_parent is None:
@@ -1449,9 +2229,7 @@ def build_epub_structure(
         published_sections,
         [
             *contents.nodes,
-            *_supplemental_toc_nodes(
-                media_id, fragments, toc_nodes, sections, note_regions, note_index
-            ),
+            *_supplemental_toc_nodes(media_id, fragments, toc_nodes, sections, note_index),
         ],
     )
 
@@ -1582,12 +2360,11 @@ def _supplemental_toc_nodes(
     fragments: Sequence[EpubStructureFragment],
     publisher_nodes: Sequence[EpubStructureTocNode],
     sections: list[_Section],
-    note_regions: Sequence[NoteRegion],
     note_index: NavigationNoteIndex,
 ) -> list[EpubStructureTocNode]:
     """Publish source-only apparatus headings beneath their note collection."""
     by_fragment_id = {fragment.fragment_id: fragment for fragment in fragments}
-    groups = [region for region in note_regions if isinstance(region, NoteGroupRegion)]
+    groups = note_index.groups
     published = list(publisher_nodes)
     supplemental: list[EpubStructureTocNode] = []
     used_ids = {node.node_id for node in published}
@@ -1813,7 +2590,7 @@ def _unproved_spine_boundaries(
     fragments: Sequence[EpubStructureFragment],
     sections: Sequence[_Section],
     inputs: Sequence[SectionRangeInput],
-    note_regions: Sequence[NoteRegion],
+    note_index: NavigationNoteIndex,
 ) -> list[DocumentPoint]:
     """keep real competing structure; ordinary file splitting cannot create a division.
 
@@ -1880,7 +2657,7 @@ def _unproved_spine_boundaries(
                 }
             )
             for element in fragment.canonical.elements
-        ) or any(region.range.start.fragment_id == fragment.fragment_id for region in note_regions)
+        ) or note_index.has_notes(fragment.fragment_idx)
 
     intervals: list[tuple[DocumentPoint, DocumentPoint]] = []
     for section in sections:

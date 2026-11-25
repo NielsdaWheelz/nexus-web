@@ -107,8 +107,17 @@ SourceContent = Annotated[
 ]
 
 
+class ReaderEvidenceSourceItemOut(_ReaderMapOut):
+    ref: str
+    action_ref: str
+    label: str
+    activation: ResourceActivationOut
+    source: SourceAttributionOut | None
+    link_revision: str | None
+
+
 class ReaderEvidenceSourceTargetOut(_ReaderMapOut):
-    item: ResourceItemOut
+    item: ReaderEvidenceSourceItemOut
     stable_key: str
     apparatus_kind: ReaderApparatusItemKind
     content: SourceContent

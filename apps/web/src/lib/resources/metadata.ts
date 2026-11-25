@@ -27,6 +27,21 @@ export function mediaBibliographyMetadata(summary: MediaSummary): ResourceMetada
   return parts;
 }
 
+function attributed(parts: ResourceMetadataPart[], attribution: string | null | undefined): ResourceMetadataPart[] {
+  if (attribution) parts.unshift({ kind: "text", key: "attribution", text: attribution, href: null, date: null });
+  return parts;
+}
+
+/** A source's credits and attribution belong to its published metadata. */
+export function sourceBibliographyMetadata(
+  source: Schema<"SourceAttributionOut"> | null,
+  named?: Pick<Schema<"NamedResourceBodyOut">, "media_kind" | "contributors">,
+): ResourceMetadataPart[] {
+  const credits = source?.contributors ?? named?.contributors ?? [];
+  const mediaKind = source?.media_kind ?? named?.media_kind ?? null;
+  return attributed(bibliographyMetadata(mediaKind !== null ? selectMediaAuthors(credits) : credits, null), source?.attribution_text);
+}
+
 /** canonical identity and occurrence metadata share one factual projection. */
 export function resourceMetadata({ item, matchMethod = null, occurrenceLabel, reason }: {
   item: ResourceItem;
@@ -39,12 +54,9 @@ export function resourceMetadata({ item, matchMethod = null, occurrenceLabel, re
   const parsed = parseResourceRef(item.ref);
   const mediaKind = itemMediaKind(item);
   const identity = parsed !== null ? resourceTypeName(resourceType(parsed.scheme, mediaKind)) : "resource";
-  const credits = source?.contributors ?? (body.kind === "named" ? body.contributors : null) ?? [];
-  const bibliography = body.kind === "media" ? mediaBibliographyMetadata(body.media_summary) : bibliographyMetadata(
-    mediaKind !== null ? selectMediaAuthors(credits) : credits,
-    null,
-  );
-  if (source?.attribution_text) bibliography.unshift({ kind: "text", key: "attribution", text: source.attribution_text, href: null, date: null });
+  const bibliography = body.kind === "media"
+    ? attributed(mediaBibliographyMetadata(body.media_summary), source?.attribution_text)
+    : sourceBibliographyMetadata(source, body.kind === "named" ? body : undefined);
   const parts: ResourceMetadataPart[] = [];
   if (occurrenceLabel?.trim()) parts.push({ kind: "text", key: "occurrence", text: occurrenceLabel, href: null, date: null });
   if (body.kind === "prose" && body.message !== null) {

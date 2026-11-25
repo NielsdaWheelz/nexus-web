@@ -54,7 +54,16 @@ RUN bun install --frozen-lockfile --production
 FROM node:22.23.2-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS node-runtime
 
 
-FROM python:3.12.13-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2 AS backend-runtime
+FROM python:3.12.13-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2 AS python-runtime
+
+# Return freed large buffers instead of raising glibc's retention thresholds.
+# This trades allocator contention and mmap calls for lower resident memory.
+ENV MALLOC_ARENA_MAX=2 \
+    MALLOC_MMAP_THRESHOLD_=131072 \
+    MALLOC_TRIM_THRESHOLD_=131072
+
+
+FROM python-runtime AS backend-runtime
 
 ARG SOURCE_SHA
 
@@ -90,12 +99,6 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl postgresql-client-15 \
     && rm -rf /var/lib/apt/lists/*
 
-# Return freed large buffers instead of raising glibc's retention thresholds.
-# This trades allocator contention and mmap calls for lower resident memory.
-ENV MALLOC_ARENA_MAX=2 \
-    MALLOC_MMAP_THRESHOLD_=131072 \
-    MALLOC_TRIM_THRESHOLD_=131072
-
 COPY apps/api ./apps/api
 
 RUN chmod -R u=rwX,go=rX /app/apps/api
@@ -109,7 +112,7 @@ CMD ["uvicorn", "apps.api.main:app", "--workers", "1", "--loop", "asyncio", "--h
 
 # Checkout workers install dependencies only; all application source and identity
 # are explicit read-only binds. Keep the immutable release runtime above intact.
-FROM python:3.12.13-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2 AS worker-checkout
+FROM python-runtime AS worker-checkout
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libpq5 \

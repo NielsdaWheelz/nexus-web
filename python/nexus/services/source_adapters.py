@@ -14,6 +14,7 @@ any other storage error is the queue's to retry.
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from typing import Literal
 from urllib.parse import urlparse
@@ -46,6 +47,7 @@ from nexus.services.contributor_taxonomy import ObservedRoleSlices
 from nexus.services.epub_ingest import EpubPlan, prepare_epub_source, publish_epub_plan
 from nexus.services.media_processing_state import mark_extracting
 from nexus.services.media_source_ingest import record_x_article_inspection
+from nexus.services.parser_temp import parser_attempt_directory
 from nexus.services.pdf_ingest import PdfPlan, prepare_pdf_source, publish_pdf_plan
 from nexus.services.podcasts.transcription import (
     PreparedTranscriptSource,
@@ -131,6 +133,7 @@ def acquire(
     attempt: MediaSourceAttempt,
     request_id: str | None,
     fence: SourcePublicationFence,
+    artifacts: ExitStack,
 ) -> (
     SourceRunOutcome
     | PreparedFileSource
@@ -305,7 +308,14 @@ def acquire(
                 max_bytes=settings.max_pdf_bytes if kind == "pdf" else settings.max_epub_bytes,
             )
             plan = _prepare(
-                session_factory, media_id, kind, fence, path, fetched.size_bytes, fetched.sha256_hex
+                session_factory,
+                media_id,
+                kind,
+                fence,
+                path,
+                fetched.size_bytes,
+                fetched.sha256_hex,
+                artifacts=artifacts,
             )
             return PreparedFileSource(
                 plan=plan,
@@ -383,6 +393,7 @@ def acquire(
                 payload.storage_path,
                 payload.size_bytes,
                 payload.sha256,
+                artifacts=artifacts,
             )
             return PreparedFileSource(
                 plan=plan,
@@ -395,7 +406,7 @@ def acquire(
                 ),
             )
         case st.UPLOADED_PDF_FILE | st.UPLOADED_EPUB_FILE:
-            return _stored_file(session_factory, media_id, fence)
+            return _stored_file(session_factory, media_id, fence, artifacts=artifacts)
     raise ApiError(ApiErrorCode.E_INVALID_KIND, f"Unsupported source type: {attempt.source_type}")
 
 
@@ -618,7 +629,11 @@ def _begin(
 
 
 def _stored_file(
-    session_factory: sessionmaker[Session], media_id: UUID, fence: SourcePublicationFence
+    session_factory: sessionmaker[Session],
+    media_id: UUID,
+    fence: SourcePublicationFence,
+    *,
+    artifacts: ExitStack,
 ) -> PreparedFileSource:
     """An uploaded or captured PDF/EPUB: its bytes are the media's file."""
 
@@ -642,7 +657,7 @@ def _stored_file(
         media_ids=(media_id,),
         mutate=begin,
     )
-    plan = _prepare(session_factory, media_id, kind, fence, path, size, sha256)
+    plan = _prepare(session_factory, media_id, kind, fence, path, size, sha256, artifacts=artifacts)
     return PreparedFileSource(plan=plan, remote_file=None, source_file=None)
 
 
@@ -654,6 +669,8 @@ def _prepare(
     path: str,
     size: int,
     sha256: str,
+    *,
+    artifacts: ExitStack,
 ) -> PdfPlan | EpubPlan:
     def progress(completed: int, total: int, unit: Literal["Page", "Chapter"]) -> None:
         record_source_progress(
@@ -681,6 +698,7 @@ def _prepare(
             storage_path=path,
             source_size_bytes=size,
             expected_source_sha256=sha256,
+            attempt_directory=artifacts.enter_context(parser_attempt_directory(fence.attempt_id)),
             record_progress=progress,
         )
     record_source_progress(

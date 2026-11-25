@@ -590,6 +590,7 @@ def media_passages(
     admitted_reading_media_ids: Sequence[UUID] | None = None,
     current_passage_reads: Mapping[str, CurrentPassage] | None = None,
     include_excerpts: bool = True,
+    include_apparatus_quote: bool = True,
 ) -> dict[str, ScopedMediaPassage]:
     """Current canonical media refs, with one authorized bounded reading owner each.
 
@@ -601,6 +602,7 @@ def media_passages(
     separate admitted audience; it never grants authority.
     A composing caller may supply current passage proofs already read in this
     exact viewer, reading context and snapshot; those replace this stage's read.
+    Activation-only consumers can omit apparatus quote text and affixes.
     """
     out: dict[str, ScopedMediaPassage] = {}
     reading_owners = reading_media_ids or {}
@@ -893,10 +895,18 @@ def media_passages(
     apparatus = (
         list(
             db.execute(
-                text(
-                    "SELECT item.id,item.media_id,item.body_text,item.label,item.locator FROM reader_apparatus_items item JOIN reader_apparatus_states state ON state.id=item.state_id WHERE item.id=ANY(:ids) AND state.status IN ('ready','partial')"
-                ),
-                {"ids": ids["reader_apparatus_item"]},
+                text("""
+                    SELECT item.id, item.media_id,
+                           CASE WHEN :include_apparatus_quote THEN item.body_text END AS body_text,
+                           item.label, item.locator
+                    FROM reader_apparatus_items item
+                    JOIN reader_apparatus_states state ON state.id=item.state_id
+                    WHERE item.id=ANY(:ids) AND state.status IN ('ready','partial')
+                """),
+                {
+                    "ids": ids["reader_apparatus_item"],
+                    "include_apparatus_quote": include_apparatus_quote,
+                },
             )
         )
         if ids["reader_apparatus_item"]
@@ -915,7 +925,9 @@ def media_passages(
         + [
             UUID(str(row.locator["fragment_id"]))
             for row in apparatus
-            if row.locator is not None and row.locator.get("fragment_id") is not None
+            if include_apparatus_quote
+            and row.locator is not None
+            and row.locator.get("fragment_id") is not None
         ],
     )
     for row in fragments:
