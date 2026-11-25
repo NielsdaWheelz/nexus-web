@@ -200,10 +200,10 @@ the svg drew goes with it). A missing, undeclared or unparseable SVG image still
 refuses the book (`E_INVALID_FILE_TYPE`).
 
 The declared budgets are the archive ones (entry count, per-entry and total
-uncompressed size, compression ratio), the 180 s parse wall clock (checked before
-every chapter of every pass and at the end, so a slow book stops near it), the
-16 MiB an XHTML, navigation or NCX entry may declare in its ZIP header, the 64 MiB
-of rendered text one book may produce, and the bounded apparatus index.
+uncompressed size, compression ratio), the 300 s parse wall clock (checked before
+every chapter of every pass and at the end), the 16 MiB an XHTML, navigation or NCX
+entry may declare in its ZIP header, the 64 MiB of rendered text one book may
+produce, and the bounded apparatus index.
 canonical normalization refuses a single grapheme over 16,384 code points
 before normalizing it. a refused source raises from `prepare_epub_source` as
 `ApiError` with its code, or a breach as
@@ -211,3 +211,6 @@ before normalizing it. a refused source raises from `prepare_epub_source` as
 reserved for archive path safety. A stored object that does not match the media
 source's persisted digest is terminal `E_SOURCE_INTEGRITY`, refused before the
 archive is opened.
+
+an ordinary import holds the heavy job claim while parsing. the worker renews its
+30 s lease every 5 s. the complete child process has a separate 900 s limit.
