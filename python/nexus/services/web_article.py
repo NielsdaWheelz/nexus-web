@@ -373,7 +373,11 @@ def replace_article_fragments(
             source_html=html,
         )
     replace_media_apparatus(
-        db, media_id=media_id, items=items, edges=edges, note_groups=note_groups
+        db,
+        media_id=media_id,
+        item_rows=lambda: iter(items),
+        edge_rows=lambda: iter(edges),
+        note_groups=note_groups,
     )
     new_ids = [row.id for row in rows]
     projection.refresh(db, "fragment", [*old_ids, *new_ids])

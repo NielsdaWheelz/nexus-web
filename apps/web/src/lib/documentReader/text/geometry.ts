@@ -141,11 +141,28 @@ export function createTextGeometry(
   }
 
   /** Source boundaries, not enclosing parent boxes: a parent can surround another source. */
-  function rangeBelow(y: number): SourceRange | null {
+  function rangeBelow(y: number, view: DOMRect): SourceRange | null {
     let [lo, hi] = [0, doc.ranges.length];
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
       const range = doc.ranges[mid];
+      const shell = range.start === 0 && range.end === units.get(range.unit)?.length
+        ? section(range.unit)
+        : null;
+      // A whole top-level unit is paint-contained. Keep exact probes inside
+      // the paint window, where retained text rectangles can disagree with
+      // a unit's intrinsic placeholder.
+      if (shell?.parentElement === column) {
+        const bounds = shell.getBoundingClientRect();
+        if (bounds.top >= view.bottom + view.height && bounds.top > y) {
+          hi = mid;
+          continue;
+        }
+        if (bounds.bottom <= view.top - view.height && bounds.bottom <= y) {
+          lo = mid + 1;
+          continue;
+        }
+      }
       const box = rectAt({ unit: range.unit, offset: Math.max(range.start, range.end - 1) }, true);
       if (box && box.bottom > y) hi = mid;
       else lo = mid + 1;
@@ -164,8 +181,8 @@ export function createTextGeometry(
     return lo;
   }
 
-  function fractionAt(y: number): number | null {
-    const range = rangeBelow(y);
+  function fractionAt(y: number, view: DOMRect): number | null {
+    const range = rangeBelow(y, view);
     return range && doc.length > 0
       ? (range.position + offsetAt(range, y) - range.start) / doc.length : null;
   }
@@ -193,12 +210,13 @@ export function createTextGeometry(
     }
     if (to.kind === "anchor") {
       const element = anchor(to.unit, to.id);
-      return (
-        element && {
-          top: element.getBoundingClientRect().top,
-          want: line,
-        }
-      );
+      const shell = section(to.unit);
+      if (!element || !shell) return null;
+      const box = element.getBoundingClientRect();
+      const bounds = shell.getBoundingClientRect();
+      // A skipped unit can retain descendant rectangles outside its placeholder.
+      if (box.bottom < bounds.top || box.top > bounds.bottom) return null;
+      return { top: box.top, want: line };
     }
     if (to.kind === "range" && !entry(to.unit)) return null;
     const point = targetPoint(to);
@@ -252,7 +270,7 @@ export function createTextGeometry(
       const snapshot = readScrollport(scrollport);
       if (!snapshot) return null;
       const { bounds: view, readingLine: line } = snapshot;
-      const at = rangeBelow(line);
+      const at = rangeBelow(line, view);
       if (!at) return null;
       // The first character whose line reaches below the reading line (the
       // unit's end past its text); a unit without a cursor reads from its start.
@@ -270,8 +288,8 @@ export function createTextGeometry(
       return {
         viewport: {
           primary: point,
-          start: fractionAt(view.top + 1) ?? here,
-          end: atEnd ? 1 : (fractionAt(view.bottom - 1) ?? here),
+          start: fractionAt(view.top + 1, view) ?? here,
+          end: atEnd ? 1 : (fractionAt(view.bottom - 1, view) ?? here),
           atEnd,
         },
         placement: {

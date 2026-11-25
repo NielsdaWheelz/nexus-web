@@ -175,7 +175,7 @@ def prepare_web_article_fragment(
                 "document_href": document_url,
             },
             document_href=document_url,
-            external_targets=targets,
+            find_target=targets.get,
         )
         source_issues: tuple[SourceIssue, ...] = ()
     except ResourceLimitError:

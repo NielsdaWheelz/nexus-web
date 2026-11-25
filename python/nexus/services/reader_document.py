@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import unquote, urlsplit
@@ -28,6 +29,7 @@ from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.document_embeds import DocumentEmbedOut
 from nexus.schemas.reader import (
+    MediaNavigationOut,
     NavigationTextPointOut,
     ReaderNavigationSectionOut,
     ReaderNavigationTocNodeOut,
@@ -35,7 +37,7 @@ from nexus.schemas.reader import (
 from nexus.schemas.reader_document import (
     ReaderCaptureDocumentOut,
     ReaderCitationOccurrenceOut,
-    ReaderDocumentResponseOut,
+    ReaderDocumentOut,
     ReaderPartDocumentOut,
     ReaderPartExtentOut,
     ReaderPartExtentPointOut,
@@ -54,11 +56,11 @@ from nexus.schemas.reader_document import (
     ReaderXReferenceOut,
 )
 from nexus.schemas.reader_point import ReaderPointOut
-from nexus.schemas.x_source import XSourceAuthor, XSourceCoverage
+from nexus.schemas.x_source import XArticleContent, XSourceAuthor, XSourceCoverage
 from nexus.services.canonicalize import canonicalize_structure
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.document_embeds import list_document_embeds_for_fragments
-from nexus.services.epub_read import rewrite_epub_fragment_links
+from nexus.services.epub_read import read_epub_navigation_proof, rewrite_epub_fragment_links
 from nexus.services.html_tree import inner_html
 from nexus.services.media_file_access import get_signed_download_url
 from nexus.services.media_text_scope import (
@@ -213,8 +215,12 @@ def read_reader_text_plan(db: Session, viewer_id: UUID, media_id: UUID) -> Reade
     generation = read_ready_publication_generation(db, media_id=media_id)
     if media.kind not in ("web_article", "epub") or generation is None:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
-    native = _native_x_units(
-        db, media_id=media_id, viewer_id=viewer_id, source_projection=_CANONICAL_SOURCE
+    native = (
+        _native_x_units(
+            db, media_id=media_id, viewer_id=viewer_id, source_projection=_CANONICAL_SOURCE
+        )
+        if media.kind == "web_article"
+        else None
     )
     if native is not None:
         units, capture = native
@@ -233,31 +239,41 @@ def read_reader_text_plan(db: Session, viewer_id: UUID, media_id: UUID) -> Reade
         links = _x_article_source_links(db, media_id, units)
     else:
         units = [
-            ReaderSourceUnit(str(row.id), row.idx, row.id, row.char_count, None)
-            for row in db.execute(
-                text(
-                    "SELECT f.id,f.idx,char_length(f.canonical_text) AS char_count "
-                    + _UNIT_ROWS_SQL
-                ),
-                {"media_id": media_id},
+            ReaderSourceUnit(
+                str(row.id),
+                index if media.kind == "epub" else row.idx,
+                row.id,
+                row.char_count,
+                None,
+            )
+            for index, row in enumerate(
+                db.execute(
+                    text(
+                        "SELECT f.id,f.idx,char_length(f.canonical_text) AS char_count "
+                        + _UNIT_ROWS_SQL
+                    ),
+                    {"media_id": media_id},
+                )
             )
         ]
-        links = [
-            str(url)
-            for url in db.scalars(
-                text(
-                    "SELECT COALESCE(e.canonical_source_url,e.source_url) FROM document_embeds e JOIN fragments f ON f.id=e.fragment_id WHERE e.media_id=:id AND e.provider='x' AND COALESCE(e.canonical_source_url,e.source_url) IS NOT NULL ORDER BY f.idx,e.ordinal,e.id"
-                ),
-                {"id": media_id},
+        links = []
+        if media.kind == "web_article":
+            links = [
+                str(url)
+                for url in db.scalars(
+                    text(
+                        "SELECT COALESCE(e.canonical_source_url,e.source_url) FROM document_embeds e JOIN fragments f ON f.id=e.fragment_id WHERE e.media_id=:id AND e.provider='x' AND COALESCE(e.canonical_source_url,e.source_url) IS NOT NULL ORDER BY f.idx,e.ordinal,e.id"
+                    ),
+                    {"id": media_id},
+                )
+            ]
+            units = _with_x_embeds(
+                db,
+                media_id=media_id,
+                units=units,
+                viewer_id=viewer_id,
+                source_projection=_CANONICAL_SOURCE,
             )
-        ]
-        units = _with_x_embeds(
-            db,
-            media_id=media_id,
-            units=units,
-            viewer_id=viewer_id,
-            source_projection=_CANONICAL_SOURCE,
-        )
         navigation = read_media_navigation(
             db, media_id=media_id, kind=media.kind, generation=generation
         )
@@ -315,15 +331,124 @@ def read_reader_document(
     return build_reader_document(db, media_id=media_id, viewer_id=viewer_id, pdf_file=signed)
 
 
-def read_hosted_reader(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderDocumentResponseOut:
-    """Capture the authorized document and its navigation key in one snapshot."""
-    document = read_reader_document(db, viewer_id, media_id)
-    observation = read_epub_projection_observations(db, authorized_media_ids=[media_id]).get(
-        media_id
+def write_hosted_reader(
+    db: Session, viewer_id: UUID, media_id: UUID, write: Callable[[bytes], int]
+) -> None:
+    """Prepare the authorized document and its navigation key in one snapshot."""
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    title = db.scalar(
+        text("SELECT title FROM media WHERE id=:id AND kind='epub'"), {"id": media_id}
     )
-    return ReaderDocumentResponseOut(
-        data=document, navigation_key=None if observation is None else observation[0]
+    write(b'{"data":')
+    if title is not None:
+        generation = read_ready_publication_generation(db, media_id=media_id)
+        if generation is None:
+            raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
+        with _epub_reader(db, media_id, viewer_id, title, generation) as (document, key, units):
+            _write_document_fields(document, units, write)
+    else:
+
+        def signed() -> ReaderPdfFileOut:
+            file = get_signed_download_url(db, viewer_id, media_id)
+            return ReaderPdfFileOut(url=file["url"], expires_at=file["expires_at"])
+
+        document = build_reader_document(
+            db, media_id=media_id, viewer_id=viewer_id, pdf_file=signed
+        )
+        observation = read_epub_projection_observations(db, authorized_media_ids=[media_id]).get(
+            media_id
+        )
+        key = None if observation is None else observation[0]
+        write_reader_document(document, write)
+    write(b',"navigation_key":')
+    write(json.dumps(key).encode())
+    write(b"}")
+
+
+def write_epub_reading_copy(
+    db: Session,
+    *,
+    media_id: UUID,
+    viewer_id: UUID,
+    title: str,
+    generation: int,
+    write: Callable[[bytes], int],
+) -> None:
+    """Write an already authorized archive member without private citation occurrences."""
+    with _epub_reader(db, media_id, viewer_id, title, generation, citations=False) as (
+        document,
+        _,
+        units,
+    ):
+        _write_document_fields(document, units, write)
+
+
+_DOCUMENT_JSON = TypeAdapter[ReaderDocumentOut](ReaderDocumentOut)
+_UNIT_JSON = TypeAdapter[ReaderUnitOut | ReaderPartUnitOut](ReaderUnitOut | ReaderPartUnitOut)
+
+
+def write_reader_document(document: ReaderDocumentOut, write: Callable[[bytes], int]) -> None:
+    """Encode one mounted document without copying all its units into a second graph."""
+    if document.kind == "pdf":
+        write(_DOCUMENT_JSON.dump_json(document))
+        return
+    _write_document_fields(document, document.units, write)
+
+
+def _write_document_fields(
+    document: ReaderDocumentOut,
+    units: Iterable[ReaderUnitOut],
+    write: Callable[[bytes], int],
+) -> None:
+    write(_DOCUMENT_JSON.dump_json(document, exclude={"units"})[:-1])
+    write(b',"units":[')
+    for index, unit in enumerate(units):
+        if index:
+            write(b",")
+        write(_UNIT_JSON.dump_json(unit))
+    write(b"]}")
+
+
+@contextmanager
+def _epub_reader(
+    db: Session,
+    media_id: UUID,
+    viewer_id: UUID | None,
+    title: str,
+    generation: int,
+    *,
+    citations: bool = True,
+) -> Iterator[tuple[ReaderTextDocumentOut, str, Iterator[ReaderUnitOut]]]:
+    """Capture exact navigation and borrow rich units in source order, one row at a time."""
+    proof = read_epub_navigation_proof(db, media_id=media_id, generation=generation)
+    identities = db.execute(
+        text("SELECT f.id, source.package_href " + _UNIT_ROWS_SQL), {"media_id": media_id}
+    ).all()
+    lengths = {fragment.fragment_id: fragment.char_count for fragment in proof.navigation.fragments}
+    source_units = [
+        ReaderSourceUnit(str(fragment_id), index, fragment_id, lengths[fragment_id], None)
+        for index, (fragment_id, _) in enumerate(identities)
+    ]
+    embeds = _reader_embeds(db, viewer_id, [unit.fragment_id for unit in source_units])
+    document = _text_document(
+        proof.navigation,
+        title=title,
+        identity=f"g{generation}",
+        units=[],
+        embeds=embeds,
+        citations=(
+            reader_citation_occurrences(
+                db, viewer_id=viewer_id, media_id=media_id, units=source_units
+            )
+            if citations
+            else []
+        ),
+        x_article_content=None,
     )
+    links = {row.package_href: row.id for row in identities if row.package_href is not None}
+    with closing(_rich_fragment_units(db, media_id, epub_links=links)) as units:
+        yield document, proof.key, units
 
 
 def x_document_identity(generation: int, units: list[ReaderUnitOut]) -> str:
@@ -371,7 +496,7 @@ def capture_destination(
             text(f"""WITH reading AS (
             SELECT m.id FROM media m
             JOIN ({ready_publication_rows_sql()}) p ON p.media_id=m.id
-            WHERE m.id=:reading AND m.kind IN ('web_article','epub')
+            WHERE m.id=:reading AND m.kind='web_article'
         ), roots AS (
             SELECT tp.capture_id,'primary' AS relation,tp.id::text AS unit_id FROM x_thread_posts tp
             JOIN x_thread_sources thread ON thread.media_id=tp.thread_media_id
@@ -493,7 +618,7 @@ def build_reader_document(
             media.kind, media.processing_status, media.transcript_state, media.transcript_coverage
         ):
             raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
-        units, embeds = _units(db, media_id=media_id, epub=False, viewer_id=viewer_id)
+        units, embeds = _units(db, media_id=media_id, viewer_id=viewer_id)
         navigation = read_transcript_navigation_source(db, media_id=media_id)
         return ReaderTranscriptDocumentOut(
             kind="transcript",
@@ -527,7 +652,12 @@ def build_reader_document(
             file=pdf_file(),
         )
 
-    kind = "epub" if media.kind == "epub" else "web_article"
+    if media.kind == "epub":
+        with _epub_reader(db, media_id, viewer_id, title, generation) as (document, _, units):
+            document.units = list(units)
+        return document
+
+    kind = "web_article"
     native_x = _native_x_units(
         db,
         media_id=media_id,
@@ -569,7 +699,7 @@ def build_reader_document(
             ),
             x_article_content=None,
         )
-    units, embeds = _units(db, media_id=media_id, epub=kind == "epub", viewer_id=viewer_id)
+    units, embeds = _units(db, media_id=media_id, viewer_id=viewer_id)
     units = _with_x_embeds(
         db,
         media_id=media_id,
@@ -581,6 +711,29 @@ def build_reader_document(
     )
     embeds.extend(_x_article_embeds(db, units=units, viewer_id=viewer_id))
     navigation = read_media_navigation(db, media_id=media_id, kind=kind, generation=generation)
+    return _text_document(
+        navigation,
+        title=title,
+        identity=x_document_identity(generation, units),
+        units=units,
+        embeds=embeds,
+        citations=reader_citation_occurrences(
+            db, viewer_id=viewer_id, media_id=media_id, units=units
+        ),
+        x_article_content=x_article_content_facts(db, media_ids=[media_id]).get(media_id),
+    )
+
+
+def _text_document(
+    navigation: MediaNavigationOut,
+    *,
+    title: str,
+    identity: str,
+    units: list[ReaderUnitOut],
+    embeds: list[DocumentEmbedOut],
+    citations: list[ReaderCitationOccurrenceOut],
+    x_article_content: XArticleContent | None,
+) -> ReaderTextDocumentOut:
     parents = {section.section_id: section.parent_section_id for section in navigation.sections}
 
     def depth(section: ReaderNavigationSectionOut) -> int:
@@ -599,9 +752,9 @@ def build_reader_document(
         )
 
     return ReaderTextDocumentOut(
-        kind=kind,
-        identity=x_document_identity(generation, units),
-        publication_generation=generation,
+        kind=navigation.kind,
+        identity=identity,
+        publication_generation=navigation.generation,
         title=title,
         units=units,
         sections=[
@@ -617,10 +770,8 @@ def build_reader_document(
         toc_nodes=[node(toc) for toc in navigation.toc_nodes],
         source_issues=navigation.source_issues,
         embeds=embeds,
-        citation_occurrences=reader_citation_occurrences(
-            db, viewer_id=viewer_id, media_id=media_id, units=units
-        ),
-        x_article_content=x_article_content_facts(db, media_ids=[media_id]).get(media_id),
+        citation_occurrences=citations,
+        x_article_content=x_article_content,
     )
 
 
@@ -757,7 +908,7 @@ def reader_citation_occurrences(
     *,
     viewer_id: UUID | None,
     media_id: UUID | None,
-    units: list[ReaderUnitOut],
+    units: Sequence[ReaderUnitOut | ReaderSourceUnit],
 ) -> list[ReaderCitationOccurrenceOut]:
     """Current source membership and exact source points, independent of target capture."""
     from nexus.services.resource_graph.citations import build_citation_outs_for_sources
@@ -765,7 +916,7 @@ def reader_citation_occurrences(
 
     if viewer_id is None:
         return []
-    source_units: dict[str, list[ReaderUnitOut]] = {}
+    source_units: dict[str, list[ReaderUnitOut | ReaderSourceUnit]] = {}
     for unit in units:
         if unit.x_post and unit.x_post.relation == "primary" and unit.x_post.owner:
             source_units.setdefault(f"fragment:{unit.x_post.owner.fragment_id}", []).append(unit)
@@ -774,7 +925,7 @@ def reader_citation_occurrences(
         sources.append(ResourceRef("media", media_id))
     citations = build_citation_outs_for_sources(db, viewer_id=viewer_id, sources=sources)
     points: dict[UUID, ReaderPointOut] = {}
-    unit_lengths = {unit.id: len(unit.canonical_text) for unit in units}
+    unit_lengths = {unit.id: unit.char_count for unit in units}
     if media_id is not None:
         for row in db.execute(
             text("""
@@ -797,7 +948,7 @@ def reader_citation_occurrences(
         for citation in citations[source.uri]:
             native = source_units.get(source.uri, [])
             point = (
-                ReaderPointOut(unit_id=native[0].id, offset=len(native[0].canonical_text))
+                ReaderPointOut(unit_id=native[0].id, offset=native[0].char_count)
                 if len(native) == 1
                 else points.get(citation.edge_id)
             )
@@ -1319,30 +1470,45 @@ def reading_source_ranges[UnitT: ReaderUnitOut | ReaderSourceUnit](
 
 
 def _units(
-    db: Session, *, media_id: UUID, epub: bool, viewer_id: UUID | None
+    db: Session, *, media_id: UUID, viewer_id: UUID | None
 ) -> tuple[list[ReaderUnitOut], list[DocumentEmbedOut]]:
-    """Units in reading order (transcripts by time); epub links bound to their units."""
-    identities = db.execute(
-        text("SELECT f.id, source.package_href " + _UNIT_ROWS_SQL), {"media_id": media_id}
-    ).all()
-    links = {row.package_href: row.id for row in identities if row.package_href is not None}
-    rows = db.execute(
+    """Build the unit list for text sources that compose native occurrences."""
+    units = list(_rich_fragment_units(db, media_id, epub_links=None))
+    return units, _reader_embeds(db, viewer_id, [UUID(unit.id) for unit in units])
+
+
+def _reader_embeds(
+    db: Session, viewer_id: UUID | None, fragment_ids: list[UUID]
+) -> list[DocumentEmbedOut]:
+    if viewer_id is None:
+        return []
+    by_fragment = list_document_embeds_for_fragments(
+        db, viewer_id=viewer_id, fragment_ids=fragment_ids
+    )
+    return [embed for fragment_id in fragment_ids for embed in by_fragment.get(fragment_id, [])]
+
+
+def _rich_fragment_units(
+    db: Session, media_id: UUID, *, epub_links: Mapping[str, UUID] | None
+) -> Generator[ReaderUnitOut]:
+    with db.execute(
         text(
             "SELECT f.id, f.idx, f.html_sanitized, f.canonical_text, f.t_start_ms, f.t_end_ms,"
             " f.speaker_label, source.package_href " + _UNIT_ROWS_SQL
         ),
         {"media_id": media_id},
         execution_options={"yield_per": 1},
-    ).mappings()
-    try:
-        units = [
-            ReaderUnitOut(
+    ).mappings() as rows:
+        for index, row in enumerate(rows):
+            yield ReaderUnitOut(
                 id=str(row["id"]),
-                idx=row["idx"],
+                idx=index if epub_links is not None else row["idx"],
                 html_sanitized=rewrite_epub_fragment_links(
-                    row["html_sanitized"], href_path=row["package_href"], fragment_ids_by_path=links
+                    row["html_sanitized"],
+                    href_path=row["package_href"],
+                    fragment_ids_by_path=epub_links,
                 )
-                if epub
+                if epub_links is not None
                 else row["html_sanitized"],
                 canonical_text=row["canonical_text"],
                 char_count=len(row["canonical_text"]),
@@ -1351,16 +1517,6 @@ def _units(
                 t_end_ms=row["t_end_ms"],
                 speaker_label=row["speaker_label"],
             )
-            for row in rows
-        ]
-    finally:
-        rows.close()
-    if viewer_id is None:
-        return units, []
-    by_fragment = list_document_embeds_for_fragments(
-        db, viewer_id=viewer_id, fragment_ids=[row.id for row in identities]
-    )
-    return units, [embed for row in identities for embed in by_fragment.get(row.id, [])]
 
 
 def _point(point: NavigationTextPointOut) -> ReaderPointOut:

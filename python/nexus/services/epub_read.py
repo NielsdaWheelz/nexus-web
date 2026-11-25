@@ -245,8 +245,8 @@ def bind_epub_fragment_link(
     parsed = urlsplit(href)
     if parsed.scheme or parsed.netloc:
         return
-    # Ingestion already canonicalizes package-relative links to package paths.
-    fragment_id = fragment_ids_by_path.get(parsed.path if parsed.path else href_path)
+    # Ingestion already makes the URL path relative to the package root.
+    fragment_id = fragment_ids_by_path.get(unquote(parsed.path) if parsed.path else href_path)
     if fragment_id is None:
         return
     link.set("data-nexus-fragment-id", str(fragment_id))

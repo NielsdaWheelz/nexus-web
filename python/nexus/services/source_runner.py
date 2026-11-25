@@ -17,6 +17,7 @@ media/library locks and never a viewer lock or old destination payload.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -164,33 +165,49 @@ def _run(
         mutate=mark_running,
     )
     try:
-        acquired = acquire(
-            session_factory,
-            media_id=media_id,
-            attempt=attempt,
-            request_id=request_id,
-            fence=fence,
-        )
-        if isinstance(acquired, PreparedFileSource):
-            outcome, cleanup = _publish_file(session_factory, media_id, acquired, fence, request_id)
-            delete_document_storage_objects(cleanup)
-            return source_outcome_to_job_result(outcome)
-        if isinstance(acquired, PreparedTranscriptSource):
-            outcome = _publish_transcript(session_factory, media_id, acquired, fence, request_id)
-            return source_outcome_to_job_result(outcome)
-        if isinstance(acquired, PreparedXSource):
-            outcome = _publish_x(session_factory, media_id, acquired, fence, actor_id, request_id)
-            return source_outcome_to_job_result(outcome)
-        if isinstance(acquired, PreparedBrowserArticle | PreparedArticleSource):
-            outcome = _publish_article(session_factory, media_id, acquired, fence, request_id)
-            return source_outcome_to_job_result(outcome)
-        if isinstance(acquired, PreparedNativeArticle):
-            outcome = _publish_native_article(
-                session_factory, media_id, acquired, fence, request_id
+        with ExitStack() as artifacts:
+            acquired = acquire(
+                session_factory,
+                media_id=media_id,
+                attempt=attempt,
+                request_id=request_id,
+                fence=fence,
+                artifacts=artifacts,
             )
-            return source_outcome_to_job_result(outcome)
-        _publish_outcome(session_factory, media_id, acquired, fence, request_id)
-        return source_outcome_to_job_result(acquired)
+            if isinstance(acquired, PreparedFileSource):
+                outcome, cleanup = _publish_file(
+                    session_factory, media_id, acquired, fence, request_id
+                )
+                try:
+                    artifacts.close()
+                except OSError:
+                    logger.warning(
+                        "source_parser_cleanup_failed",
+                        attempt_id=str(fence.attempt_id),
+                        exc_info=True,
+                    )
+                delete_document_storage_objects(cleanup)
+                return source_outcome_to_job_result(outcome)
+            if isinstance(acquired, PreparedTranscriptSource):
+                outcome = _publish_transcript(
+                    session_factory, media_id, acquired, fence, request_id
+                )
+                return source_outcome_to_job_result(outcome)
+            if isinstance(acquired, PreparedXSource):
+                outcome = _publish_x(
+                    session_factory, media_id, acquired, fence, actor_id, request_id
+                )
+                return source_outcome_to_job_result(outcome)
+            if isinstance(acquired, PreparedBrowserArticle | PreparedArticleSource):
+                outcome = _publish_article(session_factory, media_id, acquired, fence, request_id)
+                return source_outcome_to_job_result(outcome)
+            if isinstance(acquired, PreparedNativeArticle):
+                outcome = _publish_native_article(
+                    session_factory, media_id, acquired, fence, request_id
+                )
+                return source_outcome_to_job_result(outcome)
+            _publish_outcome(session_factory, media_id, acquired, fence, request_id)
+            return source_outcome_to_job_result(acquired)
     except SourcePublicationSuperseded:
         raise
     except Exception as exc:

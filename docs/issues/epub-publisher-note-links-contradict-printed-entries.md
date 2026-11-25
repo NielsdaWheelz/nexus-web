@@ -1,6 +1,7 @@
 # publisher note links contradict printed entries
 
-status: open; six owner-deferred source corrections, outside book57 metadata repair
+status: open. four source-proved corrections await separate editions after release.
+two remain unproved.
 origin: 2026-10-17 book57 complete original-source audit and owner disposition
 area: epub publisher links
 
@@ -34,11 +35,17 @@ and the complete source/body oracles. public records contain no book prose.
 the sixth has its own `c/211-original-return-link-defect.json` receipt,
 sha256 `e45b8dc90edf98c53e064ac35a66f024bf2df040c5b769138947c5db4d416055`.
 
-next: separately authorize an explicit source-link correction, prove the intended
-authored target and publication identity, and preserve text/saved coordinates.
-do not hide a source correction in retained metadata repair or guess an edge from
-printed numbers.
+source review proved the *under western eyes* endpoint, both new testament
+first-verse return destinations, and the *duino* return. both old testament
+destinations remain unproved. their expected anchors are absent from the
+original. an independently identified exact destination or publisher correction
+is required before either href changes. source review is recorded privately in
+`completion-spec/publisher-corrections-source-confirmation.json`.
 
-acceptance: corrected links resolve to independently verified intended content
-on web and phone, with explicit source/publication provenance and protected-state
-proof. campaign closure does not close this ticket.
+the private derivatives for the proved links have exact decompressed byte diffs
+and the same epubcheck 5.4.0 diagnostics as their originals. the manifest is
+`completion-spec/source-derivatives-20261124/source-diffs.json` in the epub
+corpus state directory.
+
+after software release, import the separate editions and verify both reader
+directions. confirm the originals and their history remain available.

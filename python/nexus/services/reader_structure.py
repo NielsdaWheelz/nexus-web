@@ -7,8 +7,9 @@ Callers supplying one scope and a document end retain ordinary article behavior.
 """
 
 from bisect import bisect_right
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from heapq import merge
 from typing import Literal
 from uuid import UUID
 
@@ -64,6 +65,16 @@ class SectionRangeInput:
     boundary_scope: str | None = None
     start_cut: DomCut | None = None
     container_end_cut: DomCut | None = None
+    source_rank: int | None = None
+
+
+@dataclass(frozen=True)
+class SectionBoundary:
+    """A source peer arrival that supplies a cut without a section of its own."""
+
+    scope: str
+    rank: int
+    end: SectionEnd
 
 
 class FragmentIntervals:
@@ -90,14 +101,19 @@ class FragmentIntervals:
         previous = bisect_right(starts, point.offset) - 1
         return previous >= 0 and point.offset < ends[previous]
 
+    def spans(self, fragment_idx: int) -> Iterator[tuple[int, int]]:
+        bounds = self._bounds.get(fragment_idx)
+        return zip(*bounds, strict=True) if bounds is not None else iter(())
+
 
 class NavigationNoteIndex:
     """One publication's note ranges, indexed once for repeated candidate reads."""
 
-    def __init__(self, regions: Sequence[NoteRegion], fragment_order: Mapping[UUID, int]) -> None:
+    def __init__(self, regions: Iterable[NoteRegion], fragment_order: Mapping[UUID, int]) -> None:
         bodies: dict[int, list[tuple[int, int]]] = {}
         groups: dict[int, list[tuple[int, int]]] = {}
         headings: set[DocumentPoint] = set()
+        group_regions: list[NoteGroupRegion] = []
         for region in regions:
             start = region.range.start
             end = region.range.end
@@ -106,16 +122,33 @@ class NavigationNoteIndex:
                 raise ValueError("A note region must remain within one canonical fragment")
             target = bodies if isinstance(region, NoteBodyRegion) else groups
             target.setdefault(idx, []).append((start.offset, end.offset))
-            if isinstance(region, NoteGroupRegion) and region.heading is not None:
-                headings.add(DocumentPoint(idx, region.heading.offset))
+            if isinstance(region, NoteGroupRegion):
+                group_regions.append(region)
+                if region.heading is not None:
+                    headings.add(DocumentPoint(idx, region.heading.offset))
+        self.groups = tuple(group_regions)
+        self._fragments = bodies.keys() | groups.keys()
         self._bodies = FragmentIntervals(bodies)
         self._groups = FragmentIntervals(groups)
         self._headings = headings
+
+    def has_notes(self, fragment_idx: int) -> bool:
+        return fragment_idx in self._fragments
 
     def is_routine(self, point: DocumentPoint) -> bool:
         if self._bodies.contains(point):
             return False
         return not self._groups.contains(point) or (point in self._headings)
+
+    def covers_member(self, fragment_idx: int, text: str) -> bool:
+        if not text.strip():
+            return False
+        cursor = 0
+        for start, end in merge(self._bodies.spans(fragment_idx), self._groups.spans(fragment_idx)):
+            if text[cursor:start].strip():
+                return False
+            cursor = max(cursor, end)
+        return cursor > 0 and not text[cursor:].strip()
 
 
 def resolve_section_extents(
@@ -124,6 +157,7 @@ def resolve_section_extents(
     *,
     unproved_boundaries: Sequence[DocumentPoint] = (),
     document_end_cut: DomCut | None = None,
+    closing_boundaries: Sequence[SectionBoundary] = (),
 ) -> dict[str, SectionEnd | None]:
     """End at a proved peer/container; a missing document end stays unknown."""
     by_id = {section.section_id: section for section in sections}
@@ -156,9 +190,19 @@ def resolve_section_extents(
     for section in ordered:
         boundaries.setdefault(section.target, []).append(section)
     barriers = set(unproved_boundaries)
-    for target in sorted(boundaries.keys() | barriers):
+    closing: dict[DocumentPoint, dict[str, tuple[int, SectionEnd]]] = {}
+    for witness in closing_boundaries:
+        scopes = closing.setdefault(witness.end.point, {})
+        prior = scopes.get(witness.scope)
+        if prior is None or witness.rank < prior[0]:
+            scopes[witness.scope] = (witness.rank, witness.end)
+        elif witness.rank == prior[0] and witness.end != prior[1]:
+            scopes[witness.scope] = (witness.rank, SectionEnd(witness.end.point, None))
+    for target in sorted(boundaries.keys() | barriers | closing.keys()):
         grouped = boundaries.get(target, [])
+        at_target = closing.get(target, {})
         for scope, stack in stacks.items():
+            witness = at_target.get(scope) if scope is not None else None
             kept: list[SectionRangeInput] = []
             for active in stack:
                 if any(
@@ -167,6 +211,13 @@ def resolve_section_extents(
                     for section in grouped
                 ):
                     kept.append(active)
+                    continue
+                if (
+                    witness is not None
+                    and active.source_rank is not None
+                    and witness[0] <= active.source_rank
+                ):
+                    natural_ends[active.section_id] = witness[1]
                     continue
                 incompatible = target in barriers
                 if not incompatible:

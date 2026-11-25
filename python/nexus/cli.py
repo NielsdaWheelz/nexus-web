@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from uuid import UUID
 
@@ -67,7 +68,8 @@ def main() -> None:
 
         try:
             if args.action == "preview":
-                result = preview_epub_repair(args.media_id, args.projection)
+                preview_epub_repair(args.media_id, args.projection, output=sys.stdout.buffer)
+                return
             else:
                 review = EpubRepairReview.model_validate_json(args.review_file.read_bytes())
                 result = {"status": apply_epub_repair(review)}
@@ -75,7 +77,8 @@ def main() -> None:
             raise SystemExit(f"{exc.code.value}: {exc.message}") from exc
         except (OSError, ValueError) as exc:
             raise SystemExit(str(exc)) from exc
-        print(json.dumps(result, default=str, ensure_ascii=False, indent=2))
+        json.dump(result, sys.stdout, default=str, ensure_ascii=False, indent=2)
+        sys.stdout.write("\n")
         return
     if args.command == "native-repair":
         from nexus.services.generation.native_execution import repair

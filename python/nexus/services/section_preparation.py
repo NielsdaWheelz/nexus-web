@@ -5,12 +5,17 @@ verified immutable package outside the write transaction. The family barrier
 and exact queue claim fence publication. The witness records completed work.
 """
 
+import gzip
 import json
-from collections.abc import Mapping
-from dataclasses import asdict, dataclass, fields
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import ExitStack, nullcontext
+from dataclasses import asdict, dataclass, fields, replace
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Literal, cast
+from shutil import rmtree
+from sys import getsizeof
+from tempfile import TemporaryDirectory
+from typing import Any, BinaryIO, Literal, TypedDict, cast, overload
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,17 +26,24 @@ from nexus.auth.permissions import can_read_media
 from nexus.db.models import Media
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_repeatable_read_db, get_session_factory
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
+from nexus.errors import (
+    ApiError,
+    ApiErrorCode,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ResourceLimitError,
+)
 from nexus.jobs import queue
 from nexus.schemas.imports import WaitingReason
 from nexus.schemas.media_parts import PartPrepare
-from nexus.schemas.reader_apparatus import NoteRegion
+from nexus.schemas.reader_apparatus import NoteRegion, NotesGroup
 from nexus.schemas.section_preparation import SectionPreparationAdmission, SectionPreparationOut
 from nexus.schemas.source_issues import TooManyNotes, UnresolvedNavigationTarget
 from nexus.services.content_indexing import reconcile_media_section_bounds, record_section_witness
 from nexus.services.epub_ingest import (
+    EPUB_RENDERED_TEXT_MAX_BYTES,
     EpubNavigationPlan,
-    EpubPlan,
     RetainedEpubFragment,
     derive_epub_navigation,
     derive_retained_epub_apparatus,
@@ -45,17 +57,21 @@ from nexus.services.parser_temp import (
     stream_storage_object_to_file,
 )
 from nexus.services.reader_apparatus import (
+    ApparatusCandidate,
+    ApparatusMatch,
     ApparatusOutput,
-    apparatus_output,
+    read_apparatus_correspondence,
     read_apparatus_output,
     read_note_regions,
     replace_media_apparatus,
-    validate_preserved_apparatus_replacement,
+    review_apparatus_replacement,
+    stage_apparatus_output,
 )
 from nexus.services.reader_navigation import read_media_navigation_proof
 from nexus.services.reader_publication import (
     read_publication_generation,
     read_publication_source_issues,
+    replace_source_issues,
 )
 from nexus.services.reader_structure import DocumentPoint, DomCut, NavigationProof, SectionProof
 from nexus.services.reader_text_slice import (
@@ -66,6 +82,9 @@ from nexus.services.reader_text_slice import (
 from nexus.storage.client import get_storage_client
 
 JOB_KIND = "prepare_reader_sections"
+_REVIEW_JSON = json.JSONEncoder(
+    default=str, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+)
 
 
 class _PreparationJob(BaseModel):
@@ -79,9 +98,7 @@ class _PreparationJob(BaseModel):
     expected_navigation_key: str
 
 
-class EpubRepairReview(BaseModel):
-    """Private reviewed input and exact desired output for one retained source."""
-
+class _RepairFence(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     projection: Literal["navigation", "apparatus"]
@@ -93,7 +110,45 @@ class EpubRepairReview(BaseModel):
     navigation_key: str = Field(pattern=r"^[a-f0-9]{64}$")
     note_regions_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     apparatus_sha256: str | None = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class EpubRepairReview(_RepairFence):
+    """Private reviewed input and exact desired output for one retained source."""
+
     plan_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+@dataclass(frozen=True)
+class _RetainedFragments(Sequence[RetainedEpubFragment]):
+    directory: Path
+    fragment_count: int
+
+    def __len__(self) -> int:
+        return self.fragment_count
+
+    @overload
+    def __getitem__(self, index: int) -> RetainedEpubFragment: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[RetainedEpubFragment, ...]: ...
+
+    def __getitem__(
+        self, index: int | slice
+    ) -> RetainedEpubFragment | tuple[RetainedEpubFragment, ...]:
+        if isinstance(index, slice):
+            return tuple(self[i] for i in range(self.fragment_count)[index])
+        index = range(self.fragment_count)[index]
+        with gzip.open(
+            self.directory / f"retained-{index}.json.gz", "rt", encoding="utf-8"
+        ) as source:
+            row = json.load(source)
+        return RetainedEpubFragment(
+            UUID(row["fragment_id"]),
+            row["fragment_idx"],
+            row["package_href"],
+            row["html_sanitized"],
+            row["canonical_text"],
+        )
 
 
 @dataclass(frozen=True)
@@ -101,12 +156,9 @@ class _Package:
     storage_path: str
     size_bytes: int
     source_sha256: str
-    fragments: tuple[RetainedEpubFragment, ...]
+    fragments: Sequence[RetainedEpubFragment]
     note_regions: list[NoteRegion]
-
-    @property
-    def body_key(self) -> str:
-        return _digest([asdict(fragment) for fragment in self.fragments])
+    body_key: str
 
     @property
     def note_key(self) -> str:
@@ -116,11 +168,19 @@ class _Package:
 
 
 def _digest(value: object) -> str:
-    return sha256(
-        json.dumps(
-            value, default=str, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode()
-    ).hexdigest()
+    return _chunk_digest(_json_chunks(value))
+
+
+def _json_chunks(value: object) -> Iterator[bytes]:
+    for chunk in _REVIEW_JSON.iterencode(value):
+        yield chunk.encode()
+
+
+def _chunk_digest(chunks: Iterable[bytes]) -> str:
+    digest = sha256()
+    for chunk in chunks:
+        digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _witness_key(format: SectionFormat, proof: NavigationProof) -> str:
@@ -288,26 +348,54 @@ def _changed() -> ConflictError:
     )
 
 
-def _capture_package(db: Session, media_id: UUID) -> _Package:
+def _capture_package(db: Session, media_id: UUID, *, directory: Path | None) -> _Package:
     storage_path, size_bytes, source_sha256 = db.execute(
         text("SELECT storage_path, size_bytes, source_sha256 FROM media_file WHERE media_id=:id"),
         {"id": media_id},
     ).one()
-    fragments = tuple(
-        RetainedEpubFragment(
-            row.id, row.idx, row.package_href, row.html_sanitized, row.canonical_text
-        )
-        for row in db.execute(
-            text(
-                "SELECT f.id, f.idx, s.package_href, f.html_sanitized, f.canonical_text"
-                " FROM fragments f JOIN epub_fragment_sources s ON s.fragment_id=f.id AND s.media_id=f.media_id"
-                " WHERE f.media_id=:id ORDER BY f.idx"
-            ),
-            {"id": media_id},
-        )
-    )
+    if directory is not None:
+        directory.mkdir(mode=0o700, exist_ok=True)
+    count = 0
+    digest = sha256(b"[")
+    params = {"id": media_id}
+    query = text("""
+        SELECT f.id, f.idx, s.package_href, f.html_sanitized, f.canonical_text
+        FROM fragments f JOIN epub_fragment_sources s
+            ON s.fragment_id=f.id AND s.media_id=f.media_id
+        WHERE f.media_id=:id ORDER BY f.idx
+        """)
+    with db.execute(query, params, execution_options={"yield_per": 1}) as rows:
+        for index, row in enumerate(rows):
+            if index:
+                digest.update(b",")
+            fragment = RetainedEpubFragment(
+                row.id, row.idx, row.package_href, row.html_sanitized, row.canonical_text
+            )
+            resident_bytes = getsizeof(fragment.html_sanitized) + getsizeof(fragment.canonical_text)
+            if resident_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
+                raise ResourceLimitError(
+                    f"Retained EPUB fragment needs {resident_bytes} resident bytes, "
+                    f"above the {EPUB_RENDERED_TEXT_MAX_BYTES} byte limit",
+                    dimension="Memory",
+                )
+            with (
+                nullcontext()
+                if directory is None
+                else gzip.open(directory / f"retained-{index}.json.gz", "wt", encoding="utf-8")
+            ) as output:
+                for chunk in _REVIEW_JSON.iterencode(asdict(fragment)):
+                    digest.update(chunk.encode())
+                    if output is not None:
+                        output.write(chunk)
+            count += 1
+    digest.update(b"]")
     return _Package(
-        storage_path, size_bytes, source_sha256, fragments, read_note_regions(db, media_id)
+        storage_path,
+        size_bytes,
+        source_sha256,
+        _RetainedFragments(directory, count) if directory is not None else (),
+        read_note_regions(db, media_id),
+        digest.hexdigest(),
     )
 
 
@@ -408,15 +496,12 @@ def _install_navigation(
     generation: int,
     plan: EpubNavigationPlan,
     witness: str,
-    *,
-    apparatus_issues: tuple[TooManyNotes, ...] | None = None,
 ) -> None:
     replace_epub_navigation_projection(
         db,
         media_id=media_id,
         generation=generation,
         plan=plan,
-        apparatus_issues=apparatus_issues,
     )
     record_section_witness(db, media_id=media_id, witness_key=witness)
     reconcile_media_section_bounds(db, media_id=media_id)
@@ -430,20 +515,26 @@ def run_job(*, payload: Mapping[str, Any], context: queue.JobExecutionContext) -
     if work.detector_revision != section_detector_revision(format):
         return superseded
 
-    with get_session_factory()() as db:
-        get_repeatable_read_db(db)
-        if read_publication_generation(db, media_id=id) != generation:
-            return superseded
-        proof = read_media_navigation_proof(db, media_id=id, kind=format, generation=generation)
-        # An already prepared matching request makes no reads of the original package.
-        already_prepared = proof.key == work.expected_navigation_key and _installed_witness(
-            db, id
-        ) == _witness_key(format, proof)
-        package = _capture_package(db, id) if format == "epub" and not already_prepared else None
-
     plan = None
-    if package is not None:
-        with parser_attempt_directory(context.job_id) as directory:
+    package = None
+    with ExitStack() as scratch:
+        with get_session_factory()() as db:
+            get_repeatable_read_db(db)
+            if read_publication_generation(db, media_id=id) != generation:
+                return superseded
+            proof = read_media_navigation_proof(db, media_id=id, kind=format, generation=generation)
+            # An already prepared matching request makes no reads of the original package.
+            already_prepared = proof.key == work.expected_navigation_key and _installed_witness(
+                db, id
+            ) == _witness_key(format, proof)
+            directory = (
+                scratch.enter_context(parser_attempt_directory(context.job_id))
+                if format == "epub" and not already_prepared
+                else None
+            )
+            if directory is not None:
+                package = _capture_package(db, id, directory=directory)
+        if directory is not None and package is not None:
             path = _materialize_package(directory, package)
             plan = derive_epub_navigation(
                 epub_path=path,
@@ -479,7 +570,7 @@ def run_job(*, payload: Mapping[str, Any], context: queue.JobExecutionContext) -
             record_section_witness(db, media_id=id, witness_key=witness)
         else:
             assert package is not None
-            installed = _capture_package(db, id)
+            installed = _capture_package(db, id, directory=None)
             if (installed.size_bytes, installed.source_sha256, installed.body_key) != (
                 package.size_bytes,
                 package.source_sha256,
@@ -503,47 +594,132 @@ def run_job(*, payload: Mapping[str, Any], context: queue.JobExecutionContext) -
         return retry_serializable(db, "publish_section_preparation", lambda: apply(db))
 
 
+class _RepairOutput(TypedDict):
+    navigation: dict[str, object]
+    apparatus: ApparatusOutput | None
+    apparatus_issues: tuple[TooManyNotes, ...]
+
+
+def _array_chunks(rows: Iterable[object]) -> Iterator[bytes]:
+    yield b"["
+    for index, row in enumerate(rows):
+        if index:
+            yield b","
+        yield from _json_chunks(row)
+    yield b"]"
+
+
+def _apparatus_chunks(
+    apparatus: ApparatusOutput, issues: tuple[TooManyNotes, ...]
+) -> Iterator[bytes]:
+    # Match the canonical JSON key order used by both review digests.
+    yield b'{"edges":'
+    yield from _array_chunks(apparatus.edges())
+    yield b',"issues":'
+    yield from _array_chunks(issue.model_dump(mode="json") for issue in issues)
+    yield b',"items":'
+    yield from _array_chunks(apparatus.items())
+    yield b',"note_groups":'
+    yield from _json_chunks(apparatus.note_groups)
+    yield b',"status":'
+    yield from _json_chunks(apparatus.status)
+    yield b"}"
+
+
+def _projection_chunks(
+    projection: _RepairOutput, changes: Mapping[str, object] | None = None
+) -> Iterator[bytes]:
+    yield b'{"apparatus":'
+    apparatus = projection["apparatus"]
+    if apparatus is None:
+        yield b"null"
+    else:
+        yield from _apparatus_chunks(apparatus, projection["apparatus_issues"])
+    yield b',"navigation":'
+    yield from _json_chunks(projection["navigation"])
+    if changes is not None:
+        for key, value in changes.items():
+            yield b","
+            yield from _json_chunks(key)
+            yield b":"
+            yield from _json_chunks(value)
+    yield b"}"
+
+
+@dataclass(frozen=True)
+class _RepairInput:
+    media_id: UUID
+    generation: int
+    package: _Package
+    navigation: dict[str, object]
+    previous_items: list[ApparatusMatch]
+
+
 @dataclass(frozen=True)
 class _RepairBase:
     media_id: UUID
     generation: int
     package: _Package
-    navigation_key: str
-    navigation: dict[str, object]
-    apparatus: ApparatusOutput | None
-    apparatus_issues: tuple[TooManyNotes, ...]
+    output: _RepairOutput
 
-    def review(
-        self, projection: Literal["navigation", "apparatus"], plan_sha256: str
-    ) -> EpubRepairReview:
-        return EpubRepairReview(
+    def fence(self, projection: Literal["navigation", "apparatus"]) -> _RepairFence:
+        apparatus = self.output["apparatus"]
+        return _RepairFence(
             projection=projection,
             media_id=self.media_id,
             source_generation=self.generation,
             source_size_bytes=self.package.size_bytes,
             source_sha256=self.package.source_sha256,
             fragments_sha256=self.package.body_key,
-            navigation_key=self.navigation_key,
+            navigation_key=_digest(self.output["navigation"]),
             note_regions_sha256=self.package.note_key,
-            apparatus_sha256=None if self.apparatus is None else _digest(self.output["apparatus"]),
-            plan_sha256=plan_sha256,
+            apparatus_sha256=(
+                None
+                if apparatus is None
+                else _chunk_digest(_apparatus_chunks(apparatus, self.output["apparatus_issues"]))
+            ),
         )
 
-    @property
-    def output(self) -> dict[str, object]:
-        return {
-            "navigation": self.navigation,
-            "apparatus": None
-            if self.apparatus is None
-            else {
-                **self.apparatus,
-                "issues": [issue.model_dump(mode="json") for issue in self.apparatus_issues],
-            },
-        }
+    def derive_input(self, db: Session) -> _RepairInput:
+        return _RepairInput(
+            self.media_id,
+            self.generation,
+            replace(self.package, note_regions=[]),
+            self.output["navigation"],
+            read_apparatus_correspondence(db, media_id=self.media_id)
+            if self.output["apparatus"] is not None
+            else [],
+        )
+
+
+def _installed_repair_output(
+    db: Session, media_id: UUID, generation: int, projection: Literal["navigation", "apparatus"]
+) -> _RepairOutput:
+    return {
+        "navigation": _navigation_output(
+            _installed_navigation(db, media_id, generation), _installed_witness(db, media_id)
+        ),
+        "apparatus": read_apparatus_output(db, media_id=media_id)
+        if projection == "apparatus"
+        else None,
+        "apparatus_issues": tuple(
+            issue
+            for issue in read_publication_source_issues(
+                db, media_id=media_id, generation=generation
+            )
+            if isinstance(issue, TooManyNotes)
+        )
+        if projection == "apparatus"
+        else (),
+    }
 
 
 def _repair_base(
-    db: Session, media_id: UUID, projection: Literal["navigation", "apparatus"]
+    db: Session,
+    media_id: UUID,
+    projection: Literal["navigation", "apparatus"],
+    *,
+    directory: Path | None,
 ) -> _RepairBase:
     source = db.get(Media, media_id)
     generation = read_publication_generation(db, media_id=media_id)
@@ -554,120 +730,164 @@ def _repair_base(
         or generation is None
     ):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Published EPUB not found")
-    proof = read_media_navigation_proof(db, media_id=media_id, kind="epub", generation=generation)
-    apparatus = read_apparatus_output(db, media_id=media_id) if projection == "apparatus" else None
     return _RepairBase(
         media_id,
         generation,
-        _capture_package(db, media_id),
-        proof.key,
-        _navigation_output(
-            _installed_navigation(db, media_id, generation), _installed_witness(db, media_id)
+        _capture_package(
+            db, media_id, directory=directory / "retained-input" if directory is not None else None
         ),
-        apparatus,
-        tuple(issue for issue in proof.navigation.source_issues if isinstance(issue, TooManyNotes)),
+        _installed_repair_output(db, media_id, generation, projection),
     )
+
+
+@dataclass(frozen=True)
+class _RepairApparatus:
+    item_rows: Callable[[], Iterator[dict[str, object]]]
+    edge_rows: Callable[[], Iterator[dict[str, object]]]
+    note_groups: tuple[NotesGroup, ...]
 
 
 @dataclass(frozen=True)
 class _RepairPlan:
     navigation: EpubNavigationPlan
     witness: str
-    apparatus: EpubPlan | None
-    output: dict[str, object]
+    apparatus: _RepairApparatus | None
+    candidate: ApparatusCandidate | None
+    output: _RepairOutput
 
 
 def _derive_repair(
-    base: _RepairBase, projection: Literal["navigation", "apparatus"]
+    source: _RepairInput,
+    projection: Literal["navigation", "apparatus"],
+    directory: Path,
+    *,
+    graph_directory: Path,
 ) -> _RepairPlan:
-    package = base.package
-    with parser_attempt_directory(uuid4()) as directory:
-        path = _materialize_package(directory, package)
-        apparatus = None
-        apparatus_facts = None
-        if projection == "navigation":
-            navigation = derive_epub_navigation(
-                epub_path=path,
-                media_id=base.media_id,
-                fragments=package.fragments,
-                note_regions=package.note_regions,
+    package = source.package
+    inputs = directory / "retained-input"
+    inputs.mkdir(mode=0o700, exist_ok=True)
+    path = _materialize_package(inputs, package)
+    parsed = derive_retained_epub_apparatus(
+        epub_path=path,
+        attempt_directory=directory,
+        media_id=source.media_id,
+        fragments=package.fragments,
+    )
+    # Binding is complete. Release its input files before staging the graph for review.
+    rmtree(inputs)
+    navigation = EpubNavigationPlan(
+        parsed.sections,
+        parsed.toc_nodes,
+        tuple(
+            issue for issue in parsed.source_issues if isinstance(issue, UnresolvedNavigationTarget)
+        ),
+    )
+    apparatus = None
+    candidate = None
+    staged_apparatus = parsed.apparatus
+    note_groups = parsed.note_groups
+    del parsed
+    if projection == "apparatus":
+        candidate = stage_apparatus_output(
+            graph_directory,
+            item_rows=staged_apparatus.items,
+            edges=staged_apparatus.edges(),
+            note_groups=note_groups,
+            previous_items=source.previous_items,
+        )
+        apparatus = _RepairApparatus(staged_apparatus.items, staged_apparatus.edges, note_groups)
+
+    witness = _plan_witness(navigation, source.generation)
+    navigation_output = _navigation_output(navigation, witness)
+    if apparatus is not None:
+        installed_navigation = source.navigation
+        navigation_output["section_witness_key"] = installed_navigation["section_witness_key"]
+        if navigation_output != installed_navigation:
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT,
+                "The apparatus candidate changes installed navigation. Review navigation first.",
             )
-        else:
-            apparatus = derive_retained_epub_apparatus(
-                epub_path=path,
-                attempt_directory=directory,
-                media_id=base.media_id,
-                fragments=package.fragments,
-            )
-            navigation = EpubNavigationPlan(
-                apparatus.sections,
-                apparatus.toc_nodes,
-                tuple(
-                    issue
-                    for issue in apparatus.source_issues
-                    if isinstance(issue, UnresolvedNavigationTarget)
-                ),
-            )
-            projected = apparatus_output(
-                items=apparatus.apparatus_items,
-                edges=tuple(
-                    edge for fragment in apparatus.fragments for edge in fragment.apparatus_edges
-                ),
-                note_groups=apparatus.note_groups,
-                status="ready" if apparatus.apparatus_items else "empty",
-                previous=base.apparatus,
-            )
-            apparatus_facts = {
-                **projected,
-                "issues": [
-                    issue.model_dump(mode="json")
-                    for issue in apparatus.source_issues
-                    if isinstance(issue, TooManyNotes)
-                ],
-            }
-    witness = _plan_witness(navigation, base.generation)
     return _RepairPlan(
         navigation,
         witness,
         apparatus,
+        candidate,
         {
-            "navigation": _navigation_output(navigation, witness),
-            "apparatus": apparatus_facts,
+            "navigation": navigation_output,
+            "apparatus": candidate.output if candidate is not None else None,
+            "apparatus_issues": (),
         },
     )
 
 
 def preview_epub_repair(
-    media_id: UUID, projection: Literal["navigation", "apparatus"]
-) -> dict[str, object]:
-    """Return the current and candidate logical projections and their review record."""
-    with get_session_factory()() as db:
-        base = _repair_base(get_repeatable_read_db(db), media_id, projection)
-    plan = _derive_repair(base, projection)
-    if plan.apparatus is not None:
-        with get_session_factory()() as db:
-            validate_preserved_apparatus_replacement(
-                get_repeatable_read_db(db),
-                media_id=media_id,
-                items=plan.apparatus.apparatus_items,
-            )
-    return {
-        "review": base.review(projection, _digest(plan.output)).model_dump(mode="json"),
-        "installed": base.output,
-        "candidate": plan.output,
-    }
+    media_id: UUID, projection: Literal["navigation", "apparatus"], *, output: BinaryIO
+) -> None:
+    """Write the exact reviewed projections while their row readers remain live."""
+    with parser_attempt_directory(uuid4()) as directory:
+        with TemporaryDirectory(dir=directory) as derivation_directory:
+            derivation = Path(derivation_directory)
+            with get_session_factory()() as db:
+                base = _repair_base(
+                    get_repeatable_read_db(db), media_id, projection, directory=derivation
+                )
+                fence = base.fence(projection)
+                source = base.derive_input(db)
+            del base
+            plan = _derive_repair(source, projection, derivation, graph_directory=directory)
+            installed: _RepairOutput = {
+                "navigation": source.navigation,
+                "apparatus": None,
+                "apparatus_issues": (),
+            }
+            candidate, projected = plan.candidate, plan.output
+            del plan, source
+        review = {
+            **fence.model_dump(mode="json"),
+            "plan_sha256": _chunk_digest(_projection_chunks(projected)),
+        }
+
+        def write_review(installed: _RepairOutput, changes: Mapping[str, object] | None) -> None:
+            output.write(b'{"review":')
+            for chunk in _json_chunks(review):
+                output.write(chunk)
+            output.write(b',"installed":')
+            for chunk in _projection_chunks(installed):
+                output.write(chunk)
+            output.write(b',"candidate":')
+            for chunk in _projection_chunks(projected, changes):
+                output.write(chunk)
+            output.write(b"}\n")
+
+        if candidate is None:
+            write_review(installed, None)
+        else:
+            with get_session_factory()() as db:
+                db = get_repeatable_read_db(db)
+                current = _repair_base(db, media_id, projection, directory=None)
+                if current.fence(projection) != fence:
+                    raise _changed()
+                changes = review_apparatus_replacement(
+                    db,
+                    media_id=media_id,
+                    previous=current.output["apparatus"],
+                    candidate=candidate,
+                )
+                write_review(current.output, changes)
 
 
-def _reviewed_base(db: Session, review: EpubRepairReview) -> _RepairBase | None:
+def _reviewed_base(
+    db: Session, review: EpubRepairReview, *, directory: Path | None
+) -> _RepairBase | None:
     if not lock_media_rows_in_order(db, [review.media_id], lock_mode="no_key_update"):
         raise _changed()
-    current = _repair_base(db, review.media_id, review.projection)
-    current_review = current.review(review.projection, review.plan_sha256)
+    current = _repair_base(db, review.media_id, review.projection, directory=directory)
+    fence = current.fence(review.projection)
     if (
-        current_review.source_generation,
-        current_review.source_size_bytes,
-        current_review.source_sha256,
-        current_review.fragments_sha256,
+        fence.source_generation,
+        fence.source_size_bytes,
+        fence.source_sha256,
+        fence.fragments_sha256,
     ) != (
         review.source_generation,
         review.source_size_bytes,
@@ -675,57 +895,63 @@ def _reviewed_base(db: Session, review: EpubRepairReview) -> _RepairBase | None:
         review.fragments_sha256,
     ):
         raise _changed()
-    if _digest(current.output) == review.plan_sha256:
+    if _chunk_digest(_projection_chunks(current.output)) == review.plan_sha256:
         return None
-    if current_review != review:
+    if fence.model_dump() != review.model_dump(exclude={"plan_sha256"}):
         raise _changed()
     return current
 
 
 def apply_epub_repair(review: EpubRepairReview) -> Literal["installed", "already_installed"]:
     """Apply exactly the reviewed projection. Replay checks the installed result first."""
-    with get_session_factory()() as db:
-        base = retry_serializable(db, "capture_epub_repair", lambda: _reviewed_base(db, review))
-    if base is None:
-        return "already_installed"
-    plan = _derive_repair(base, review.projection)
-    if _digest(plan.output) != review.plan_sha256:
-        raise _changed()
+    with parser_attempt_directory(uuid4()) as directory:
+        with get_session_factory()() as db:
 
-    def apply(db: Session) -> Literal["installed", "already_installed"]:
-        id, generation = review.media_id, review.source_generation
-        if _reviewed_base(db, review) is None:
+            def capture() -> _RepairInput | None:
+                base = _reviewed_base(db, review, directory=directory)
+                return base.derive_input(db) if base is not None else None
+
+            source = retry_serializable(db, "capture_epub_repair", capture)
+        if source is None:
             return "already_installed"
-        apparatus_issues = None
-        if plan.apparatus is not None:
-            apparatus = plan.apparatus
-            replace_media_apparatus(
-                db,
-                media_id=id,
-                items=[dict(item) for item in apparatus.apparatus_items],
-                edges=[
-                    dict(edge)
-                    for fragment in apparatus.fragments
-                    for edge in fragment.apparatus_edges
-                ],
-                note_groups=list(apparatus.note_groups),
-                preserve_fragment_html=True,
+        with TemporaryDirectory(dir=directory) as graph_directory:
+            plan = _derive_repair(
+                source, review.projection, directory, graph_directory=Path(graph_directory)
             )
-            apparatus_issues = tuple(
-                issue for issue in apparatus.source_issues if isinstance(issue, TooManyNotes)
-            )
-        _install_navigation(
-            db,
-            id,
-            generation,
-            plan.navigation,
-            plan.witness,
-            apparatus_issues=apparatus_issues,
-        )
-        installed = _repair_base(db, id, review.projection)
-        if _digest(installed.output) != review.plan_sha256:
-            raise _changed()
-        return "installed"
+            del source
+            if _chunk_digest(_projection_chunks(plan.output)) != review.plan_sha256:
+                raise _changed()
+            apparatus, navigation, witness = plan.apparatus, plan.navigation, plan.witness
+            del plan
 
-    with get_session_factory()() as db:
-        return retry_serializable(db, "apply_epub_repair", lambda: apply(db))
+        def apply(db: Session) -> Literal["installed", "already_installed"]:
+            id, generation = review.media_id, review.source_generation
+            if _reviewed_base(db, review, directory=None) is None:
+                return "already_installed"
+            if apparatus is not None:
+                replace_media_apparatus(
+                    db,
+                    media_id=id,
+                    item_rows=apparatus.item_rows,
+                    edge_rows=apparatus.edge_rows,
+                    note_groups=list(apparatus.note_groups),
+                    preserve_fragment_html=True,
+                )
+                issues = read_publication_source_issues(db, media_id=id, generation=generation)
+                if any(isinstance(issue, TooManyNotes) for issue in issues):
+                    replace_source_issues(
+                        db,
+                        media_id=id,
+                        issues=tuple(
+                            issue for issue in issues if not isinstance(issue, TooManyNotes)
+                        ),
+                    )
+            else:
+                _install_navigation(db, id, generation, navigation, witness)
+            installed = _installed_repair_output(db, id, generation, review.projection)
+            if _chunk_digest(_projection_chunks(installed)) != review.plan_sha256:
+                raise _changed()
+            return "installed"
+
+        with get_session_factory()() as db:
+            return retry_serializable(db, "apply_epub_repair", lambda: apply(db))

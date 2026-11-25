@@ -8175,30 +8175,6 @@ export interface components {
              */
             kind: "Link";
         };
-        /**
-         * LinkPassageEndpoint
-         * @description A transient passage candidate, materialized into a ``passage_anchor`` on confirm.
-         */
-        LinkPassageEndpoint: {
-            /** Candidate Ref */
-            candidate_ref: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "passage";
-            passage_target: components["schemas"]["CapturedPassageTarget"] | null;
-        };
-        /** LinkResourceEndpoint */
-        LinkResourceEndpoint: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "resource";
-            /** Ref */
-            ref: string;
-        };
         /** LinkShareOut */
         LinkShareOut: {
             /**
@@ -10685,14 +10661,6 @@ export interface components {
             /** Source Identity */
             source_identity: string;
         };
-        /**
-         * Position
-         * @description An insertion after one exact link at the source endpoint, or first.
-         */
-        Position: {
-            /** After */
-            after: string | null;
-        };
         /** PreviewResolution */
         PreviewResolution: {
             /**
@@ -10987,17 +10955,6 @@ export interface components {
             /** Targets */
             targets: components["schemas"]["ReaderEvidenceSourceTargetOut"][];
         };
-        /** ReaderAuthoredPlacementOut */
-        ReaderAuthoredPlacementOut: {
-            /** Endpoint */
-            endpoint: string;
-            /**
-             * Link Id
-             * Format: uuid
-             */
-            link_id: string;
-            position: components["schemas"]["Position"];
-        };
         /** ReaderCaptureDocumentMapOut */
         ReaderCaptureDocumentMapOut: {
             /**
@@ -11055,18 +11012,6 @@ export interface components {
             units: components["schemas"]["ReaderUnitOut"][];
             x_article_content: components["schemas"]["XArticleContent"] | null;
             x_capture: components["schemas"]["ReaderXCaptureOut"] | null;
-        };
-        /** ReaderChildContinuationOut */
-        ReaderChildContinuationOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "child";
-            /** Position */
-            position: null;
-            /** Source */
-            source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"];
         };
         /** ReaderCitationOccurrenceOut */
         ReaderCitationOccurrenceOut: {
@@ -11319,17 +11264,27 @@ export interface components {
          * @description One exact resource; native content owns its placement when present.
          */
         ReaderEvidenceRootOut: {
-            authored_placement: components["schemas"]["ReaderAuthoredPlacementOut"] | null;
             /** Content */
             content: components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceResourceOut"];
-            /** Continuation */
-            continuation: (components["schemas"]["ReaderChildContinuationOut"] | components["schemas"]["ReaderSiblingContinuationOut"]) | null;
             /** Direct Facts */
             direct_facts: components["schemas"]["ReaderDirectFactOut"][];
             /** Ref */
             ref: string;
             /** Resolution */
             resolution: (components["schemas"]["ReaderEvidenceResolvedOut"] | components["schemas"]["ReaderEvidenceUnavailableOut"]) | null;
+        };
+        /** ReaderEvidenceSourceItemOut */
+        ReaderEvidenceSourceItemOut: {
+            /** Action Ref */
+            action_ref: string;
+            activation: components["schemas"]["ResourceActivationOut"];
+            /** Label */
+            label: string;
+            /** Link Revision */
+            link_revision: string | null;
+            /** Ref */
+            ref: string;
+            source: components["schemas"]["SourceAttributionOut"] | null;
         };
         /**
          * ReaderEvidenceSourceReferenceOut
@@ -11377,7 +11332,7 @@ export interface components {
             apparatus_kind: "footnote_ref" | "endnote_ref" | "bibliography_ref" | "sidenote_ref" | "margin_note_ref" | "footnote" | "endnote" | "bibliography_entry" | "sidenote" | "margin_note" | "reference_section";
             /** Content */
             content: components["schemas"]["ReaderSourceHtmlOut"] | components["schemas"]["ReaderSourceTextOut"] | components["schemas"]["ReaderSourceUnavailableOut"];
-            item: components["schemas"]["ResourceItemOut"];
+            item: components["schemas"]["ReaderEvidenceSourceItemOut"];
             /** Resolution */
             resolution: components["schemas"]["ReaderEvidenceResolvedOut"] | components["schemas"]["ReaderEvidenceUnavailableOut"];
             /** Stable Key */
@@ -11679,16 +11634,6 @@ export interface components {
             id: string;
             /** Label */
             label: string;
-        };
-        /** ReaderSiblingContinuationOut */
-        ReaderSiblingContinuationOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "sibling";
-            position: components["schemas"]["Position"];
-            source: components["schemas"]["LinkResourceEndpoint"];
         };
         /** ReaderSourceHtmlOut */
         ReaderSourceHtmlOut: {

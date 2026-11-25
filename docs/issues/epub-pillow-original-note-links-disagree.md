@@ -25,11 +25,12 @@ binds the exact three source documents, generation 2, and frozen proposal
 `463eb45b6f8d3f9654353eb42d0f9b057435dd0cfad122911130638ffa94c257`.
 all source input comes from the previously admitted archive; no new retrieval.
 
-prerequisite and fix: retain this source-defect disposition. any later link
-correction needs independent intended-destination evidence and an explicit
-source-repair policy; matching identifier suffixes alone must not rewrite links.
+independent reading sections and printed entries establish both edits:
+`#ich53en02` returns to `chapter.html#ch53en02`, and `#ch109en02`
+opens `notes.html#ich109en02`. the private derivative changes those two hrefs
+and passes epubcheck 5.4.0. the exact member diff and both digests are in
+`completion-spec/source-derivatives-20261124/source-diffs.json` in the epub
+corpus state directory.
 
-acceptance: establish each intended destination independently, apply only a
-source-proved correction and verify actual forward/return routing without
-changing other notes. the current campaign may finish with these source defects
-explicitly unresolved; that disposition leaves this ticket open.
+after software release, import the separate edition and verify both directions
+and the unchanged neighboring notes. keep the original and its saved state.

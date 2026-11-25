@@ -12,13 +12,17 @@ repair provenance stays in storage. Neither read changes content or progress.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import re
+import sqlite3
 from collections import Counter, defaultdict
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
-from typing import Any, TypedDict, cast
+from pathlib import Path
+from typing import Any, Literal, cast
 from urllib.parse import parse_qs, unquote, urlsplit
 from uuid import UUID, uuid4
 
@@ -29,7 +33,7 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError, ResourceLimitError
 from nexus.schemas.reader import NavigationTextPointOut, NavigationTextRangeOut
 from nexus.schemas.reader_apparatus import (
     NoteBodyRegion,
@@ -49,6 +53,7 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceAnchorOut,
     ReaderEvidenceResolutionOut,
     ReaderEvidenceResolvedOut,
+    ReaderEvidenceSourceItemOut,
     ReaderEvidenceSourceTargetOut,
     ReaderEvidenceUnavailableOut,
     ReaderSourceHtmlOut,
@@ -83,8 +88,12 @@ from nexus.services.reader_publication import (
 )
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resources
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_items.items import resource_items_out
-from nexus.services.resource_items.routing import route_for_visible_apparatus_item
+from nexus.services.resource_items.items import passage_link_revision, source_attributions
+from nexus.services.resource_items.locations import media_passages
+from nexus.services.resource_items.routing import (
+    activations_from_resolved_passages,
+    route_for_visible_apparatus_item,
+)
 from nexus.services.search import projection
 
 SUPPORTED_MEDIA_KINDS = frozenset({"web_article", "epub", "pdf"})
@@ -143,12 +152,10 @@ class ReaderApparatusEdge:
 
 @dataclass(frozen=True, slots=True)
 class ReaderApparatusResponse:
-    """Already-visible owners or selected targets in one snapshot; never serialized."""
+    """Visible source-reference owners, read once inside the apparatus scope."""
 
-    media_id: UUID
     status: ReaderApparatusStatus
-    items: list[ReaderApparatusItem]
-    edges: list[ReaderApparatusEdge]
+    items: Iterable[ReaderApparatusItem]
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,7 +220,7 @@ _EDGE_UPSERT = text(
 )
 
 
-def _upsert_json_batches(rows: Sequence[Mapping[str, object]]) -> Iterator[str]:
+def _upsert_json_batches(rows: Iterable[Mapping[str, object]]) -> Iterator[str]:
     batch: list[str] = []
     size = 2  # Array brackets.
     for row in rows:
@@ -234,14 +241,12 @@ def stable_token(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def note_regions_from_publication(
-    items: list[dict[str, object]], note_groups: list[NotesGroup]
-) -> list[NoteRegion]:
+def iter_publication_note_regions(
+    items: Iterable[Mapping[str, object]], note_groups: list[NotesGroup]
+) -> Iterator[NoteRegion]:
     """Combine structural groups with the existing exact note-body locators."""
-    regions: list[NoteRegion] = [
-        NoteGroupRegion(range=group.range, heading=group.heading, provenance=group.provenance)
-        for group in note_groups
-    ]
+    for group in note_groups:
+        yield NoteGroupRegion(range=group.range, heading=group.heading, provenance=group.provenance)
     for item in items:
         if item.get("kind") not in {"footnote", "endnote", "sidenote", "margin_note"}:
             continue
@@ -255,15 +260,12 @@ def note_regions_from_publication(
         end = int(locator["end_offset"])
         if start >= end:
             continue
-        regions.append(
-            NoteBodyRegion(
-                range=NavigationTextRangeOut(
-                    start=NavigationTextPointOut(fragment_id=fragment_id, offset=start),
-                    end=NavigationTextPointOut(fragment_id=fragment_id, offset=end),
-                )
+        yield NoteBodyRegion(
+            range=NavigationTextRangeOut(
+                start=NavigationTextPointOut(fragment_id=fragment_id, offset=start),
+                end=NavigationTextPointOut(fragment_id=fragment_id, offset=end),
             )
         )
-    return regions
 
 
 def read_note_regions(db: Session, media_id: UUID) -> list[NoteRegion]:
@@ -284,20 +286,15 @@ def read_note_regions(db: Session, media_id: UUID) -> list[NoteRegion]:
     if not isinstance(raw_groups, list):
         raise ApiError(ApiErrorCode.E_INTERNAL, "Reader note groups must be a list")
     groups = [NotesGroup.model_validate(group) for group in raw_groups]
-    rows = (
-        db.execute(
-            text(
-                """
+    with db.execute(
+        text("""
             SELECT kind, locator, locator_status FROM reader_apparatus_items
             WHERE state_id = :state_id AND kind IN ('footnote', 'endnote', 'sidenote', 'margin_note')
-            """
-            ),
-            {"state_id": state["id"]},
-        )
-        .mappings()
-        .all()
-    )
-    return note_regions_from_publication([dict(row) for row in rows], groups)
+            """),
+        {"state_id": state["id"]},
+        execution_options={"yield_per": _UPSERT_MAX_ROWS},
+    ).mappings() as rows:
+        return list(iter_publication_note_regions((dict(row) for row in rows), groups))
 
 
 def _read_state(db: Session, *, viewer_id: UUID, media_id: UUID) -> _ApparatusState:
@@ -341,10 +338,14 @@ def _read_state(db: Session, *, viewer_id: UUID, media_id: UUID) -> _ApparatusSt
     )
 
 
-def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderApparatusResponse:
-    """Only reference/forward owners and untargeted orphans enter the map."""
+@contextmanager
+def read_media_apparatus(
+    db: Session, viewer_id: UUID, media_id: UUID
+) -> Iterator[ReaderApparatusResponse]:
+    """Borrow the caller's snapshot for the ordered owner rows."""
     state = _read_state(db, viewer_id=viewer_id, media_id=media_id)
-    return _media_apparatus(db, media_id=media_id, state=state)
+    with closing(_media_apparatus(db, state=state)) as items:
+        yield ReaderApparatusResponse(status=state.status, items=items)
 
 
 def note_reference_for_locator(
@@ -421,12 +422,10 @@ def note_reference_for_locator(
     )
 
 
-def _media_apparatus(
-    db: Session, *, media_id: UUID, state: _ApparatusState
-) -> ReaderApparatusResponse:
+def _media_apparatus(db: Session, *, state: _ApparatusState) -> Generator[ReaderApparatusItem]:
     if state.id is None:
-        return ReaderApparatusResponse(media_id=media_id, status=state.status, items=[], edges=[])
-    item_rows = db.execute(
+        return
+    with db.execute(
         text(
             _OWNER_ITEMS_CTE
             + """
@@ -436,37 +435,19 @@ def _media_apparatus(
                    jsonb_build_object('marker_id', item.source_ref->'marker_id') AS source_ref,
                    item.sort_key
             FROM reader_apparatus_items item JOIN owners ON owners.id = item.id
-            ORDER BY CASE WHEN right(item.kind, 4) = '_ref'
+            ORDER BY item.sort_key COLLATE "C",
+                     CASE WHEN right(item.kind, 4) = '_ref'
                           OR item.id IN (SELECT from_item_id FROM forward_edges)
                      THEN 0 ELSE 1 END,
-                     item.sort_key, item.stable_key
+                     item.stable_key
         """
         ),
         {"state_id": state.id},
         execution_options={"yield_per": 128},
-    ).mappings()
-    items = [
-        _item_from_row(row)
-        for row in item_rows
-        if state.scope is None or row["id"] in state.scope.permitted_apparatus
-    ]
-    item_rows.close()
-    # Keep the existing stable tie order: reference/forward owners, then orphans.
-    items.sort(key=lambda item: item.sort_key)
-    return ReaderApparatusResponse(
-        media_id=media_id,
-        status=state.status,
-        items=items,
-        edges=[
-            edge
-            for edge in _read_edges(db, state_id=state.id)
-            if state.scope is None
-            or (
-                edge.to_item_id in state.scope.permitted_apparatus
-                and edge.from_stable_key in {item.stable_key for item in items}
-            )
-        ],
-    )
+    ).mappings() as item_rows:
+        for row in item_rows:
+            if state.scope is None or row["id"] in state.scope.permitted_apparatus:
+                yield _item_from_row(row)
 
 
 def _item_from_row(row: RowMapping) -> ReaderApparatusItem:
@@ -573,10 +554,12 @@ def get_reader_apparatus_detail(
     if generation is None:
         raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
     if expected_identity != f"g{generation}":
+        # Only web articles can add a viewer-specific X manifest to this generation.
+        if state.scope is not None or state.media_kind != "web_article":
+            raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
         from nexus.services.reader_document import read_reader_document
 
-        document = read_reader_document(db, viewer_id, media_id)
-        if document.identity != expected_identity:
+        if read_reader_document(db, viewer_id, media_id).identity != expected_identity:
             raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
     if state.id is None or state.status not in ("ready", "partial"):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source reference not found")
@@ -632,11 +615,29 @@ def get_reader_apparatus_detail(
     )
     if state.scope is not None:
         _bound_scope_body_html(db, scope=state.scope, targets=targets)
-    previews = resource_items_out(
+    reading_ref = ResourceRef("media", media_id)
+    refs = [ResourceRef("reader_apparatus_item", target.id) for target in targets]
+    passages = media_passages(
         db,
         viewer_id=viewer_id,
-        refs=[ResourceRef("reader_apparatus_item", target.id) for target in targets],
-        reading_media_ids={f"reader_apparatus_item:{target.id}": media_id for target in targets},
+        refs=refs,
+        reading_media_ids={ref.uri: media_id for ref in refs},
+        include_excerpts=False,
+    )
+    activations = activations_from_resolved_passages(
+        db,
+        viewer_id=viewer_id,
+        refs=refs,
+        missing_ref_uris=frozenset(),
+        scoped=passages,
+    )
+    attribution = (
+        source_attributions(db, viewer_id=viewer_id, refs=[reading_ref]).get(reading_ref.uri)
+        if targets
+        else None
+    )
+    can_read_original = state.scope is None or (
+        bool(targets) and can_read_media(db, viewer_id, source_media_id)
     )
     fragment_indexes = {
         str(row.id): int(row.idx)
@@ -646,7 +647,7 @@ def get_reader_apparatus_detail(
         )
     }
     targets_out: list[ReaderEvidenceSourceTargetOut] = []
-    for target, preview in zip(targets, previews, strict=True):
+    for target in targets:
         content: SourceContent
         if target.body_html_sanitized is not None:
             content = ReaderSourceHtmlOut(
@@ -656,9 +657,25 @@ def get_reader_apparatus_detail(
             content = ReaderSourceTextOut(text=target.body_text)
         else:
             content = ReaderSourceUnavailableOut()
+        activation = activations[target.resource_ref]
+        passage = passages.get(target.resource_ref)
+        source = attribution if activation.resource_ref == reading_ref.uri else None
+        if source is not None and can_read_original and target.label:
+            source = source.model_copy(update={"location_label": target.label})
         targets_out.append(
             ReaderEvidenceSourceTargetOut(
-                item=preview,
+                item=ReaderEvidenceSourceItemOut(
+                    ref=target.resource_ref,
+                    action_ref=activation.resource_ref,
+                    label=target.label or target.kind.replace("_", " "),
+                    activation=activation,
+                    source=source,
+                    link_revision=passage_link_revision(
+                        passage.owner, passage.quote, passage.locator
+                    )
+                    if passage is not None
+                    else None,
+                ),
                 stable_key=target.stable_key,
                 apparatus_kind=target.kind,
                 content=content,
@@ -809,11 +826,59 @@ def apparatus_resolution(
     )
 
 
-class ApparatusOutput(TypedDict):
+@dataclass(frozen=True)
+class ApparatusOutput:
+    """Repeatable logical rows in stable-key order within the producer's scope."""
+
     status: str
-    items: list[dict[str, object]]
-    edges: list[dict[str, object]]
+    items: Callable[[], Iterator[dict[str, object]]]
+    edges: Callable[[], Iterator[dict[str, object]]]
     note_groups: list[dict[str, object]]
+
+
+@dataclass(frozen=True)
+class ApparatusCandidate:
+    output: ApparatusOutput
+    _replacements: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class ApparatusMatch:
+    """Source correspondence keys without retaining the underlying body or provenance."""
+
+    stable_key: str
+    kind: str
+    identity: bytes | None
+    context: bytes | None
+    locator: bytes | None
+    allow_context: bool
+
+
+def _match_key(value: tuple[str, ...] | None) -> bytes | None:
+    if value is None:
+        return None
+    return hashlib.sha256(json.dumps(value, separators=(",", ":")).encode()).digest()
+
+
+def _apparatus_match(item: Mapping[str, Any]) -> ApparatusMatch:
+    kind = str(item["kind"])
+    source = _object_dict(item.get("source_ref"))
+    own_id = source.get("marker_id" if kind.endswith("_ref") else "target_id")
+    anonymous = _object_dict(source.get("identity")).get("kind") == "Anonymous"
+    return ApparatusMatch(
+        str(item["stable_key"]),
+        kind,
+        _match_key(_source_identity(item)),
+        _match_key(_context_key(item)),
+        _match_key(_locator_key(item)),
+        not own_id or anonymous,
+    )
+
+
+def _apparatus_correspondence_items(
+    items: Iterable[Mapping[str, object]],
+) -> list[ApparatusMatch]:
+    return [_apparatus_match(item) for item in items]
 
 
 def _apparatus_item_row(item: Mapping[str, object], key: str) -> dict[str, object]:
@@ -854,38 +919,89 @@ def _apparatus_edge_row(
     }
 
 
-def apparatus_output(
+def stage_apparatus_output(
+    directory: Path,
     *,
-    items: Sequence[Mapping[str, object]],
-    edges: Sequence[Mapping[str, object]],
+    item_rows: Callable[[], Iterator[Mapping[str, object]]],
+    edges: Iterable[Mapping[str, object]],
     note_groups: Sequence[NotesGroup],
-    status: str,
-    previous: ApparatusOutput | None = None,
-) -> ApparatusOutput:
-    """Canonical logical install, including the keys preserved by source correspondence."""
-    _validate_replacement(status=status, items=items, edges=edges)
-    replacements = (
-        _reconciled_apparatus_keys(previous["items"], items, preserve_fragment_html=True)
-        if previous is not None
-        else {}
-    )
-    item_rows = [
-        _apparatus_item_row(
-            item, replacements.get(str(item["stable_key"]), str(item["stable_key"]))
+    previous_items: Sequence[ApparatusMatch],
+) -> ApparatusCandidate:
+    """Normalize and sort the operator's candidate without a full graph in memory."""
+    items = _apparatus_correspondence_items(item_rows())
+    status = "ready" if items else "empty"
+    edges = iter(edges)
+    if not items:
+        _validate_replacement(
+            status=status, has_items=False, has_edges=next(edges, None) is not None
         )
-        for item in items
-    ]
-    edge_rows = [_apparatus_edge_row(edge, replacements) for edge in edges]
-    return {
-        "status": status,
-        "items": sorted(item_rows, key=lambda item: str(item["stable_key"])),
-        "edges": sorted(edge_rows, key=lambda edge: str(edge["stable_key"])),
-        "note_groups": [group.model_dump(mode="json") for group in note_groups],
-    }
+    replacements = _reconciled_apparatus_keys(previous_items, items, preserve_fragment_html=True)
+    del items
+    path = directory / "review-apparatus.sqlite3"
+
+    def rows(table: Literal["items", "edges"]) -> Iterator[dict[str, object]]:
+        with (
+            closing(sqlite3.connect(path)) as db,
+            closing(db.execute(f"SELECT payload FROM {table} ORDER BY stable_key")) as result,
+        ):
+            for (payload,) in result:
+                yield json.loads(gzip.decompress(payload))
+
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("PRAGMA page_size = 4096")
+        db.execute("PRAGMA max_page_count = 16384")
+        db.execute("PRAGMA journal_mode = OFF")
+        for table in ("items", "edges"):
+            db.execute(f"CREATE TABLE {table} (stable_key TEXT PRIMARY KEY, payload BLOB NOT NULL)")
+
+        def packed(rows: Iterable[dict[str, object]]) -> Iterator[tuple[object, bytes]]:
+            for row in rows:
+                content = json.dumps(row, ensure_ascii=False, separators=(",", ":")).encode()
+                yield row["stable_key"], gzip.compress(content, compresslevel=1, mtime=0)
+
+        try:
+            db.executemany(
+                "INSERT INTO items VALUES (?, ?)",
+                packed(
+                    _apparatus_item_row(
+                        item, replacements.get(str(item["stable_key"]), str(item["stable_key"]))
+                    )
+                    for item in item_rows()
+                ),
+            )
+            db.executemany(
+                "INSERT INTO edges VALUES (?, ?)",
+                packed(_apparatus_edge_row(edge, replacements) for edge in edges),
+            )
+        except sqlite3.IntegrityError as exc:
+            if exc.sqlite_errorcode not in (
+                sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY,
+                sqlite3.SQLITE_CONSTRAINT_UNIQUE,
+            ):
+                raise
+            raise ApiError(
+                ApiErrorCode.E_INTERNAL, "EPUB repair candidate has duplicate apparatus keys"
+            ) from exc
+        except sqlite3.OperationalError as exc:
+            if exc.sqlite_errorcode != sqlite3.SQLITE_FULL:
+                raise
+            raise ResourceLimitError(
+                "EPUB repair graph scratch storage is full", dimension="Output"
+            ) from exc
+        db.commit()
+    return ApparatusCandidate(
+        ApparatusOutput(
+            status,
+            lambda: rows("items"),
+            lambda: rows("edges"),
+            [group.model_dump(mode="json") for group in note_groups],
+        ),
+        replacements,
+    )
 
 
 def read_apparatus_output(db: Session, *, media_id: UUID) -> ApparatusOutput | None:
-    """Read the full installed logical projection for a reviewed repair."""
+    """The installed logical projection, consumed in the caller's database snapshot."""
     params = {"media_id": media_id}
     state = (
         db.execute(
@@ -899,64 +1015,65 @@ def read_apparatus_output(db: Session, *, media_id: UUID) -> ApparatusOutput | N
     )
     if state is None:
         return None
-    items = db.execute(
-        text("""
-            SELECT stable_key, kind, label, body_text, body_html_sanitized, locator,
-                   locator_status, confidence, extraction_method, source_ref, sort_key
-            FROM reader_apparatus_items WHERE media_id=:media_id
-        """),
-        params,
-    ).mappings()
-    edges = db.execute(
-        text("""
-            SELECT e.stable_key, src.stable_key AS from_stable_key, dst.stable_key AS to_stable_key,
-                   e.relation, e.confidence, e.extraction_method, e.source_ref, e.sort_key
-            FROM reader_apparatus_edges e
-            JOIN reader_apparatus_items src ON src.id = e.from_item_id
-            JOIN reader_apparatus_items dst ON dst.id = e.to_item_id
-            WHERE e.media_id=:media_id
-        """),
-        params,
-    ).mappings()
-    return {
-        "status": str(state["status"]),
-        "items": [
-            _apparatus_item_row(dict(item), str(item["stable_key"]))
-            for item in sorted(items, key=lambda row: str(row["stable_key"]))
-        ],
-        "edges": [
-            _apparatus_edge_row(dict(edge))
-            for edge in sorted(edges, key=lambda row: str(row["stable_key"]))
-        ],
-        "note_groups": [
+
+    def items() -> Iterator[dict[str, object]]:
+        with db.execute(
+            text("""
+                SELECT stable_key, kind, label, body_text, body_html_sanitized, locator,
+                       locator_status, confidence, extraction_method, source_ref, sort_key
+                FROM reader_apparatus_items WHERE media_id=:media_id
+                ORDER BY stable_key COLLATE "C"
+            """),
+            params,
+            execution_options={"yield_per": _UPSERT_MAX_ROWS},
+        ).mappings() as rows:
+            for row in rows:
+                yield _apparatus_item_row(dict(row), str(row["stable_key"]))
+
+    def edges() -> Iterator[dict[str, object]]:
+        with db.execute(
+            text("""
+                SELECT e.stable_key, src.stable_key AS from_stable_key, dst.stable_key AS to_stable_key,
+                       e.relation, e.confidence, e.extraction_method, e.source_ref, e.sort_key
+                FROM reader_apparatus_edges e
+                JOIN reader_apparatus_items src ON src.id = e.from_item_id
+                JOIN reader_apparatus_items dst ON dst.id = e.to_item_id
+                WHERE e.media_id=:media_id
+                ORDER BY e.stable_key COLLATE "C"
+            """),
+            params,
+            execution_options={"yield_per": _UPSERT_MAX_ROWS},
+        ).mappings() as rows:
+            for row in rows:
+                yield _apparatus_edge_row(dict(row))
+
+    return ApparatusOutput(
+        str(state["status"]),
+        items,
+        edges,
+        [
             NotesGroup.model_validate(group).model_dump(mode="json")
             for group in state["note_groups"]
         ],
-    }
+    )
 
 
 def replace_media_apparatus(
     db: Session,
     *,
     media_id: UUID,
-    items: list[dict[str, object]] | None = None,
-    edges: list[dict[str, object]] | None = None,
+    item_rows: Callable[[], Iterator[Mapping[str, object]]] | None = None,
+    edge_rows: Callable[[], Iterator[Mapping[str, object]]],
     note_groups: list[NotesGroup],
     status: str | None = None,
     preserve_fragment_html: bool = False,
 ) -> None:
-    """Install one extraction's rows, keeping the id of every unchanged ``stable_key``.
+    """Install one extraction's rows from repeatable readers of the same projection.
 
     Saved connections, retrievals and view states key on the item UUID, so matched
     rows are updated in place and only rows this extraction no longer produces are
     deleted — with their dependents, and before the items they hang off.
     """
-    items = items or []
-    edges = edges or []
-    if status is None:
-        status = "ready" if items else "empty"
-    _validate_replacement(status=status, items=items, edges=edges)
-
     if (
         db.scalar(
             text("SELECT 1 FROM media WHERE id = :media_id FOR UPDATE"), {"media_id": media_id}
@@ -964,25 +1081,42 @@ def replace_media_apparatus(
         is None
     ):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
-    candidate_keys = [str(item["stable_key"]) for item in items]
+    previous = _read_apparatus_matches(db, media_id)
+    source = item_rows() if item_rows is not None else iter(())
+    items = _apparatus_correspondence_items(source) if previous else []
+    candidate_keys = (
+        [item.stable_key for item in items]
+        if previous
+        else [str(item["stable_key"]) for item in source]
+    )
+    if status is None:
+        status = "ready" if candidate_keys else "empty"
     if len(candidate_keys) != len(set(candidate_keys)):
         raise ApiError(
             ApiErrorCode.E_RESOURCE_CONFLICT,
             "Source notes have ambiguous identities; the previous publication was retained.",
         )
-    old_ids = _reconcile_items(
-        db,
-        media_id=media_id,
-        items=items,
-        edges=edges,
-        preserve_fragment_html=preserve_fragment_html,
+    replacements = _reconciled_apparatus_keys(
+        [match for _, match in previous], items, preserve_fragment_html=preserve_fragment_html
     )
-    item_keys = [str(item["stable_key"]) for item in items]
-    edge_keys = [str(edge["stable_key"]) for edge in edges]
+    item_keys = [replacements.get(key, key) for key in candidate_keys]
+    edge_keys = [str(_apparatus_edge_row(edge, replacements)["stable_key"]) for edge in edge_rows()]
+    _validate_replacement(status=status, has_items=bool(item_keys), has_edges=bool(edge_keys))
     if len(item_keys) != len(set(item_keys)):
         raise ApiError(ApiErrorCode.E_INTERNAL, "Reader apparatus item keys must be unique")
     if len(edge_keys) != len(set(edge_keys)):
         raise ApiError(ApiErrorCode.E_INTERNAL, "Reader apparatus edge keys must be unique")
+    old_ids = {match.stable_key: item_id for item_id, match in previous}
+    del items, previous
+    _validate_apparatus_dependencies(
+        db,
+        media_id=media_id,
+        old_ids=old_ids,
+        replacements=replacements,
+        preserve_fragment_html=preserve_fragment_html,
+    )
+    if not preserve_fragment_html:
+        _rewrite_apparatus_stamps(db, media_id=media_id, replacements=replacements)
 
     state_id = db.execute(
         text(
@@ -1002,14 +1136,26 @@ def replace_media_apparatus(
         },
     ).scalar_one()
 
-    item_rows = [_apparatus_item_row(item, str(item["stable_key"])) for item in items]
     ids_by_key: dict[str, UUID] = {}
-    for payload in _upsert_json_batches(item_rows):
-        for row in db.execute(
-            _ITEM_UPSERT,
-            {"media_id": media_id, "state_id": state_id, "items": payload},
-        ):
-            ids_by_key[row.stable_key] = row.id
+    if item_rows is not None:
+        rows = (
+            _apparatus_item_row(
+                item, replacements.get(str(item["stable_key"]), str(item["stable_key"]))
+            )
+            for item in item_rows()
+        )
+        for payload in _upsert_json_batches(rows):
+            for row in db.execute(
+                _ITEM_UPSERT,
+                {"media_id": media_id, "state_id": state_id, "items": payload},
+            ):
+                if row.stable_key in ids_by_key:
+                    raise ApiError(
+                        ApiErrorCode.E_INTERNAL, "Reader apparatus item reader repeated a key"
+                    )
+                ids_by_key[row.stable_key] = row.id
+    if len(ids_by_key) != len(item_keys) or any(key not in ids_by_key for key in item_keys):
+        raise ApiError(ApiErrorCode.E_INTERNAL, "Reader apparatus item keys changed between reads")
 
     db.execute(
         text(
@@ -1020,21 +1166,25 @@ def replace_media_apparatus(
         ),
         {"media_id": media_id, "keys": edge_keys},
     )
-    edge_rows = []
-    for edge in edges:
-        row = _apparatus_edge_row(edge)
-        from_key = str(row.pop("from_stable_key"))
-        to_key = str(row.pop("to_stable_key"))
-        if from_key not in ids_by_key or to_key not in ids_by_key:
-            raise ApiError(ApiErrorCode.E_INTERNAL, "Reader apparatus edge points to missing item")
-        edge_rows.append(
-            {
-                **row,
-                "from_item_id": str(ids_by_key[from_key]),
-                "to_item_id": str(ids_by_key[to_key]),
-            }
-        )
-    for payload in _upsert_json_batches(edge_rows):
+
+    def bound_edges() -> Iterator[dict[str, object]]:
+        for edge, key in zip(edge_rows(), edge_keys, strict=True):
+            row = _apparatus_edge_row(edge, replacements)
+            if row["stable_key"] != key:
+                raise ApiError(
+                    ApiErrorCode.E_INTERNAL, "Reader apparatus edge keys changed between reads"
+                )
+            from_key = str(row.pop("from_stable_key"))
+            to_key = str(row.pop("to_stable_key"))
+            if from_key not in ids_by_key or to_key not in ids_by_key:
+                raise ApiError(
+                    ApiErrorCode.E_INTERNAL, "Reader apparatus edge points to missing item"
+                )
+            row["from_item_id"] = str(ids_by_key[from_key])
+            row["to_item_id"] = str(ids_by_key[to_key])
+            yield row
+
+    for payload in _upsert_json_batches(bound_edges()):
         db.execute(
             _EDGE_UPSERT,
             {"media_id": media_id, "state_id": state_id, "edges": payload},
@@ -1063,7 +1213,7 @@ def replace_media_apparatus(
             text("SELECT id FROM reader_apparatus_items WHERE media_id=:id"), {"id": media_id}
         )
     )
-    projection.refresh(db, "reader_apparatus_item", [*old_ids, *new_ids])
+    projection.refresh(db, "reader_apparatus_item", [*old_ids.values(), *new_ids])
 
 
 def delete_media_apparatus(db: Session, media_id: UUID) -> None:
@@ -1108,14 +1258,12 @@ def _delete_apparatus_item_dependents(db: Session, item_ids: list[UUID]) -> None
     )
 
 
-def _validate_replacement(
-    *, status: str, items: Sequence[Mapping[str, object]], edges: Sequence[Mapping[str, object]]
-) -> None:
+def _validate_replacement(*, status: str, has_items: bool, has_edges: bool) -> None:
     if status not in {"ready", "empty", "partial", "unsupported", "failed"}:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Invalid reader apparatus status")
-    if status in {"empty", "unsupported", "failed"} and (items or edges):
+    if status in {"empty", "unsupported", "failed"} and (has_items or has_edges):
         raise ApiError(ApiErrorCode.E_INTERNAL, "Terminal empty apparatus states cannot carry rows")
-    if status in {"ready", "partial"} and not items:
+    if status in {"ready", "partial"} and not has_items:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Reader apparatus state needs items")
 
 
@@ -1163,42 +1311,41 @@ def _source_identity(item: Mapping[str, Any]) -> tuple[str, ...] | None:
     return None
 
 
-def match_apparatus_source_items(
-    old: Sequence[Mapping[str, Any]], items: Sequence[Mapping[str, object]]
+def _match_apparatus_source_items(
+    old: Sequence[ApparatusMatch], items: Sequence[ApparatusMatch]
 ) -> dict[str, str]:
     """Match only unique authored, contextual, or unchanged exact source occurrences."""
-    by_identity: dict[tuple[str, ...], list[Mapping[str, Any]]] = defaultdict(list)
-    by_context: dict[tuple[str, str, str], list[Mapping[str, Any]]] = defaultdict(list)
-    by_locator: dict[tuple[str, str, str, str], list[Mapping[str, Any]]] = defaultdict(list)
+    by_identity: dict[bytes, list[ApparatusMatch]] = defaultdict(list)
+    by_context: dict[bytes, list[ApparatusMatch]] = defaultdict(list)
+    by_locator: dict[bytes, list[ApparatusMatch]] = defaultdict(list)
     for row in old:
-        if identity := _source_identity(row):
-            by_identity[identity].append(row)
-        if context := _context_key(row):
-            by_context[context].append(row)
-        if locator := _locator_key(row):
-            by_locator[locator].append(row)
-    identities = Counter(_source_identity(item) for item in items)
-    contexts = Counter(key for item in items if (key := _context_key(item)))
-    locators = Counter(key for item in items if (key := _locator_key(item)))
+        if row.identity is not None:
+            by_identity[row.identity].append(row)
+        if row.context is not None:
+            by_context[row.context].append(row)
+        if row.locator is not None:
+            by_locator[row.locator].append(row)
+    identities = Counter(item.identity for item in items)
+    contexts = Counter(item.context for item in items)
+    locators = Counter(item.locator for item in items)
     matches: dict[str, str] = {}
     claimed: set[str] = set()
     for item in items:
-        identity = _source_identity(item)
-        candidates = by_identity.get(identity, []) if identity and identities[identity] == 1 else []
-        source = _object_dict(item.get("source_ref"))
-        own_id = source.get("marker_id" if str(item["kind"]).endswith("_ref") else "target_id")
-        if _object_dict(source.get("identity")).get("kind") == "Anonymous":
-            own_id = None
-        if not candidates and not own_id and (context := _context_key(item)):
-            if contexts[context] == 1:
-                candidates = by_context.get(context, [])
-        if not candidates and (locator := _locator_key(item)) and locators[locator] == 1:
-            candidates = by_locator.get(locator, [])
-        if len(candidates) != 1 or str(candidates[0]["kind"]) != str(item["kind"]):
+        candidates = (
+            by_identity.get(item.identity, [])
+            if item.identity is not None and identities[item.identity] == 1
+            else []
+        )
+        if not candidates and item.allow_context and item.context is not None:
+            if contexts[item.context] == 1:
+                candidates = by_context.get(item.context, [])
+        if not candidates and item.locator is not None and locators[item.locator] == 1:
+            candidates = by_locator.get(item.locator, [])
+        if len(candidates) != 1 or candidates[0].kind != item.kind:
             continue
-        old_key = str(candidates[0]["stable_key"])
+        old_key = candidates[0].stable_key
         if old_key not in claimed:
-            matches[str(item["stable_key"])] = old_key
+            matches[item.stable_key] = old_key
             claimed.add(old_key)
     return matches
 
@@ -1225,15 +1372,15 @@ def _locator_key(row: Mapping[str, Any]) -> tuple[str, str, str, str] | None:
 
 
 def _reconciled_apparatus_keys(
-    old: Sequence[Mapping[str, object]],
-    items: Sequence[Mapping[str, object]],
+    old: Sequence[ApparatusMatch],
+    items: Sequence[ApparatusMatch],
     *,
     preserve_fragment_html: bool,
 ) -> dict[str, str]:
-    keys = match_apparatus_source_items(old, items)
-    old_keys = {str(row["stable_key"]) for row in old}
+    keys = _match_apparatus_source_items(old, items)
+    old_keys = {row.stable_key for row in old}
     for item in items:
-        key = str(item["stable_key"])
+        key = item.stable_key
         if key in old_keys and key not in keys:
             if preserve_fragment_html:
                 raise ApiError(
@@ -1244,33 +1391,34 @@ def _reconciled_apparatus_keys(
     return keys
 
 
-def _prepare_apparatus_reconciliation(
+def _read_apparatus_matches(db: Session, media_id: UUID) -> list[tuple[UUID, ApparatusMatch]]:
+    with db.execute(
+        text(
+            "SELECT id, stable_key, kind, body_text, locator, locator_status, source_ref"
+            " FROM reader_apparatus_items WHERE media_id=:id"
+        ),
+        {"id": media_id},
+        execution_options={"yield_per": _UPSERT_MAX_ROWS},
+    ).mappings() as rows:
+        return [(row["id"], _apparatus_match(dict(row))) for row in rows]
+
+
+def read_apparatus_correspondence(db: Session, *, media_id: UUID) -> list[ApparatusMatch]:
+    """Capture the same source facts reconciliation will use under its write lock."""
+    return [match for _, match in _read_apparatus_matches(db, media_id)]
+
+
+def _validate_apparatus_dependencies(
     db: Session,
     *,
     media_id: UUID,
-    items: Sequence[Mapping[str, object]],
+    old_ids: Mapping[str, UUID],
+    replacements: Mapping[str, str],
     preserve_fragment_html: bool,
-) -> tuple[list[UUID], dict[str, str]]:
-    old = [
-        dict(row)
-        for row in (
-            db.execute(
-                text(
-                    "SELECT id, stable_key, kind, body_text, locator, locator_status, source_ref"
-                    " FROM reader_apparatus_items WHERE media_id=:id"
-                ),
-                {"id": media_id},
-            )
-            .mappings()
-            .all()
-        )
-    ]
-    replacements = _reconciled_apparatus_keys(
-        old, items, preserve_fragment_html=preserve_fragment_html
-    )
+) -> None:
     retained = set(replacements.values())
-    withdrawn = [row for row in old if str(row["stable_key"]) not in retained]
-    removed = [row["id"] for row in withdrawn]
+    withdrawn = {key: item_id for key, item_id in old_ids.items() if key not in retained}
+    removed = list(withdrawn.values())
     if removed and db.scalar(
         text("""
             SELECT EXISTS (
@@ -1291,60 +1439,140 @@ def _prepare_apparatus_reconciliation(
             "Source refresh cannot preserve a referenced note. The previous publication was retained.",
         )
     if preserve_fragment_html:
-        affected = {str(row["stable_key"]) for row in withdrawn} | {
+        affected = set(withdrawn) | {
             key for key, replacement in replacements.items() if key != replacement
         }
-        if affected and any(
-            key in affected
-            for html in db.scalars(
-                text("SELECT html_sanitized FROM fragments WHERE media_id=:id"), {"id": media_id}
-            )
-            for key in re.findall(r'data-reader-apparatus-item-id="([^"]+)"', html)
-        ):
-            raise ApiError(
-                ApiErrorCode.E_RESOURCE_CONFLICT, "Repair cannot preserve retained note stamps."
-            )
-    return [row["id"] for row in old], replacements
+        if affected:
+            with db.scalars(
+                text("SELECT html_sanitized FROM fragments WHERE media_id=:id"),
+                {"id": media_id},
+                execution_options={"yield_per": 1},
+            ) as html_rows:
+                if any(
+                    match[1] in affected
+                    for html in html_rows
+                    for match in re.finditer(r'data-reader-apparatus-item-id="([^"]+)"', html)
+                ):
+                    raise ApiError(
+                        ApiErrorCode.E_RESOURCE_CONFLICT,
+                        "Repair cannot preserve retained note stamps.",
+                    )
 
 
-def validate_preserved_apparatus_replacement(
-    db: Session, *, media_id: UUID, items: Sequence[Mapping[str, object]]
-) -> None:
-    """Check the installed dependencies and stamps without changing a preview's input or rows."""
-    _prepare_apparatus_reconciliation(
-        db, media_id=media_id, items=items, preserve_fragment_html=True
-    )
+def _projection_pairs(
+    previous: Iterator[dict[str, object]],
+    candidate: Iterator[dict[str, object]],
+) -> Iterator[tuple[dict[str, object] | None, dict[str, object] | None]]:
+    old, new = next(previous, None), next(candidate, None)
+    while old is not None or new is not None:
+        if old is None:
+            yield None, new
+            new = next(candidate, None)
+        elif new is None:
+            yield old, None
+            old = next(previous, None)
+        elif str(old["stable_key"]) < str(new["stable_key"]):
+            yield old, None
+            old = next(previous, None)
+        elif str(old["stable_key"]) > str(new["stable_key"]):
+            yield None, new
+            new = next(candidate, None)
+        else:
+            yield old, new
+            old, new = next(previous, None), next(candidate, None)
 
 
-def _reconcile_items(
+def review_apparatus_replacement(
     db: Session,
     *,
     media_id: UUID,
-    items: list[dict[str, object]],
-    edges: list[dict[str, object]],
-    preserve_fragment_html: bool,
-) -> list[UUID]:
-    """Keep occurrence identities by source correspondence, never by extraction order."""
-    previous_ids, replacements = _prepare_apparatus_reconciliation(
-        db, media_id=media_id, items=items, preserve_fragment_html=preserve_fragment_html
+    previous: ApparatusOutput | None,
+    candidate: ApparatusCandidate,
+) -> dict[str, object]:
+    """Check dependencies after the caller re-seals the installed projection used to stage this."""
+    with db.execute(
+        text("SELECT stable_key, id FROM reader_apparatus_items WHERE media_id=:id"),
+        {"id": media_id},
+        execution_options={"yield_per": _UPSERT_MAX_ROWS},
+    ) as rows:
+        ids = {row.stable_key: row.id for row in rows}
+    replacements = candidate._replacements
+    _validate_apparatus_dependencies(
+        db,
+        media_id=media_id,
+        old_ids=ids,
+        replacements=replacements,
+        preserve_fragment_html=True,
     )
-    for item in items:
-        if (replacement := replacements.get(str(item["stable_key"]))) is not None:
-            item["stable_key"] = replacement
-    for edge in edges:
-        edge.update(_apparatus_edge_row(edge, replacements))
-    replacements = {key: value for key, value in replacements.items() if key != value}
-    if replacements and not preserve_fragment_html:
-        for fragment in db.execute(
-            text("SELECT id, html_sanitized FROM fragments WHERE media_id=:id"), {"id": media_id}
-        ).mappings():
+    kept = set(replacements.values())
+    changes: list[dict[str, object]] = []
+    for old, item in _projection_pairs(
+        previous.items() if previous is not None else iter(()), candidate.output.items()
+    ):
+        if old is None or item is None:
+            continue
+        key = str(item["stable_key"])
+        if key not in kept:
+            continue
+        body_changed = (
+            item["body_text"] != old["body_text"]
+            or item["body_html_sanitized"] != old["body_html_sanitized"]
+        )
+        locator_changed = (
+            item["locator"] != old["locator"] or item["locator_status"] != old["locator_status"]
+        )
+        label_changed = item["label"] != old["label"]
+        if body_changed or locator_changed or label_changed:
+            changes.append(
+                {
+                    "id": ids[key],
+                    "stable_key": key,
+                    "body_changed": body_changed,
+                    "locator_changed": locator_changed,
+                    "label_changed": label_changed,
+                }
+            )
+    added, removed, changed = [], [], []
+    for old, new in _projection_pairs(
+        previous.edges() if previous is not None else iter(()), candidate.output.edges()
+    ):
+        if old is None:
+            assert new is not None
+            added.append(str(new["stable_key"]))
+        elif new is None:
+            removed.append(str(old["stable_key"]))
+        elif old != new:
+            changed.append(str(new["stable_key"]))
+    return {
+        "changed_kept_items": changes,
+        "added_edge_keys": added,
+        "removed_edge_keys": removed,
+        "changed_edge_keys": changed,
+    }
+
+
+def _rewrite_apparatus_stamps(
+    db: Session,
+    *,
+    media_id: UUID,
+    replacements: Mapping[str, str],
+) -> None:
+    rekeys = {key: value for key, value in replacements.items() if key != value}
+    if not rekeys:
+        return
+    with db.execute(
+        text("SELECT id, html_sanitized FROM fragments WHERE media_id=:id"),
+        {"id": media_id},
+        execution_options={"yield_per": 1},
+    ).mappings() as fragments:
+        for fragment in fragments:
             html = str(fragment["html_sanitized"])
 
             # Keys contain no HTML metacharacters. Only our stamped attribute changes;
             # reserializing the source DOM could change its canonical byte contract.
             updated = re.sub(
                 r'(data-reader-apparatus-item-id=")([^"]+)(")',
-                lambda match: match[1] + replacements.get(match[2], match[2]) + match[3],
+                lambda match: match[1] + rekeys.get(match[2], match[2]) + match[3],
                 html,
             )
             if updated != html:
@@ -1352,7 +1580,6 @@ def _reconcile_items(
                     text("UPDATE fragments SET html_sanitized=:html WHERE id=:id"),
                     {"html": updated, "id": fragment["id"]},
                 )
-    return previous_ids
 
 
 def _source_body_html(
@@ -1366,6 +1593,13 @@ def _source_body_html(
     """Bind selected bodies against all publication aliases with the original raw gates."""
     if not any(item.body_html_sanitized is not None for item in items):
         return
+    anchor_names: set[str] = set()
+    for item in items:
+        if item.body_html_sanitized is not None:
+            anchor_names.update(
+                unquote(urlsplit(str(link.get("href"))).fragment)
+                for link in parse_html_document(item.body_html_sanitized).xpath("//a[@href]")
+            )
     fragments = (
         db.execute(
             text("""
@@ -1382,7 +1616,7 @@ def _source_body_html(
     by_index = {row["idx"]: row for row in fragments}
     fragment_ids_by_path = {path: row["id"] for path, row in by_path.items()}
     fragment_ids = {str(row["id"]) for row in fragments}
-    anchors: dict[str, Any] = {}
+    fragment_anchors: dict[str, set[str]] = {}
     source_locations: dict[str, str] = {}
     aliases = db.execute(
         text("""
@@ -1398,10 +1632,14 @@ def _source_body_html(
                        'marker_id', source_ref->'marker_id',
                        'fragment_idx', source_ref->'fragment_idx'
                    ) AS source_ref
-            FROM reader_apparatus_items WHERE state_id = :state_id
+            FROM reader_apparatus_items
+            WHERE state_id = :state_id AND (
+                source_ref->>'marker_id' = ANY(:anchor_names)
+                OR source_ref->>'target_id' = ANY(:anchor_names)
+            )
             ORDER BY sort_key, stable_key
         """),
-        {"state_id": state_id},
+        {"state_id": state_id, "anchor_names": list(anchor_names)},
         execution_options={"yield_per": 128},
     ).mappings()
     for alias in aliases:
@@ -1487,15 +1725,16 @@ def _source_body_html(
             fragment = by_path.get(path) if is_epub else article_fragment
             if destination is None and fragment is not None:
                 fragment_key = str(fragment["id"])
-                if fragment_key not in anchors:
+                if anchor and fragment_key not in fragment_anchors:
                     html = db.execute(
                         text("SELECT html_sanitized FROM fragments WHERE id = :id"),
                         {"id": fragment["id"]},
                     ).scalar_one()
-                    anchors[fragment_key] = canonicalize_structure(html)
-                structure = anchors[fragment_key]
-                index = structure.anchors.get(anchor) if anchor else None
-                if not anchor or index is not None:
+                    fragment_anchors[fragment_key] = (
+                        canonicalize_structure(html).anchors.keys() & anchor_names
+                    )
+                    del html
+                if not anchor or anchor in fragment_anchors[fragment_key]:
                     if not is_epub:
                         link.set("href", f"#{parsed.fragment}")
                     bind_epub_fragment_link(

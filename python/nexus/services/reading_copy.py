@@ -14,7 +14,6 @@ import json
 import mimetypes
 import time
 import zipfile
-from io import TextIOWrapper
 from pathlib import Path
 from urllib.parse import quote
 from uuid import UUID
@@ -29,7 +28,11 @@ from nexus.schemas.reader_document import ReaderPdfFileOut
 from nexus.services import reader_publication
 from nexus.services.html_tree import inner_html
 from nexus.services.image_placeholder import replace_image_with_placeholder
-from nexus.services.reader_document import build_reader_document
+from nexus.services.reader_document import (
+    build_reader_document,
+    write_epub_reading_copy,
+    write_reader_document,
+)
 from nexus.storage.client import get_storage_client
 from nexus.storage.errors import StorageError
 
@@ -49,26 +52,28 @@ def build_reading_copy(db: Session, *, viewer_id: UUID, media_id: UUID, path: Pa
     row = db.execute(
         text("SELECT kind, title FROM media WHERE id = :media_id"), {"media_id": media_id}
     ).one()
-    document = build_reader_document(
-        db,
-        media_id=media_id,
-        viewer_id=viewer_id,
-        materialize_x_assets=True,
-        pdf_file=lambda: ReaderPdfFileOut(url="document.pdf", expires_at=None),
-    )
-    document.citation_occurrences = []
-    if document.kind == "text_part":
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_KIND, "pieces do not have offline reading copies"
+    document = None
+    if row.kind != "epub":
+        document = build_reader_document(
+            db,
+            media_id=media_id,
+            viewer_id=viewer_id,
+            materialize_x_assets=True,
+            pdf_file=lambda: ReaderPdfFileOut(url="document.pdf", expires_at=None),
         )
+        if document.kind == "text_part":
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_KIND, "pieces do not have offline reading copies"
+            )
+        document.citation_occurrences = []
     objects: list[tuple[str, str]] = []
-    if document.kind == "pdf":
+    if row.kind == "pdf":
         source = db.scalar(
             text("SELECT storage_path FROM media_file WHERE media_id = :media_id"),
             {"media_id": media_id},
         )
         objects.append(("document.pdf", str(source)))
-    elif document.kind == "epub":
+    elif row.kind == "epub":
         objects.extend(
             (f"assets/{asset.asset_key}", str(asset.storage_path))
             for asset in db.execute(
@@ -78,7 +83,7 @@ def build_reading_copy(db: Session, *, viewer_id: UUID, media_id: UUID, path: Pa
                 {"media_id": media_id},
             )
         )
-    if document.kind != "pdf":
+    if document is not None and document.kind != "pdf":
         captures = {
             unit.x_post.owner.capture_id
             for unit in document.units
@@ -104,20 +109,33 @@ def build_reading_copy(db: Session, *, viewer_id: UUID, media_id: UUID, path: Pa
                 continue
             for url, member in asset_urls.items():
                 unit.html_sanitized = unit.html_sanitized.replace(url, f"/nexus-copy/{member}")
-    reader = {
-        "media": {"id": str(media_id), "title": str(row.title), "kind": str(row.kind)},
-        "document": document.model_dump(mode="json"),
-    }
-    db.rollback()
-
-    storage = get_storage_client()
+    media = {"id": str(media_id), "title": str(row.title), "kind": str(row.kind)}
+    if document is not None:
+        db.rollback()
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
         # Opening by name would reset the member timestamp to 1980.
         reader_info = zipfile.ZipInfo("reader.json", time.localtime()[:6])
         reader_info.compress_type = archive.compression
         with archive.open(reader_info, "w") as output:
-            with TextIOWrapper(output, encoding="utf-8") as writer:
-                json.dump(reader, writer, ensure_ascii=False)
+            output.write(b'{"media":')
+            output.write(json.dumps(media, ensure_ascii=False, separators=(",", ":")).encode())
+            output.write(b',"document":')
+            if document is None:
+                write_epub_reading_copy(
+                    db,
+                    media_id=media_id,
+                    viewer_id=viewer_id,
+                    title=str(row.title),
+                    generation=generation,
+                    write=output.write,
+                )
+            else:
+                write_reader_document(document, output.write)
+            output.write(b"}")
+        if document is None:
+            db.rollback()
+        del document
+        storage = get_storage_client()
         for member, storage_path in objects:
             with archive.open(member, "w") as output:
                 try:

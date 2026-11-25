@@ -6,6 +6,11 @@ maps own those facts and are loaded separately, once per source.
 
 from __future__ import annotations
 
+import json
+import zlib
+from contextlib import nullcontext
+from io import BufferedIOBase
+from operator import itemgetter
 from uuid import UUID
 
 from sqlalchemy import text
@@ -33,10 +38,10 @@ from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items.versions import versions_for_ref
 
 
-def get_reader_document_map(
-    db: Session, *, viewer_id: UUID, media_id: UUID
-) -> ReaderDocumentMapOut:
-    """Assemble one read-only snapshot; the route completes locator repair first."""
+def write_reader_document_map(
+    db: Session, *, viewer_id: UUID, media_id: UUID, output: BufferedIOBase
+) -> None:
+    """Write one complete map while borrowing its caller's read-only snapshot."""
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     media = (
@@ -145,13 +150,6 @@ def get_reader_document_map(
             .all()
         }
 
-    apparatus = (
-        reader_apparatus.ReaderApparatusResponse(
-            media_id=media_id, status="empty", items=[], edges=[]
-        )
-        if media["is_x_thread"]
-        else reader_apparatus.get_media_apparatus(db, viewer_id, media_id)
-    )
     embed_rows = (
         document_embeds.list_document_embeds_for_media(db, viewer_id=viewer_id, media_id=media_id)
         if media_kind == "web_article"
@@ -160,28 +158,32 @@ def get_reader_document_map(
     # X source bodies/relations belong to the document projection. Annotation maps
     # remain canonical-source-local and never duplicate child annotation stores.
     embed_rows = [embed for embed in embed_rows if embed.provider != "x"]
-    projection = reader_evidence.build_reader_evidence(
-        db,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        canonical_media_id=source_media_id,
-        reading_identity=f"g{generation}" if generation is not None else identity,
-        media_kind=scope.source_format if scope is not None else media_kind,
-        embeds=embed_rows,
-        highlights=highlights.list_highlights_for_media(
-            db=db, viewer_id=viewer_id, media_id=media_id, mine_only=False
-        ),
-        apparatus=apparatus,
-        connections=reader_connections.list_reader_connections(
-            db, viewer_id=viewer_id, media_id=media_id
-        ),
-        fragment_indexes=fragment_indexes,
-        fragment_ranges=fragment_ranges,
-        fragment_times=fragment_times,
-        total_fragment_chars=total_fragment_chars,
-        page_count=page_count,
-        pdf_page_heights=pdf_page_heights,
-    )
+    with (
+        nullcontext(reader_apparatus.ReaderApparatusResponse(status="empty", items=()))
+        if media["is_x_thread"]
+        else reader_apparatus.read_media_apparatus(db, viewer_id, media_id)
+    ) as apparatus:
+        projection = reader_evidence.build_reader_evidence(
+            db,
+            viewer_id=viewer_id,
+            media_id=media_id,
+            canonical_media_id=source_media_id,
+            media_kind=scope.source_format if scope is not None else media_kind,
+            embeds=embed_rows,
+            highlights=highlights.list_highlights_for_media(
+                db=db, viewer_id=viewer_id, media_id=media_id, mine_only=False
+            ),
+            apparatus=apparatus,
+            connections=reader_connections.list_reader_connections(
+                db, viewer_id=viewer_id, media_id=media_id
+            ),
+            fragment_indexes=fragment_indexes,
+            fragment_ranges=fragment_ranges,
+            fragment_times=fragment_times,
+            total_fragment_chars=total_fragment_chars,
+            page_count=page_count,
+            pdf_page_heights=pdf_page_heights,
+        )
     if document is not None and document.kind != "pdf":
         from nexus.services.reader_evidence_markers import citation_point_markers
 
@@ -190,18 +192,21 @@ def get_reader_document_map(
         )
         point_ids = {marker.item_id for marker in points}
         projection.markers[:] = [
-            marker for marker in projection.markers if marker.item_id not in point_ids
-        ] + points
-        projection.markers.sort(key=lambda marker: (marker.position, marker.kind, marker.item_id))
-    apparatus_status = apparatus.status
-    del apparatus
-
+            record for record in projection.markers if record[0][2] not in point_ids
+        ]
+        projection.markers.extend(
+            (
+                (marker.position, marker.kind, marker.item_id),
+                zlib.compress(marker.model_dump_json().encode(), level=1),
+            )
+            for marker in points
+        )
     status: ReaderDocumentMapStatus = (
         "partial"
-        if apparatus_status in ("partial", "failed")
-        else ("ready" if projection.evidence.roots or embed_rows else "empty")
+        if apparatus.status in ("partial", "failed")
+        else ("ready" if projection.roots or embed_rows else "empty")
     )
-    return ReaderDocumentMapOut(
+    model = ReaderDocumentMapOut(
         media_id=media_id,
         publication_generation=generation,
         evidence_version=versions_for_ref(
@@ -211,8 +216,37 @@ def get_reader_document_map(
         status=status,
         embeds=embed_rows,
         evidence=projection.evidence,
-        markers=projection.markers,
+        markers=[],
     )
+    metadata = model.model_dump(mode="json", exclude={"markers": True, "evidence": {"roots"}})
+    evidence = metadata.pop("evidence")
+    output.write(b'{"data":')
+    output.write(
+        json.dumps(metadata, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()[
+            :-1
+        ]
+    )
+    output.write(b',"evidence":')
+    output.write(
+        json.dumps(evidence, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()[
+            :-1
+        ]
+    )
+    output.write(b',"roots":')
+    _write_map_array(output, projection.roots)
+    output.write(b'},"markers":')
+    _write_map_array(output, projection.markers)
+    output.write(b"}}")
+
+
+def _write_map_array[K](output: BufferedIOBase, records: list[tuple[K, bytes]]) -> None:
+    records.sort(key=itemgetter(0))
+    output.write(b"[")
+    for index, (_, packed) in enumerate(records):
+        if index:
+            output.write(b",")
+        output.write(zlib.decompress(packed))
+    output.write(b"]")
 
 
 def get_capture_document_map(
@@ -300,8 +334,6 @@ def get_capture_document_map(
                 anchor=ReaderEvidenceAnchorOut(locator=locator),
                 order_key=f"fragment:{indexes[str(anchor.fragment_id)]:010d}:{anchor.start_offset:010d}",
             ),
-            continuation=None,
-            authored_placement=None,
         )
     for fragment_id in owners:
         endpoint = ResourceRef("fragment", fragment_id)
@@ -321,8 +353,6 @@ def get_capture_document_map(
                     ref=ref,
                     content=ReaderEvidenceResourceOut(item=connection.other),
                     resolution=None,
-                    continuation=None,
-                    authored_placement=None,
                 )
                 roots[key] = root
             if all(fact.edge_id != connection.edge_id for fact in root.direct_facts):
