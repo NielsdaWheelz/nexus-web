@@ -1,7 +1,8 @@
 # epub structure release and norton repair
 
-status: `8e22d112` proved the 448 mib memory reserve on native amd64.
-cutover remains held on response times.
+status: awaiting paired release and production repairs. `8e22d112` proved
+the 448 mib memory reserve on native amd64. the owner accepted deferring
+response-time improvements and production storage timing on 2026-11-25.
 
 - pair backend, web, firefox and android on wire 26. the full-note item now
   carries its source, action and passage-link proof directly. review any other
@@ -10,9 +11,9 @@ cutover remains held on response times.
 - qualify the same sealed api image in separate native amd64 epochs at 384 mib
   and 352 mib, with no container swap. replay cold and warm alter reader, map,
   note and reading-copy use, and the montaigne reader-to-citation-chat journey.
-  require exact results, preserved reading state, acceptable response times
-  and zero memory kills or restarts. record charged peak, reclaim and memory
-  stalls. the lower-cap trial proves the 32 mib operating reserve.
+  require exact results, preserved reading state and zero memory kills or
+  restarts. record response times, charged peak, reclaim and memory stalls.
+  the lower-cap trial proves the 32 mib operating reserve.
 - if either memory trial fails, try 448 mib and prove reserve at 416 mib.
   confirm the 448 mib profile under representative api and worker overlap on
   the shared host before selecting that limit for release.
@@ -146,8 +147,10 @@ reader, map, complete note, archive-reader, search and saved-cursor digests.
 montaigne's three actual citation jumps and returns passed at each cap using a
 recreated settled chat. alter's map took 7.730–9.114 s against the 6 s timing
 target. reader, note and some lexical timings also missed the trial targets.
-the archive took 9.859–12.480 s over the lab's wan object store. production r2
-copy timing remains unmeasured. hold cutover until response times qualify.
+the archive took 9.859–12.480 s over the lab's wan object store. follow-up
+issues track the [map](epub-alter-map-latency.md), [reader](epub-alter-reader-latency.md),
+[notes](epub-full-note-latency.md), [search](epub-lexical-search-latency-under-load.md)
+and [reading copies](epub-reading-copy-storage-latency.md).
 private summaries and raw receipts are in `epub-native-20261124/`.
 
 the read-only installed inventory binds media id, source digest and generation

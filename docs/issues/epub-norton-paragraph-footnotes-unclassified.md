@@ -1,6 +1,7 @@
 # unresolved footnotes in the norton moby-dick
 
-status: open. main extracts 1,400 of 1,498 known reciprocal note pairs.
+status: open. the release candidate extracts 1,455 of 1,498 known reciprocal
+note pairs. the installed copy still needs repair.
 origin: 2026-11-21 moby-dick chapter investigation, main `06419a76d`
 
 the 2026-11-21 capture of norton media `39cc0b8a-20f0-40e5-a7df-960a27c22f3e`
@@ -83,11 +84,10 @@ locally retained fragments preserved all 1,400 prior bodies and locators, all
 separately reproduced the rich body and plain text for all 1,444. qualification
 on other books and the installed copy is open.
 
-the follow-up release requires a real non-norton recovery for each new rule:
-one editorial note end and one lone chapter note. the editions may differ.
-a source-only screen of 397 local epub paths (396 readable archives) established
-neither positive. pin each qualifying original, marker, body and baseline miss
-before counting it. the existing 1,400-note release has its own qualification.
+the initial source-only screen of 397 local epub paths (396 readable archives)
+found neither a non-norton editorial note end nor a qualifying lone chapter
+note. [outside publisher examples](epub-norton-outside-publisher-examples.md)
+tracks the expanded search and remaining witnesses.
 
 resolve further cases with independently corroborated note roles and complete
 body intervals. a singleton can borrow evidence from a bounded collection

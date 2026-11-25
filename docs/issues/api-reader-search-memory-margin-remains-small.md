@@ -213,7 +213,7 @@ timed out starting node, then linux killed the api during the montaigne
 browser journey. the exact lean `8e22d112` pair completed the same workload
 at 448 and 416 mib with zero oom, restarts or swap and at least 3,258,265,600
 host bytes available in verified api and worker overlap. the scoped reserve
-is proved. the remaining qualification is latency.
+is proved. the owner accepted deferring the remaining timing failures.
 
 alter's lean 15,185,737-byte map took 7.730–9.114 s against 6 s. the two 448
 map calls consumed about 7 s of api and postgres cpu apiece, with under 30 ms
